@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+target/
+.worktrees/
+.superpowers/
+*.log
+.DS_Store
+Thumbs.db
+
