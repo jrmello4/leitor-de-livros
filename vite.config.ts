@@ -5,6 +5,9 @@ export default defineConfig({
   plugins: [react()],
   server: {
     strictPort: true,
+    watch: {
+      ignored: ['**/src-tauri/target/**', '**/src-tauri/gen/**'],
+    },
   },
   test: {
     environment: 'jsdom',
