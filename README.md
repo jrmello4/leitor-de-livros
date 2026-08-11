@@ -48,6 +48,9 @@ EPUB, accounts, cloud synchronization, online metadata, a store, discovery, and 
 
 ## Project status
 
-The product concept and engineering design are approved. Implementation is the next phase.
+The product concept and engineering design are approved. A first React/Vite vertical slice is now in place: it
+opens a built-in reading sample, imports image sets and CBZ files, supports page navigation and tactile corner drag,
+and stores reader preferences locally. Native SQLite, PDF/CBR adapters, Adaptive Flow analysis, and production
+packaging remain subsequent phases.
 
 Read the complete design specification in [docs/superpowers/specs/2026-08-11-tactile-comic-reader-design.md](docs/superpowers/specs/2026-08-11-tactile-comic-reader-design.md).

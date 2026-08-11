@@ -5,6 +5,8 @@ target/
 .worktrees/
 .superpowers/
 *.log
+src-tauri/icons/icon.ico
+src-tauri/gen/
 .DS_Store
 Thumbs.db
 
