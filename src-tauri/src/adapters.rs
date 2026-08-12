@@ -179,7 +179,7 @@ fn build_pdf_publication(
         .set_target_width(PDF_RENDER_WIDTH)
         .set_maximum_height(PDF_RENDER_MAX_HEIGHT)
         .rotate_if_landscape(PdfPageRenderRotation::Degrees90, true);
-    let mut pages = Vec::with_capacity(page_count as usize);
+    let mut pages = Vec::with_capacity(page_count);
     let mut total_bytes = 0_u64;
 
     for (index, page) in document.pages().iter().enumerate() {
