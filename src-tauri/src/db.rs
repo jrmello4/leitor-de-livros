@@ -42,7 +42,7 @@ impl LibraryDb {
              PRAGMA synchronous = NORMAL;",
         )?;
         migrate(&mut connection)?;
-        retry_eviction_tombstones(&connection, &cache_dir)?;
+        retry_eviction_tombstones(&connection, &cache_dir);
         reconcile_cache_entries(&mut connection, &cache_dir)?;
 
         Ok(Self {
@@ -1269,29 +1269,59 @@ fn canonical_publication_origin_paths(
     let source_refs = statement
         .query_map([publication_id], |row| row.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(source_refs
+    let mut origin_paths = source_refs
         .iter()
         .filter_map(|value| decode_source_ref(value))
         .filter_map(|source_ref| source_ref_path(&source_ref).canonicalize().ok())
-        .collect())
+        .collect::<HashSet<_>>();
+    let legacy_source_path = connection
+        .query_row(
+            "SELECT source_path FROM publications WHERE id = ?1",
+            [publication_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if let Some(path) = legacy_source_path
+        .as_deref()
+        .and_then(legacy_origin_path)
+        .and_then(|path| path.canonicalize().ok())
+    {
+        origin_paths.insert(path);
+    }
+    Ok(origin_paths)
 }
 
-fn retry_eviction_tombstones(connection: &Connection, cache_dir: &Path) -> CoreResult<()> {
-    let cache_root = cache_dir.canonicalize()?;
-    let origin_paths = canonical_origin_paths(connection)?;
-    remove_eviction_tombstones(&cache_root, &cache_root, &origin_paths)
+fn legacy_origin_path(source_path: &str) -> Option<&Path> {
+    ["archive:", "cbr:", "pdf:", "image:"]
+        .iter()
+        .find_map(|prefix| source_path.strip_prefix(prefix).map(Path::new))
+}
+
+fn retry_eviction_tombstones(connection: &Connection, cache_dir: &Path) {
+    let Ok(cache_root) = cache_dir.canonicalize() else {
+        return;
+    };
+    let Ok(origin_paths) = canonical_origin_paths(connection) else {
+        return;
+    };
+    remove_eviction_tombstones(&cache_root, &cache_root, &origin_paths);
 }
 
 fn remove_eviction_tombstones(
     cache_root: &Path,
     directory: &Path,
     origin_paths: &HashSet<PathBuf>,
-) -> CoreResult<()> {
-    for entry in std::fs::read_dir(directory)? {
-        let entry = entry?;
+) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
         let path = entry.path();
-        if entry.file_type()?.is_dir() {
-            remove_eviction_tombstones(cache_root, &path, origin_paths)?;
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            remove_eviction_tombstones(cache_root, &path, origin_paths);
             continue;
         }
         if !path
@@ -1301,12 +1331,13 @@ fn remove_eviction_tombstones(
         {
             continue;
         }
-        let canonical = path.canonicalize()?;
+        let Ok(canonical) = path.canonicalize() else {
+            continue;
+        };
         if canonical.starts_with(cache_root) && !origin_paths.contains(&canonical) {
-            std::fs::remove_file(path)?;
+            let _ = std::fs::remove_file(path);
         }
     }
-    Ok(())
 }
 
 fn remove_derived_files(
@@ -1903,6 +1934,44 @@ mod tests {
     }
 
     #[test]
+    fn deleting_legacy_publication_preserves_source_path_origin_inside_cache() {
+        let root = temporary_root("delete-legacy-origin-in-cache");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        let publication_cache = database.cache_dir().join("publication-1");
+        std::fs::create_dir_all(&publication_cache).expect("publication cache");
+        let source_path = publication_cache.join("original.cbz");
+        let source_bytes = b"legacy origin must never be deleted";
+        std::fs::write(&source_path, source_bytes).expect("origin");
+        insert_test_publication(&database, &source_path.to_string_lossy());
+        let connection = database.connection.lock().expect("database lock");
+        connection
+            .execute(
+                "UPDATE publications SET format = 'cbz', source_path = ?1 WHERE id = 'publication-1'",
+                [format!("archive:{}", source_path.display())],
+            )
+            .expect("legacy publication source");
+        connection
+            .execute(
+                "UPDATE pages SET source_ref = '' WHERE publication_id = 'publication-1'",
+                [],
+            )
+            .expect("legacy pages");
+        drop(connection);
+
+        database
+            .delete_publication("publication-1")
+            .expect("delete publication");
+
+        assert_eq!(
+            std::fs::read(&source_path).expect("legacy origin remains"),
+            source_bytes
+        );
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
     fn deleting_publication_rejects_current_directory_as_an_id() {
         let root = temporary_root("delete-current-directory");
         let database = LibraryDb::open(root.clone()).expect("database");
@@ -2081,6 +2150,35 @@ mod tests {
 
         let reopened = LibraryDb::open(root.clone()).expect("reopen database");
 
+        assert!(!tombstone.exists());
+        drop(reopened);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn locked_eviction_tombstone_does_not_prevent_database_open() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let root = temporary_root("cache-eviction-locked");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        let publication_cache = database.cache_dir().join("publication-1");
+        std::fs::create_dir_all(&publication_cache).expect("publication cache");
+        let tombstone = publication_cache.join(".page-1.123.evict");
+        std::fs::write(&tombstone, b"locked tombstone").expect("tombstone");
+        drop(database);
+        let locked = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&tombstone)
+            .expect("lock tombstone");
+
+        let reopened = LibraryDb::open(root.clone()).expect("open despite locked tombstone");
+
+        assert!(tombstone.exists());
+        drop(reopened);
+        drop(locked);
+        let reopened = LibraryDb::open(root.clone()).expect("retry after unlock");
         assert!(!tombstone.exists());
         drop(reopened);
         std::fs::remove_dir_all(root).expect("cleanup database");
