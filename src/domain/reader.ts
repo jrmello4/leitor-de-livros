@@ -31,6 +31,10 @@ export function movePage(
   return clamp(currentPage + signedDelta, 0, pageCount - 1);
 }
 
+export function clampZoomScale(scale: number): number {
+  return clamp(scale, 0.5, 3);
+}
+
 export interface NavigationAvailability {
   canNext: boolean;
   canPrevious: boolean;

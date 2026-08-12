@@ -1,8 +1,13 @@
 import { cloneBindings, DEFAULT_BINDINGS } from '../domain/input';
 import type { BindingMap, ReadingProfile } from '../domain/types';
+import type { Bookmark, ReaderState } from '../domain/types';
+import { defaultReaderState, normalizeReaderState } from '../domain/readerState';
 
 const PROFILE_KEY = 'tactile-reader/profile/v1';
 const PROGRESS_KEY = 'tactile-reader/progress/v1';
+const FAVORITES_KEY = 'tactile-reader/favorites/v1';
+const BOOKMARKS_KEY = 'tactile-reader/bookmarks/v1';
+const READER_STATE_KEY = 'tactile-reader/reader-state/v1';
 
 const defaultProfile: ReadingProfile = {
   version: 1,
@@ -87,4 +92,80 @@ export function resetProfile(): ReadingProfile {
   const storage = getStorage();
   storage?.removeItem(PROFILE_KEY);
   return { ...defaultProfile, bindings: cloneBindings(defaultProfile.bindings) };
+}
+
+export function loadFavorites(): string[] {
+  return loadValue(FAVORITES_KEY, [], (value): value is string[] => (
+    Array.isArray(value) && value.every((entry) => typeof entry === 'string')
+  ));
+}
+
+export function saveFavorite(publicationId: string, isFavorite: boolean): void {
+  const favorites = new Set(loadFavorites());
+  if (isFavorite) {
+    favorites.add(publicationId);
+  } else {
+    favorites.delete(publicationId);
+  }
+  saveValue(FAVORITES_KEY, [...favorites]);
+}
+
+export function loadBookmarks(publicationId: string): Bookmark[] {
+  const bookmarks = loadValue(BOOKMARKS_KEY, {}, isBookmarkMap);
+  return bookmarks[publicationId] ?? [];
+}
+
+export function saveBookmarks(publicationId: string, bookmarks: Bookmark[]): void {
+  const allBookmarks = loadValue(BOOKMARKS_KEY, {}, isBookmarkMap);
+  saveValue(BOOKMARKS_KEY, { ...allBookmarks, [publicationId]: bookmarks });
+}
+
+export function loadReaderState(publicationId: string): ReaderState {
+  const states = loadValue(READER_STATE_KEY, {}, isRecord);
+  return normalizeReaderState(states[publicationId] ?? defaultReaderState);
+}
+
+export function saveReaderState(publicationId: string, state: ReaderState): void {
+  const states = loadValue(READER_STATE_KEY, {}, isRecord);
+  saveValue(READER_STATE_KEY, { ...states, [publicationId]: normalizeReaderState(state) });
+}
+
+function loadValue<T>(key: string, fallback: T, isValid: (value: unknown) => value is T): T {
+  const storage = getStorage();
+  if (!storage) {
+    return fallback;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(storage.getItem(key) ?? 'null');
+    return isValid(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveValue(key: string, value: unknown): void {
+  try {
+    getStorage()?.setItem(key, JSON.stringify(value));
+  } catch {
+    return;
+  }
+}
+
+function isBookmarkMap(value: unknown): value is Record<string, Bookmark[]> {
+  return isRecord(value) && Object.values(value).every((bookmarks) => (
+    Array.isArray(bookmarks) && bookmarks.every(isBookmark)
+  ));
+}
+
+function isBookmark(value: unknown): value is Bookmark {
+  return isRecord(value)
+    && typeof value.pageId === 'string'
+    && typeof value.label === 'string'
+    && typeof value.createdAt === 'string'
+    && typeof value.updatedAt === 'string';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

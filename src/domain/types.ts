@@ -3,6 +3,7 @@ export type ReadingDirection = 'ltr' | 'rtl';
 export type ReadingMode = 'single' | 'spread';
 export type ContrastMode = 'standard' | 'high';
 export type LayoutZone = 'top' | 'bottom' | 'left' | 'right';
+export type ZoomMode = 'page' | 'width' | 'manual';
 
 export type ActionName =
   | 'next_page'
@@ -36,7 +37,28 @@ export interface Publication {
   direction: ReadingDirection;
   addedAt: string;
   updatedAt: string;
+  isFavorite: boolean;
   diagnostic?: string;
+}
+
+export interface ReaderState {
+  zoomMode: ZoomMode;
+  zoomScale: number;
+  panX: number;
+  panY: number;
+}
+
+export interface Bookmark {
+  pageId: string;
+  label: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CacheInfo {
+  usedBytes: number;
+  maxBytes: number;
+  entryCount: number;
 }
 
 export interface ReadingProfile {
