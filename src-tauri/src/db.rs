@@ -11,7 +11,7 @@ use crate::{
     models::{NativePage, NativePublication, NewPublication},
 };
 
-const MIGRATION_VERSION: i64 = 1;
+const MIGRATION_VERSION: i64 = 2;
 
 pub struct LibraryDb {
     connection: Mutex<Connection>,
@@ -227,6 +227,56 @@ impl LibraryDb {
         Ok(())
     }
 
+    pub fn load_panel_graph(
+        &self,
+        publication_id: &str,
+        page_id: &str,
+    ) -> CoreResult<Option<Value>> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| CoreError::from("database lock poisoned"))?;
+        let payload = connection
+            .query_row(
+                "SELECT payload_json
+                   FROM panel_graphs
+                  WHERE publication_id = ?1 AND page_id = ?2",
+                params![publication_id, page_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        Ok(payload.and_then(|json| serde_json::from_str(&json).ok()))
+    }
+
+    pub fn save_panel_graph(
+        &self,
+        publication_id: &str,
+        page_id: &str,
+        graph: &Value,
+    ) -> CoreResult<()> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| CoreError::from("database lock poisoned"))?;
+        let updated_at = now();
+        connection.execute(
+            "INSERT INTO panel_graphs (publication_id, page_id, schema_version, payload_json, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(publication_id, page_id) DO UPDATE SET
+                 schema_version = excluded.schema_version,
+                 payload_json = excluded.payload_json,
+                 updated_at = excluded.updated_at",
+            params![
+                publication_id,
+                page_id,
+                graph.get("version").and_then(Value::as_i64).unwrap_or(1),
+                serde_json::to_string(graph)?,
+                updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
     fn read_publication(
         &self,
         connection: &Connection,
@@ -305,7 +355,7 @@ fn migrate(connection: &mut Connection) -> CoreResult<()> {
         |row| row.get::<_, i64>(0),
     )?;
 
-    if current_version < MIGRATION_VERSION {
+    if current_version < 1 {
         transaction.execute_batch(
             "CREATE TABLE IF NOT EXISTS publications (
                  id TEXT PRIMARY KEY,
@@ -344,6 +394,26 @@ fn migrate(connection: &mut Connection) -> CoreResult<()> {
              );
              CREATE INDEX IF NOT EXISTS pages_publication_index
                  ON pages(publication_id, page_index);",
+        )?;
+        transaction.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
+            params![1, now()],
+        )?;
+    }
+
+    if current_version < MIGRATION_VERSION {
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS panel_graphs (
+                 publication_id TEXT NOT NULL,
+                 page_id TEXT NOT NULL,
+                 schema_version INTEGER NOT NULL,
+                 payload_json TEXT NOT NULL,
+                 updated_at TEXT NOT NULL,
+                 PRIMARY KEY (publication_id, page_id),
+                 FOREIGN KEY(publication_id) REFERENCES publications(id) ON DELETE CASCADE
+             );
+             CREATE INDEX IF NOT EXISTS panel_graphs_publication_index
+                 ON panel_graphs(publication_id, updated_at DESC);",
         )?;
         transaction.execute(
             "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
@@ -399,5 +469,66 @@ mod tests {
             })
             .expect("migration version");
         assert_eq!(version, MIGRATION_VERSION);
+    }
+
+    #[test]
+    fn existing_v1_database_receives_panel_graph_schema() {
+        let mut connection = Connection::open_in_memory().expect("in-memory sqlite");
+        connection
+            .execute_batch(
+                "CREATE TABLE schema_migrations (
+                     version INTEGER PRIMARY KEY,
+                     applied_at TEXT NOT NULL
+                 );
+                 INSERT INTO schema_migrations (version, applied_at) VALUES (1, '0');
+                 CREATE TABLE publications (id TEXT PRIMARY KEY);",
+            )
+            .expect("v1 schema");
+
+        migrate(&mut connection).expect("migrate v1 database");
+        let graph_table: String = connection
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'panel_graphs'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("panel graph table");
+        assert_eq!(graph_table, "panel_graphs");
+    }
+
+    #[test]
+    fn panel_graph_round_trips_after_migration() {
+        let root = std::env::temp_dir().join(format!("tactile-reader-panel-{}", now()));
+        let database = LibraryDb::open(root.clone()).expect("database");
+        let graph = serde_json::json!({
+            "version": 1,
+            "pageId": "page-1",
+            "regions": [{ "id": "page-1:panel-1", "order": 0 }]
+        });
+
+        let connection = database.connection.lock().expect("database lock");
+        connection
+            .execute(
+                "INSERT INTO publications
+                    (id, title, source_label, format, source_path, cover_page_id,
+                     direction, added_at, updated_at, diagnostic)
+                 VALUES ('publication-1', 'Test', 'Test', 'images', 'source:test', 'page-1',
+                         'ltr', '0', '0', NULL)",
+                [],
+            )
+            .expect("publication");
+        drop(connection);
+        database
+            .save_panel_graph("publication-1", "page-1", &graph)
+            .expect("save graph");
+        assert_eq!(
+            database
+                .load_panel_graph("publication-1", "page-1")
+                .expect("load graph"),
+            Some(graph)
+        );
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
     }
 }

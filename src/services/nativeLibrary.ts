@@ -2,6 +2,7 @@ import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { calculateProgress } from '../domain/reader';
 import type { Publication, ReadingDirection, ReadingProfile } from '../domain/types';
+import { isPanelGraph, type PanelGraph } from '../domain/flow';
 import { cloneBindings } from '../domain/input';
 import { loadProfile } from './storage';
 
@@ -79,6 +80,15 @@ export async function loadNativeProfile(): Promise<ReadingProfile | null> {
 
 export async function saveNativeProfile(profile: ReadingProfile): Promise<void> {
   await invoke('save_profile', { profile });
+}
+
+export async function loadNativePanelGraph(publicationId: string, pageId: string): Promise<PanelGraph | null> {
+  const graph = await invoke<unknown | null>('load_panel_graph', { publicationId, pageId });
+  return isPanelGraph(graph) ? graph : null;
+}
+
+export async function saveNativePanelGraph(publicationId: string, graph: PanelGraph): Promise<void> {
+  await invoke('save_panel_graph', { publicationId, pageId: graph.pageId, graph });
 }
 
 function mapPublication(publication: NativePublicationDto, direction: ReadingDirection): Publication {

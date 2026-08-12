@@ -22,6 +22,11 @@ const PDF_RENDER_MAX_HEIGHT: i32 = 2400;
 const MAX_DOCUMENT_BYTES: u64 = 1024 * 1024 * 1024;
 
 static PDFIUM_BINDINGS: OnceLock<Result<(), String>> = OnceLock::new();
+static PDFIUM_RESOURCE_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+pub(crate) fn configure_pdfium_resource_path(path: PathBuf) {
+    let _ = PDFIUM_RESOURCE_PATH.set(path);
+}
 
 pub(crate) fn import_pdf(
     db: &LibraryDb,
@@ -93,16 +98,17 @@ fn validate_document_size(path: &Path, format: &str) -> CoreResult<()> {
 fn ensure_pdfium() -> CoreResult<()> {
     let result = PDFIUM_BINDINGS.get_or_init(|| {
         let mut errors = Vec::new();
-        if let Ok(executable) = std::env::current_exe() {
-            if let Some(directory) = executable.parent() {
-                let candidate = Pdfium::pdfium_platform_library_name_at_path(directory);
-                match Pdfium::bind_to_library(&candidate) {
-                    Ok(bindings) => {
-                        let _ = Pdfium::new(bindings);
-                        return Ok(());
-                    }
-                    Err(error) => errors.push(format!("application directory: {error:?}")),
+        for candidate in pdfium_library_candidates() {
+            if !candidate.is_file() {
+                errors.push(format!("{}: file not found", candidate.display()));
+                continue;
+            }
+            match Pdfium::bind_to_library(&candidate) {
+                Ok(bindings) => {
+                    let _ = Pdfium::new(bindings);
+                    return Ok(());
                 }
+                Err(error) => errors.push(format!("{}: {error:?}", candidate.display())),
             }
         }
 
@@ -123,6 +129,26 @@ fn ensure_pdfium() -> CoreResult<()> {
             "PDFium runtime not found. Place pdfium.dll beside the application or install a system PDFium library. {detail}"
         ))
     })
+}
+
+fn pdfium_library_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = PDFIUM_RESOURCE_PATH.get() {
+        candidates.push(path.clone());
+    }
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(directory) = executable.parent() {
+            candidates.push(Pdfium::pdfium_platform_library_name_at_path(directory));
+        }
+    }
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join("pdfium")
+            .join(Pdfium::pdfium_platform_library_name()),
+    );
+    candidates.dedup();
+    candidates
 }
 
 fn build_pdf_publication(
@@ -426,6 +452,34 @@ mod tests {
             .list_publications()
             .expect("publications")
             .is_empty());
+
+        drop(database);
+        fs::remove_dir_all(root).expect("cleanup test directory");
+    }
+
+    #[test]
+    fn bundled_pdfium_imports_real_pdf_fixture() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("tactile-reader-sample.pdf");
+        assert!(fixture.is_file(), "test PDF fixture must be present");
+
+        let root = test_root("pdfium-fixture");
+        let database = LibraryDb::open(root.join("app")).expect("database");
+        let result = importer::import_paths(&database, &[fixture.to_string_lossy().into_owned()])
+            .expect("PDF import result");
+
+        assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+        let publication = result
+            .publications
+            .first()
+            .expect("imported PDF publication");
+        assert_eq!(publication.format, "pdf");
+        assert_eq!(publication.pages.len(), 2);
+        assert!(publication.pages.iter().all(|page| {
+            Path::new(&page.cache_path).is_file() && page.width > 0 && page.height > 0
+        }));
 
         drop(database);
         fs::remove_dir_all(root).expect("cleanup test directory");

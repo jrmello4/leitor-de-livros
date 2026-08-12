@@ -42,7 +42,11 @@ The importer rejects path traversal, decompression bombs, extreme dimensions, un
 
 The reader renderer is isolated from the React interface. WebGPU is primary and WebGL2 is the fallback. It keeps the previous, current, and next pages decoded and, when possible, GPU resident. Quality tiers reduce mesh density, shadows, and lighting before frame rate falls.
 
-Panel analysis first uses fast gutter and contour geometry. Low-confidence pages go through a locally bundled ONNX model. The result is a versioned panel graph containing regions, order, direction, framing, confidence, and user overrides. Failure falls back from model to geometry to manual reading without interrupting the session.
+Panel analysis first uses fast gutter and contour geometry. The current delivery deliberately stops at a persistent
+manual route for low-confidence pages because no licensed ONNX weights or release validation set are committed to the
+repository. When supplied, a locally bundled ONNX model can become the next fallback without changing the versioned
+panel-graph contract (regions, order, direction, framing, confidence, and user overrides). Failure falls back from
+model to geometry to manual reading without interrupting the session.
 
 ## Core contracts
 

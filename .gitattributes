@@ -1,0 +1,4 @@
+# Keep immutable test/bundled artifacts out of text and whitespace transforms.
+src-tauri/tests/fixtures/*.pdf -text -diff
+src-tauri/resources/pdfium/*.dll -text -diff
+src-tauri/resources/licenses/pdfium/** -whitespace

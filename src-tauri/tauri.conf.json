@@ -29,7 +29,11 @@
     }
   },
   "bundle": {
-    "active": false,
-    "targets": "all"
+    "active": true,
+    "targets": ["nsis"],
+    "resources": {
+      "resources/pdfium/pdfium.dll": "pdfium.dll",
+      "resources/licenses/pdfium/": "licenses/pdfium/"
+    }
   }
 }

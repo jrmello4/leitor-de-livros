@@ -336,6 +336,8 @@ export function App() {
           onPrevious={() => moveActivePage(-1)}
           onToggleSettings={() => setShowProfile((current) => !current)}
           onToggleFullscreen={() => void toggleFullscreen()}
+          onFlowCorrected={() => setAnnouncement('Panel order corrected and saved for this publication.')}
+          nativeRuntime={nativeRuntime}
         />
       ) : (
         <LibraryView

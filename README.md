@@ -53,10 +53,17 @@ EPUB, accounts, cloud synchronization, online metadata, a store, discovery, and 
 The product concept and engineering design are approved. The current slice includes the React/Vite reader plus a
 Tauri native core for SQLite library/progress/profile persistence, safe raster image, CBZ, CBR, and PDF import, and
 derived page caching. PDF pages are rendered into bounded PNG cache entries; CBR pages are extracted through the
-native UnRAR adapter. The browser fallback remains available for review. Adaptive Flow analysis and production
-packaging remain subsequent phases.
+native UnRAR adapter. The reader uses WebGPU first, then WebGL2, then an accessible static page, retaining adjacent
+pages and reducing effects before it sacrifices frame time.
 
-PDFium is intentionally a runtime dependency rather than a checked-in binary. Copy the platform PDFium library
-(on Windows, typically `pdfium.dll`) beside the application executable or install it where the process can load it.
+Adaptive Flow now performs geometry-only analysis on-device and stores a versioned panel graph per publication/page.
+The reader reveals its panel markers only on request; a reader can swap two detected markers or select a persistent
+full-page manual route for low-confidence pages. No ONNX weights are bundled yet: that fallback remains deliberately
+deferred until a licensed model and validation set are supplied. The browser fallback remains available for review;
+installer smoke tests, reference-hardware performance work, and signed production packaging remain subsequent phases.
+
+The Windows x64 package includes the compatible PDFium runtime as a Tauri resource. The native core first resolves
+that bundled DLL, then a side-by-side executable DLL, then a system library; it surfaces a diagnostic if none can be
+loaded. PDFium and third-party license notices ship under the package `licenses/pdfium/` directory.
 
 Read the complete design specification in [docs/superpowers/specs/2026-08-11-tactile-comic-reader-design.md](docs/superpowers/specs/2026-08-11-tactile-comic-reader-design.md).

@@ -6,7 +6,7 @@ mod models;
 
 use db::LibraryDb;
 use models::{NativeImportResult, NativePublication};
-use tauri::{Manager, State};
+use tauri::{path::BaseDirectory, Manager, State};
 
 #[tauri::command]
 fn list_publications(database: State<'_, LibraryDb>) -> Result<Vec<NativePublication>, String> {
@@ -46,11 +46,36 @@ fn save_profile(profile: serde_json::Value, database: State<'_, LibraryDb>) -> R
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn load_panel_graph(
+    publication_id: String,
+    page_id: String,
+    database: State<'_, LibraryDb>,
+) -> Result<Option<serde_json::Value>, String> {
+    database
+        .load_panel_graph(&publication_id, &page_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_panel_graph(
+    publication_id: String,
+    page_id: String,
+    graph: serde_json::Value,
+    database: State<'_, LibraryDb>,
+) -> Result<(), String> {
+    database
+        .save_panel_graph(&publication_id, &page_id, &graph)
+        .map_err(|error| error.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            let pdfium_resource = app.path().resolve("pdfium.dll", BaseDirectory::Resource)?;
+            adapters::configure_pdfium_resource_path(pdfium_resource);
             let data_dir = app.path().app_data_dir()?;
             let database = LibraryDb::open(data_dir)?;
             app.manage(database);
@@ -61,7 +86,9 @@ pub fn run() {
             import_publications,
             save_progress,
             load_profile,
-            save_profile
+            save_profile,
+            load_panel_graph,
+            save_panel_graph
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tactile Reader");

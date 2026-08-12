@@ -2,6 +2,10 @@ import { useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent, WheelEvent } from 'react';
 import { pageCounter, visiblePageIndexes, clamp } from '../domain/reader';
 import type { PageDescriptor, Publication, ReadingProfile } from '../domain/types';
+import { useAdaptiveFlow } from '../flow/useAdaptiveFlow';
+import { ReaderSurface } from '../rendering/ReaderSurface';
+import type { RenderFrame, RendererStatus } from '../rendering/contracts';
+import { AdaptiveFlowOverlay } from './AdaptiveFlowOverlay';
 
 interface ReaderViewProps {
   publication: Publication;
@@ -12,11 +16,14 @@ interface ReaderViewProps {
   onPrevious: () => void;
   onToggleSettings: () => void;
   onToggleFullscreen: () => void;
+  onFlowCorrected: () => void;
+  nativeRuntime: boolean;
 }
 
 function PageSheet({ page, className = '' }: { page: PageDescriptor; className?: string }) {
+  const aspectRatio = page.width > 0 && page.height > 0 ? `${page.width} / ${page.height}` : undefined;
   return (
-    <article className={`page-sheet ${className}`} aria-label={`Page ${page.index + 1}`}>
+    <article className={`page-sheet ${className}`} aria-label={`Page ${page.index + 1}`} style={{ aspectRatio }}>
       <img src={page.src} alt={`${page.name}, page ${page.index + 1}`} draggable={false} />
       <span className="page-folio">{String(page.index + 1).padStart(2, '0')}</span>
     </article>
@@ -32,13 +39,30 @@ export function ReaderView({
   onPrevious,
   onToggleSettings,
   onToggleFullscreen,
+  onFlowCorrected,
+  nativeRuntime,
 }: ReaderViewProps) {
   const stageRef = useRef<HTMLDivElement>(null);
   const [dragProgress, setDragProgress] = useState(0);
   const [dragging, setDragging] = useState(false);
+  const [flowVisible, setFlowVisible] = useState(false);
+  const [rendererStatus, setRendererStatus] = useState<RendererStatus>({ backend: 'static', quality: 'essential' });
   const visibleIndexes = visiblePageIndexes(publication.currentPage, publication.pages, profile.mode, profile.direction);
   const visiblePages = visibleIndexes.map((index) => publication.pages[index]).filter(Boolean);
   const currentPage = publication.pages[publication.currentPage];
+  const preloadPages = [publication.currentPage - 1, publication.currentPage, publication.currentPage + 1]
+    .map((index) => publication.pages[index])
+    .filter((page): page is PageDescriptor => Boolean(page));
+  const { graph: flowGraph, state: flowState, swapOrder, useManualRoute } = useAdaptiveFlow({
+    publicationId: publication.id,
+    page: currentPage,
+    direction: profile.direction,
+    nativeRuntime,
+  });
+
+  const isFlowInteraction = (event: PointerEvent<HTMLDivElement>) => (
+    event.target instanceof Element && Boolean(event.target.closest('[data-flow-control]'))
+  );
 
   const progressFromPointer = (event: PointerEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -47,7 +71,7 @@ export function ReaderView({
   };
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || profile.reducedMotion) {
+    if (event.button !== 0 || profile.reducedMotion || isFlowInteraction(event)) {
       return;
     }
 
@@ -57,7 +81,7 @@ export function ReaderView({
   };
 
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
-    if (!dragging) {
+    if (!dragging || isFlowInteraction(event)) {
       return;
     }
 
@@ -98,9 +122,35 @@ export function ReaderView({
     '--turn-progress': dragProgress,
     '--turn-duration': `${profile.pageTurnDuration}ms`,
   } as CSSProperties;
+  const rendererFrame: RenderFrame = {
+    pages: visiblePages,
+    preloadPages,
+    turningPageId: currentPage?.id,
+    direction: profile.direction,
+    mode: profile.mode,
+    turnProgress: dragProgress,
+    reducedMotion: profile.reducedMotion,
+  };
+  const rendererLabel = rendererStatus.backend === 'webgpu'
+    ? 'GPU'
+    : rendererStatus.backend === 'webgl2'
+      ? 'GL'
+      : 'PAGE';
+  const currentPageSlot = visiblePages.findIndex((page) => page.id === currentPage?.id);
+  const correctFlowOrder = (firstId: string, secondId: string) => {
+    swapOrder(firstId, secondId);
+    onFlowCorrected();
+  };
+  const useManualFlowRoute = () => {
+    useManualRoute();
+    onFlowCorrected();
+  };
 
   return (
-    <main className={`reader-view reader-view--${profile.direction} ${profile.reducedMotion ? 'reader-view--reduced-motion' : ''}`}>
+    <main
+      className={`reader-view reader-view--${profile.direction} ${profile.reducedMotion ? 'reader-view--reduced-motion' : ''}`}
+      data-renderer={rendererStatus.backend}
+    >
       <header className="reader-topbar">
         <div className="reader-topbar-start">
           <button className="reader-back" onClick={onBack} aria-label="Back to library">← <span>Library</span></button>
@@ -111,7 +161,22 @@ export function ReaderView({
           </div>
         </div>
         <div className="reader-topbar-end">
+          <span
+            className="renderer-mark"
+            title={rendererStatus.fallbackReason ?? `Render backend: ${rendererStatus.backend}`}
+            aria-label={`Render backend: ${rendererStatus.backend}${rendererStatus.fps ? `, ${rendererStatus.fps} frames per second` : ''}`}
+          >
+            {rendererLabel}
+          </span>
           <span className="reader-counter">{pageCounter(publication.currentPage, publication.pages.length)}</span>
+          <button
+            className={`reader-tool reader-flow-toggle ${flowVisible ? 'reader-flow-toggle--active' : ''}`}
+            type="button"
+            onClick={() => setFlowVisible((current) => !current)}
+            aria-pressed={flowVisible}
+          >
+            Flow <span aria-hidden="true">↘</span>
+          </button>
           <button className="reader-tool" onClick={onToggleFullscreen}>Fullscreen <span aria-hidden="true">↗</span></button>
           <button className="reader-tool" onClick={onToggleSettings}>Settings <span aria-hidden="true">⌘</span></button>
         </div>
@@ -131,24 +196,48 @@ export function ReaderView({
         <div className="stage-caption stage-caption--right">{profile.mode === 'spread' ? 'SPREAD VIEW' : 'SINGLE PAGE'}</div>
 
         <div className={`paper-spread paper-spread--${profile.mode}`}>
-          {visiblePages.map((page) => <PageSheet page={page} key={page.id} />)}
-          {currentPage && dragProgress > 0 && (
-            <div
-              className={`curl-layer curl-layer--${profile.direction}`}
-              style={curlStyle}
-              aria-hidden="true"
-            >
-              <PageSheet page={currentPage} />
-              <span className="curl-glint" />
-            </div>
-          )}
+          <ReaderSurface
+            frame={rendererFrame}
+            ariaLabel={`${pageCounter(publication.currentPage, publication.pages.length)} rendered with ${rendererStatus.backend}`}
+            onStatus={setRendererStatus}
+            staticContent={(
+              <>
+                {visiblePages.map((page) => <PageSheet page={page} key={page.id} />)}
+                {currentPage && dragProgress > 0 && (
+                  <div
+                    className={`curl-layer curl-layer--${profile.direction}`}
+                    style={curlStyle}
+                    aria-hidden="true"
+                  >
+                    <PageSheet page={currentPage} />
+                    <span className="curl-glint" />
+                  </div>
+                )}
+              </>
+            )}
+          />
+          <AdaptiveFlowOverlay
+            graph={flowGraph}
+            isAnalyzing={flowState === 'analyzing'}
+            visible={flowVisible}
+            pageSlot={Math.max(currentPageSlot, 0)}
+            pageCount={visiblePages.length}
+            onSwap={correctFlowOrder}
+            onUseManualRoute={useManualFlowRoute}
+          />
         </div>
 
         <div className="corner-hint" aria-hidden="true">
           <span className="corner-line" />
           <span>DRAG A CORNER</span>
         </div>
-        <p className="stage-note">{profile.reducedMotion ? 'Reduced motion is on · use the controls below' : 'The fold follows your pointer'}</p>
+        <p className="stage-note">
+          {profile.reducedMotion
+            ? 'Reduced motion is on · use the controls below'
+            : rendererStatus.backend === 'static'
+              ? 'A static page is keeping this session accessible'
+              : `${rendererStatus.backend === 'webgpu' ? 'GPU' : 'WebGL'} keeps motion within the frame budget`}
+        </p>
       </section>
 
       <footer className="reader-controls">
