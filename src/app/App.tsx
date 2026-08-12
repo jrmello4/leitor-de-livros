@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createDemoPublication } from '../data/demo';
 import { canRunActionWhileSettingsOpen, InputMap } from '../domain/input';
 import { calculateProgress, movePage } from '../domain/reader';
-import type { ActionName, Bookmark, CacheInfo, PageDescriptor, Publication, ReaderState, ReadingProfile } from '../domain/types';
+import type { ActionName, Bookmark, CacheInfo, Publication, ReaderState, ReadingProfile } from '../domain/types';
 import { importFiles } from '../services/importers';
 import {
   chooseNativeFiles,
@@ -100,20 +100,22 @@ export function App() {
 
   const reloadNativeLibraryWithEssentials = useCallback(async (direction: ReadingProfile['direction']) => {
     const initial = await listNativePublications(direction);
-    const ensuredPages = new Map<string, Map<string, PageDescriptor>>();
     let incomplete = false;
+    const activePageId = activePublication?.pages[activePublication.currentPage]?.id;
     for (const publication of initial) {
       const pageIds = new Set([
         publication.pages[publication.currentPage]?.id,
         publication.pages.find((page) => page.id === publication.coverPageId)?.id,
       ].filter((pageId): pageId is string => Boolean(pageId)));
-      const publicationPages = new Map<string, PageDescriptor>();
       for (const pageId of pageIds) {
+        // Keep the page currently shown last so an LRU eviction cannot blank
+        // the reader while the cache is being rebuilt.
+        if (publication.id === activePublication?.id && pageId === activePageId) {
+          continue;
+        }
         try {
           const ensured = await ensureNativePage(publication.id, pageId);
-          if (ensured) {
-            publicationPages.set(pageId, ensured);
-          } else {
+          if (!ensured) {
             incomplete = true;
           }
         } catch {
@@ -122,20 +124,40 @@ export function App() {
           incomplete = true;
         }
       }
-      ensuredPages.set(publication.id, publicationPages);
+    }
+    if (activePublication && activePageId) {
+      try {
+        const ensured = await ensureNativePage(activePublication.id, activePageId);
+        if (!ensured) {
+          incomplete = true;
+        }
+      } catch {
+        // A legacy publication may no longer have a rebuildable source. Keep
+        // the rest of the library usable and surface that state to the UI.
+        incomplete = true;
+      }
     }
     const refreshed = await listNativePublications(direction);
-    const library = refreshed.map((publication) => {
-      const ensured = ensuredPages.get(publication.id);
-      return ensured
-        ? { ...publication, pages: publication.pages.map((page) => ensured.get(page.id) ?? page) }
-        : publication;
-    });
-    if (library.some((publication) => publication.pages.some((page) => !page.src))) {
+    // The final native relist is authoritative: an earlier ensured descriptor
+    // may already have been evicted by a later LRU rebuild step.
+    if (refreshed.some((publication) => publication.pages.some((page) => !page.src))) {
       incomplete = true;
     }
-    return { library, incomplete };
-  }, []);
+    const activeRefreshed = activePublication
+      ? refreshed.find((publication) => publication.id === activePublication.id)
+      : undefined;
+    if (activeRefreshed) {
+      const current = activeRefreshed.pages[activeRefreshed.currentPage];
+      const cover = activeRefreshed.pages.find((page) => page.id === activeRefreshed.coverPageId);
+      if (!current?.src || !cover?.src) {
+        // A spread/cover may still be unavailable for a legacy source; keep
+        // the library usable and let the caller surface a non-destructive
+        // diagnostic while opening/rebuilding can retry later.
+        incomplete = true;
+      }
+    }
+    return { library: refreshed, incomplete };
+  }, [activePublication]);
 
   useEffect(() => {
     if (!nativeRuntime) {
