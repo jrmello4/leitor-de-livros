@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     path::{Component, Path, PathBuf},
     sync::Mutex,
 };
@@ -9,14 +10,18 @@ use serde_json::Value;
 use crate::{
     error::{CoreError, CoreResult},
     models::{
-        CacheInfo, NativeBookmark, NativePage, NativePublication, NativeReaderState, NewPublication,
+        CacheInfo, NativeBookmark, NativePage, NativePublication, NativeReaderState,
+        NewPublication, PageSourceRef,
     },
 };
 
 const DEFAULT_CACHE_LIMIT_BYTES: i64 = 2 * 1024 * 1024 * 1024;
 const CACHE_MISSING_DIAGNOSTIC: &str =
     "Derived cache is unavailable; page reconstruction is required.";
-const MIGRATION_VERSION: i64 = 3;
+#[allow(dead_code)]
+const CACHE_UNREBUILDABLE_DIAGNOSTIC: &str =
+    "The derived page cannot be reconstructed because its source reference is unavailable.";
+const MIGRATION_VERSION: i64 = 4;
 
 pub struct LibraryDb {
     connection: Mutex<Connection>,
@@ -152,14 +157,15 @@ impl LibraryDb {
             let byte_size = cache_file_size(&self.cache_dir, &page.cache_path)?;
             transaction.execute(
                 "INSERT INTO pages
-                    (id, publication_id, page_index, name, cache_path, width, height)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    (id, publication_id, page_index, name, cache_path, source_ref, width, height)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     page.id,
                     publication.id,
                     page.index as i64,
                     page.name,
                     cache_path,
+                    serde_json::to_string(&page.source_ref)?,
                     page.width as i64,
                     page.height as i64,
                 ],
@@ -397,6 +403,216 @@ impl LibraryDb {
         Ok(())
     }
 
+    // Public cache APIs are wired to Tauri commands in the following implementation task.
+    #[allow(dead_code)]
+    pub fn touch_page_cache(&self, page_id: &str, byte_size: i64, pinned: bool) -> CoreResult<()> {
+        if byte_size < 0 {
+            return Err(CoreError::from("cache byte size cannot be negative"));
+        }
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| CoreError::from("database lock poisoned"))?;
+        let page = connection
+            .query_row(
+                "SELECT publication_id, cache_path FROM pages WHERE id = ?1",
+                [page_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?
+            .ok_or_else(|| CoreError::from("page does not exist"))?;
+        let actual_size = cache_file_size(&self.cache_dir, Path::new(&page.1))?;
+        if actual_size != byte_size {
+            return Err(CoreError::from(
+                "cache byte size does not match the derived file",
+            ));
+        }
+        connection.execute(
+            "INSERT INTO cache_entries
+                (page_id, publication_id, cache_path, byte_size, last_accessed_at, pinned)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(page_id) DO UPDATE SET
+                publication_id = excluded.publication_id,
+                cache_path = excluded.cache_path,
+                byte_size = excluded.byte_size,
+                last_accessed_at = excluded.last_accessed_at,
+                pinned = excluded.pinned",
+            params![
+                page_id,
+                page.0,
+                page.1,
+                actual_size,
+                now(),
+                i64::from(pinned)
+            ],
+        )?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn enforce_cache_limit(&self, protected_page_ids: &[String]) -> CoreResult<i64> {
+        let protected = protected_page_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| CoreError::from("database lock poisoned"))?;
+        let (mut used_bytes, max_bytes) = connection.query_row(
+            "SELECT
+                (SELECT COALESCE(SUM(byte_size), 0) FROM cache_entries),
+                (SELECT max_bytes FROM cache_settings WHERE id = 'default')",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )?;
+        if used_bytes <= max_bytes {
+            return Ok(0);
+        }
+        let candidates = {
+            let mut statement = connection.prepare(
+                "SELECT page_id, publication_id, cache_path, byte_size
+                   FROM cache_entries
+                  WHERE pinned = 0
+                  ORDER BY last_accessed_at ASC, page_id ASC",
+            )?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+        let origin_paths = {
+            let mut statement =
+                connection.prepare("SELECT source_ref FROM pages WHERE source_ref <> ''")?;
+            let source_refs = statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            source_refs
+                .iter()
+                .filter_map(|value| decode_source_ref(value))
+                .filter_map(|source_ref| source_ref_path(&source_ref).canonicalize().ok())
+                .collect::<HashSet<_>>()
+        };
+        let transaction = connection.transaction()?;
+        let mut freed_bytes = 0_i64;
+        for (page_id, publication_id, cache_path, recorded_size) in candidates {
+            if used_bytes <= max_bytes {
+                break;
+            }
+            if protected.contains(page_id.as_str()) {
+                continue;
+            }
+            if let Some((validated_path, actual_size)) =
+                validated_cache_file(&self.cache_dir, Path::new(&cache_path))?
+            {
+                if !origin_paths.contains(&validated_path) {
+                    std::fs::remove_file(validated_path)?;
+                    freed_bytes = freed_bytes.saturating_add(actual_size);
+                }
+            }
+            transaction.execute("DELETE FROM cache_entries WHERE page_id = ?1", [&page_id])?;
+            transaction.execute("UPDATE pages SET cache_path = '' WHERE id = ?1", [&page_id])?;
+            mark_publication_cache_missing(&transaction, &publication_id)?;
+            used_bytes = used_bytes.saturating_sub(recorded_size.max(0));
+        }
+        transaction.commit()?;
+        Ok(freed_bytes)
+    }
+
+    #[allow(dead_code)]
+    pub fn ensure_page_cache(&self, publication_id: &str, page_id: &str) -> CoreResult<NativePage> {
+        let (mut page, format) = {
+            let connection = self
+                .connection
+                .lock()
+                .map_err(|_| CoreError::from("database lock poisoned"))?;
+            connection
+                .query_row(
+                    "SELECT p.id, p.page_index, p.name, p.cache_path, p.source_ref,
+                            p.width, p.height, publications.format
+                       FROM pages p
+                       JOIN publications ON publications.id = p.publication_id
+                      WHERE p.publication_id = ?1 AND p.id = ?2",
+                    params![publication_id, page_id],
+                    |row| {
+                        let source_ref = row.get::<_, String>(4)?;
+                        Ok((
+                            NativePage {
+                                id: row.get(0)?,
+                                index: row.get::<_, i64>(1)? as usize,
+                                name: row.get(2)?,
+                                cache_path: row.get(3)?,
+                                source_ref: decode_source_ref(&source_ref),
+                                width: row.get::<_, i64>(5)? as u32,
+                                height: row.get::<_, i64>(6)? as u32,
+                            },
+                            row.get::<_, String>(7)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .ok_or_else(|| CoreError::from("page does not belong to the publication"))?
+        };
+        let protected_page_ids = self.protected_page_ids(publication_id, page.index)?;
+        if let Some((_, byte_size)) =
+            validated_cache_file(&self.cache_dir, Path::new(&page.cache_path))?
+        {
+            self.touch_page_cache(page_id, byte_size, false)?;
+            self.enforce_cache_limit(&protected_page_ids)?;
+            return Ok(page);
+        }
+
+        let source_ref = page.source_ref.as_ref().ok_or_else(|| {
+            let _ =
+                self.append_publication_diagnostic(publication_id, CACHE_UNREBUILDABLE_DIAGNOSTIC);
+            CoreError::from(CACHE_UNREBUILDABLE_DIAGNOSTIC)
+        })?;
+        let rebuilt = crate::importer::rebuild_page(&format, source_ref)?;
+        let publication_cache_dir = self.publication_cache_dir(publication_id)?;
+        std::fs::create_dir_all(&publication_cache_dir)?;
+        let cache_path = crate::importer::cache_page(
+            &publication_cache_dir,
+            page_id,
+            &rebuilt.extension,
+            &rebuilt.bytes,
+        )?;
+        let cache_path_string = cache_path
+            .to_str()
+            .ok_or_else(|| CoreError::from("cache path is not valid UTF-8"))?
+            .to_owned();
+        {
+            let connection = self
+                .connection
+                .lock()
+                .map_err(|_| CoreError::from("database lock poisoned"))?;
+            connection.execute(
+                "UPDATE pages SET cache_path = ?1, width = ?2, height = ?3
+                  WHERE publication_id = ?4 AND id = ?5",
+                params![
+                    cache_path_string,
+                    rebuilt.width as i64,
+                    rebuilt.height as i64,
+                    publication_id,
+                    page_id,
+                ],
+            )?;
+        }
+        let byte_size = cache_file_size(&self.cache_dir, &cache_path)?;
+        self.touch_page_cache(page_id, byte_size, false)?;
+        self.enforce_cache_limit(&protected_page_ids)?;
+        page.cache_path = cache_path_string;
+        page.width = rebuilt.width;
+        page.height = rebuilt.height;
+        Ok(page)
+    }
+
     pub fn clear_cache(&self) -> CoreResult<()> {
         let cache_root = self.cache_dir.canonicalize()?;
         for entry in std::fs::read_dir(&cache_root)? {
@@ -550,13 +766,59 @@ impl LibraryDb {
         Ok(candidate)
     }
 
+    #[allow(dead_code)]
+    fn protected_page_ids(
+        &self,
+        publication_id: &str,
+        page_index: usize,
+    ) -> CoreResult<Vec<String>> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| CoreError::from("database lock poisoned"))?;
+        let lower = page_index.saturating_sub(1) as i64;
+        let upper = page_index.saturating_add(1) as i64;
+        let mut statement = connection.prepare(
+            "SELECT id FROM pages
+              WHERE publication_id = ?1 AND page_index BETWEEN ?2 AND ?3",
+        )?;
+        let page_ids = statement
+            .query_map(params![publication_id, lower, upper], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into);
+        page_ids
+    }
+
+    #[allow(dead_code)]
+    fn append_publication_diagnostic(
+        &self,
+        publication_id: &str,
+        diagnostic: &str,
+    ) -> CoreResult<()> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| CoreError::from("database lock poisoned"))?;
+        connection.execute(
+            "UPDATE publications
+                SET diagnostic = CASE
+                    WHEN diagnostic IS NULL OR diagnostic = '' THEN ?1
+                    WHEN instr(diagnostic, ?1) > 0 THEN diagnostic
+                    ELSE diagnostic || ' ' || ?1
+                END
+              WHERE id = ?2",
+            params![diagnostic, publication_id],
+        )?;
+        Ok(())
+    }
+
     fn read_publication(
         &self,
         connection: &Connection,
         row: PublicationRow,
     ) -> CoreResult<NativePublication> {
         let mut page_statement = connection.prepare(
-            "SELECT id, page_index, name, cache_path, width, height
+            "SELECT id, page_index, name, cache_path, source_ref, width, height
                FROM pages
               WHERE publication_id = ?1
               ORDER BY page_index ASC",
@@ -568,8 +830,9 @@ impl LibraryDb {
                     index: page.get::<_, i64>(1)? as usize,
                     name: page.get(2)?,
                     cache_path: page.get(3)?,
-                    width: page.get::<_, i64>(4)? as u32,
-                    height: page.get::<_, i64>(5)? as u32,
+                    source_ref: decode_source_ref(&page.get::<_, String>(4)?),
+                    width: page.get::<_, i64>(5)? as u32,
+                    height: page.get::<_, i64>(6)? as u32,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -696,7 +959,7 @@ fn migrate(connection: &mut Connection) -> CoreResult<()> {
         )?;
     }
 
-    if current_version < MIGRATION_VERSION {
+    if current_version < 3 {
         if !column_exists(&transaction, "publications", "is_favorite")? {
             transaction.execute_batch(
                 "ALTER TABLE publications
@@ -759,7 +1022,73 @@ fn migrate(connection: &mut Connection) -> CoreResult<()> {
         )?;
     }
 
+    if current_version < MIGRATION_VERSION {
+        backfill_deterministic_source_refs(&transaction)?;
+        transaction.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (4, ?1)",
+            params![now()],
+        )?;
+    }
+
     transaction.commit()?;
+    Ok(())
+}
+
+fn backfill_deterministic_source_refs(transaction: &rusqlite::Transaction<'_>) -> CoreResult<()> {
+    if !column_exists(transaction, "publications", "format")?
+        || !column_exists(transaction, "publications", "source_path")?
+        || !column_exists(transaction, "pages", "page_index")?
+        || !column_exists(transaction, "pages", "source_ref")?
+    {
+        return Ok(());
+    }
+    let rows = {
+        let mut statement = transaction.prepare(
+            "SELECT pages.id, publications.format, publications.source_path,
+                    pages.page_index,
+                    (SELECT COUNT(*) FROM pages siblings
+                      WHERE siblings.publication_id = pages.publication_id)
+               FROM pages
+               JOIN publications ON publications.id = pages.publication_id
+              WHERE pages.source_ref = ''",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows
+    };
+    for (page_id, format, source_path, page_index, page_count) in rows {
+        let source_ref = match format.as_str() {
+            "pdf" => source_path
+                .strip_prefix("pdf:")
+                .map(|path| PageSourceRef::Pdf {
+                    path: path.to_owned(),
+                    page_index: page_index.max(0) as usize,
+                }),
+            "images" if page_count == 1 => {
+                source_path
+                    .strip_prefix("image:")
+                    .map(|path| PageSourceRef::Image {
+                        path: path.to_owned(),
+                    })
+            }
+            _ => None,
+        };
+        if let Some(source_ref) = source_ref {
+            transaction.execute(
+                "UPDATE pages SET source_ref = ?1 WHERE id = ?2",
+                params![serde_json::to_string(&source_ref)?, page_id],
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -829,6 +1158,10 @@ fn cache_file_size(cache_dir: &Path, cache_path: &Path) -> CoreResult<i64> {
 }
 
 fn cache_file_size_if_valid(cache_dir: &Path, cache_path: &Path) -> CoreResult<Option<i64>> {
+    Ok(validated_cache_file(cache_dir, cache_path)?.map(|(_, byte_size)| byte_size))
+}
+
+fn validated_cache_file(cache_dir: &Path, cache_path: &Path) -> CoreResult<Option<(PathBuf, i64)>> {
     if cache_path.as_os_str().is_empty() || !cache_path.exists() {
         return Ok(None);
     }
@@ -839,7 +1172,24 @@ fn cache_file_size_if_valid(cache_dir: &Path, cache_path: &Path) -> CoreResult<O
     }
     let byte_size = i64::try_from(canonical_path.metadata()?.len())
         .map_err(|_| CoreError::from("derived page cache is too large to record"))?;
-    Ok(Some(byte_size))
+    Ok(Some((canonical_path, byte_size)))
+}
+
+fn decode_source_ref(value: &str) -> Option<PageSourceRef> {
+    if value.is_empty() {
+        None
+    } else {
+        serde_json::from_str(value).ok()
+    }
+}
+
+#[allow(dead_code)]
+fn source_ref_path(source_ref: &PageSourceRef) -> &Path {
+    match source_ref {
+        PageSourceRef::Image { path }
+        | PageSourceRef::Archive { path, .. }
+        | PageSourceRef::Pdf { path, .. } => Path::new(path),
+    }
 }
 
 fn mark_publication_cache_missing(
@@ -903,7 +1253,7 @@ fn now() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{NativeBookmark, NativeReaderState, NewPage};
+    use crate::models::{NativeBookmark, NativeReaderState, NewPage, PageSourceRef};
 
     const TWO_GIB: i64 = 2 * 1024 * 1024 * 1024;
 
@@ -940,6 +1290,9 @@ mod tests {
                     index: 0,
                     name: format!("{page_id}.png"),
                     cache_path,
+                    source_ref: PageSourceRef::Image {
+                        path: source_path.to_owned(),
+                    },
                     width: 1,
                     height: 1,
                 }],
@@ -1431,6 +1784,282 @@ mod tests {
                 .expect("load graph"),
             Some(graph)
         );
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
+    fn enforce_cache_limit_evicts_lru_and_preserves_protected_pages() {
+        let root = temporary_root("cache-lru");
+        std::fs::create_dir_all(&root).expect("root");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        let source_path = root.join("source.png");
+        std::fs::write(&source_path, b"source").expect("source");
+        let publication_id = "publication-lru";
+        let publication_cache = database.cache_dir().join(publication_id);
+        std::fs::create_dir_all(&publication_cache).expect("cache directory");
+        let mut pages = Vec::new();
+        for (index, page_id) in ["page-old", "page-protected", "page-new"]
+            .iter()
+            .enumerate()
+        {
+            let cache_path = publication_cache.join(format!("{page_id}.png"));
+            std::fs::write(&cache_path, [index as u8; 4]).expect("cache page");
+            pages.push(NewPage {
+                id: (*page_id).to_owned(),
+                index,
+                name: format!("{page_id}.png"),
+                cache_path,
+                source_ref: PageSourceRef::Image {
+                    path: source_path.to_string_lossy().into_owned(),
+                },
+                width: 1,
+                height: 1,
+            });
+        }
+        database
+            .insert_publication(&NewPublication {
+                id: publication_id.to_owned(),
+                title: "LRU".to_owned(),
+                source_label: "source".to_owned(),
+                source_path: source_path.to_string_lossy().into_owned(),
+                format: "images".to_owned(),
+                pages,
+                cover_page_id: "page-old".to_owned(),
+                current_page: 0,
+                direction: "ltr".to_owned(),
+                added_at: "0".to_owned(),
+                updated_at: "0".to_owned(),
+                diagnostic: None,
+            })
+            .expect("publication");
+        let connection = database.connection.lock().expect("database lock");
+        for (page_id, accessed_at) in [
+            ("page-old", "1"),
+            ("page-protected", "2"),
+            ("page-new", "3"),
+        ] {
+            connection
+                .execute(
+                    "UPDATE cache_entries SET last_accessed_at = ?1 WHERE page_id = ?2",
+                    params![accessed_at, page_id],
+                )
+                .expect("access order");
+        }
+        drop(connection);
+        database.set_cache_limit(8).expect("cache limit");
+
+        let freed = database
+            .enforce_cache_limit(&["page-protected".to_owned()])
+            .expect("enforce cache limit");
+
+        assert_eq!(freed, 4);
+        assert!(!publication_cache.join("page-old.png").exists());
+        assert!(publication_cache.join("page-protected.png").exists());
+        assert!(publication_cache.join("page-new.png").exists());
+        assert_eq!(database.cache_info().expect("cache info").used_bytes, 8);
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
+    fn cache_eviction_never_removes_a_path_outside_the_cache_directory() {
+        let root = temporary_root("cache-path-guard");
+        std::fs::create_dir_all(&root).expect("root");
+        let source_path = root.join("source.png");
+        let source_bytes = b"source bytes must survive";
+        std::fs::write(&source_path, source_bytes).expect("source");
+        let database = LibraryDb::open(root.join("app")).expect("database");
+        insert_test_publication(&database, &source_path.to_string_lossy());
+        let connection = database.connection.lock().expect("database lock");
+        connection
+            .execute(
+                "UPDATE cache_entries SET cache_path = ?1, byte_size = 999 WHERE page_id = 'page-1'",
+                [source_path.to_string_lossy().as_ref()],
+            )
+            .expect("poison cache path");
+        drop(connection);
+        database.set_cache_limit(1).expect("cache limit");
+
+        let freed = database
+            .enforce_cache_limit(&[])
+            .expect("safe cache enforcement");
+
+        assert_eq!(freed, 0);
+        assert_eq!(
+            std::fs::read(&source_path).expect("source remains"),
+            source_bytes
+        );
+        assert_eq!(database.cache_info().expect("cache info").used_bytes, 0);
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
+    fn cache_eviction_never_removes_an_origin_stored_under_the_cache_root() {
+        let root = temporary_root("cache-origin-guard");
+        let database = LibraryDb::open(root.join("app")).expect("database");
+        let source_path = database.cache_dir().join("source.png");
+        let source_bytes = b"origin inside cache must survive";
+        std::fs::write(&source_path, source_bytes).expect("source");
+        insert_test_publication(&database, &source_path.to_string_lossy());
+        let connection = database.connection.lock().expect("database lock");
+        connection
+            .execute(
+                "UPDATE cache_entries SET cache_path = ?1, byte_size = 999 WHERE page_id = 'page-1'",
+                [source_path.to_string_lossy().as_ref()],
+            )
+            .expect("poison cache path");
+        drop(connection);
+        database.set_cache_limit(1).expect("cache limit");
+
+        let freed = database
+            .enforce_cache_limit(&[])
+            .expect("safe cache enforcement");
+
+        assert_eq!(freed, 0);
+        assert_eq!(
+            std::fs::read(&source_path).expect("source remains"),
+            source_bytes
+        );
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
+    fn missing_image_page_is_rebuilt_atomically_and_touched() {
+        use std::io::Cursor;
+
+        use image::{DynamicImage, ImageFormat};
+
+        let root = temporary_root("cache-rebuild-image");
+        let source_dir = root.join("source");
+        std::fs::create_dir_all(&source_dir).expect("source directory");
+        let source_path = source_dir.join("page.png");
+        let mut encoded = Cursor::new(Vec::new());
+        DynamicImage::new_rgb8(3, 5)
+            .write_to(&mut encoded, ImageFormat::Png)
+            .expect("png");
+        let source_bytes = encoded.into_inner();
+        std::fs::write(&source_path, &source_bytes).expect("source image");
+        let database = LibraryDb::open(root.join("app")).expect("database");
+        let imported =
+            crate::importer::import_paths(&database, &[source_path.to_string_lossy().into_owned()])
+                .expect("import")
+                .publications
+                .remove(0);
+        let page = &imported.pages[0];
+        std::fs::remove_file(&page.cache_path).expect("remove derived page");
+
+        let rebuilt = database
+            .ensure_page_cache(&imported.id, &page.id)
+            .expect("rebuild page");
+
+        assert_eq!(
+            std::fs::read(&rebuilt.cache_path).expect("rebuilt bytes"),
+            source_bytes
+        );
+        assert_eq!((rebuilt.width, rebuilt.height), (3, 5));
+        assert!(!Path::new(&rebuilt.cache_path)
+            .parent()
+            .expect("cache parent")
+            .join(format!(".{}.tmp", rebuilt.id))
+            .exists());
+        assert_eq!(database.cache_info().expect("cache info").entry_count, 1);
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
+    fn migration_backfills_pdf_source_refs_but_leaves_ambiguous_archives_empty() {
+        let mut connection = Connection::open_in_memory().expect("in-memory sqlite");
+        connection
+            .execute_batch(
+                "PRAGMA foreign_keys = ON;
+                 CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+                 INSERT INTO schema_migrations (version, applied_at) VALUES (1, '0'), (2, '0'), (3, '0');
+                 CREATE TABLE publications (
+                    id TEXT PRIMARY KEY, title TEXT NOT NULL, source_label TEXT NOT NULL,
+                    format TEXT NOT NULL, source_path TEXT NOT NULL UNIQUE, cover_page_id TEXT NOT NULL,
+                    direction TEXT NOT NULL DEFAULT 'ltr', added_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL, diagnostic TEXT, is_favorite INTEGER NOT NULL DEFAULT 0
+                 );
+                 CREATE TABLE pages (
+                    id TEXT PRIMARY KEY, publication_id TEXT NOT NULL, page_index INTEGER NOT NULL,
+                    name TEXT NOT NULL, cache_path TEXT NOT NULL, source_ref TEXT NOT NULL DEFAULT '',
+                    width INTEGER NOT NULL, height INTEGER NOT NULL
+                 );
+                 INSERT INTO publications VALUES
+                    ('pdf-1', 'PDF', 'PDF', 'pdf', 'pdf:C:\\books\\sample.pdf', 'pdf-page', 'ltr', '0', '0', NULL, 0),
+                    ('cbz-1', 'CBZ', 'CBZ', 'cbz', 'archive:C:\\books\\sample.cbz', 'cbz-page', 'ltr', '0', '0', NULL, 0);
+                 INSERT INTO pages VALUES
+                    ('pdf-page', 'pdf-1', 2, 'page-2.png', '', '', 1, 1),
+                    ('cbz-page', 'cbz-1', 0, 'page.png', '', '', 1, 1);",
+            )
+            .expect("v3 schema");
+
+        migrate(&mut connection).expect("migrate v3 database");
+
+        let pdf_ref: String = connection
+            .query_row(
+                "SELECT source_ref FROM pages WHERE id = 'pdf-page'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("PDF source ref");
+        let archive_ref: String = connection
+            .query_row(
+                "SELECT source_ref FROM pages WHERE id = 'cbz-page'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("archive source ref");
+        assert_eq!(
+            decode_source_ref(&pdf_ref),
+            Some(PageSourceRef::Pdf {
+                path: "C:\\books\\sample.pdf".to_owned(),
+                page_index: 2,
+            })
+        );
+        assert_eq!(archive_ref, "");
+    }
+
+    #[test]
+    fn missing_legacy_source_ref_returns_a_non_reconstruction_diagnostic() {
+        let root = temporary_root("cache-no-source-ref");
+        std::fs::create_dir_all(&root).expect("root");
+        let source_path = root.join("source.cbz");
+        std::fs::write(&source_path, b"source").expect("source");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        insert_test_publication(&database, &source_path.to_string_lossy());
+        let cached_path = database
+            .cache_dir()
+            .join("publication-1")
+            .join("page-1.png");
+        std::fs::remove_file(cached_path).expect("remove derived cache");
+        let connection = database.connection.lock().expect("database lock");
+        connection
+            .execute("UPDATE pages SET source_ref = '' WHERE id = 'page-1'", [])
+            .expect("simulate legacy page");
+        drop(connection);
+
+        let result = database.ensure_page_cache("publication-1", "page-1");
+        let publication = database
+            .list_publications()
+            .expect("publications")
+            .remove(0);
+
+        assert!(result.is_err());
+        assert!(publication
+            .diagnostic
+            .as_deref()
+            .expect("diagnostic")
+            .contains("cannot be reconstructed"));
 
         drop(database);
         std::fs::remove_dir_all(root).expect("cleanup database");

@@ -1,7 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::HashSet,
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::{Cursor, Read, Write},
     path::{Component, Path, PathBuf},
 };
@@ -13,7 +13,7 @@ use zip::ZipArchive;
 use crate::{
     db::LibraryDb,
     error::{CoreError, CoreResult},
-    models::{NativeImportResult, NativePublication, NewPage, NewPublication},
+    models::{NativeImportResult, NativePublication, NewPage, NewPublication, PageSourceRef},
 };
 
 pub(crate) const MAX_PAGE_BYTES: u64 = 64 * 1024 * 1024;
@@ -24,6 +24,15 @@ pub(crate) const MAX_IMAGE_DIMENSION: u32 = 20_000;
 pub(crate) const MAX_IMAGE_PIXELS: u64 = 100_000_000;
 
 const IMAGE_EXTENSIONS: &[&str] = &["avif", "gif", "jpeg", "jpg", "png", "webp"];
+
+// Used through the staged cache command API introduced in the next task.
+#[allow(dead_code)]
+pub(crate) struct RebuiltPage {
+    pub extension: String,
+    pub bytes: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
 
 pub fn import_paths(db: &LibraryDb, raw_paths: &[String]) -> CoreResult<NativeImportResult> {
     let mut image_paths = Vec::new();
@@ -253,6 +262,9 @@ fn build_image_publication(
                 .unwrap_or("page")
                 .to_owned(),
             cache_path,
+            source_ref: PageSourceRef::Image {
+                path: path.to_string_lossy().into_owned(),
+            },
             width,
             height,
         });
@@ -338,6 +350,10 @@ fn build_cbz_publication(
                 .unwrap_or(&normalized_name)
                 .to_owned(),
             cache_path,
+            source_ref: PageSourceRef::Archive {
+                path: path.to_string_lossy().into_owned(),
+                member: normalized_name,
+            },
             width,
             height,
         });
@@ -428,14 +444,114 @@ pub(crate) fn cache_page(
     extension: &str,
     bytes: &[u8],
 ) -> CoreResult<PathBuf> {
+    if !is_single_path_component(page_id) || !is_image_extension(extension) {
+        return Err(CoreError::from("invalid derived cache file name"));
+    }
     fs::create_dir_all(cache_dir)?;
     let target = cache_dir.join(format!("{page_id}.{extension}"));
-    let temporary = cache_dir.join(format!(".{page_id}.tmp"));
-    let mut file = File::create(&temporary)?;
+    let temporary = cache_dir.join(format!(
+        ".{page_id}.{}.{}.tmp",
+        std::process::id(),
+        timestamp()
+    ));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)?;
     file.write_all(bytes)?;
     file.sync_all()?;
-    fs::rename(&temporary, &target)?;
+    drop(file);
+    if target.exists() {
+        fs::remove_file(&temporary)?;
+    } else if let Err(error) = fs::rename(&temporary, &target) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error.into());
+    }
     Ok(target)
+}
+
+#[allow(dead_code)]
+pub(crate) fn rebuild_page(format: &str, source_ref: &PageSourceRef) -> CoreResult<RebuiltPage> {
+    match (format, source_ref) {
+        ("images", PageSourceRef::Image { path }) => rebuild_image_page(Path::new(path)),
+        ("cbz", PageSourceRef::Archive { path, member }) => {
+            rebuild_cbz_page(Path::new(path), member)
+        }
+        ("cbr", PageSourceRef::Archive { path, member }) => {
+            crate::adapters::rebuild_cbr_page(Path::new(path), member)
+        }
+        ("pdf", PageSourceRef::Pdf { path, page_index }) => {
+            crate::adapters::rebuild_pdf_page(Path::new(path), *page_index)
+        }
+        _ => Err(CoreError::from(
+            "page source reference does not match the publication format",
+        )),
+    }
+}
+
+#[allow(dead_code)]
+fn rebuild_image_page(path: &Path) -> CoreResult<RebuiltPage> {
+    let metadata = fs::metadata(path)?;
+    if metadata.len() > MAX_PAGE_BYTES {
+        return Err(CoreError::from(format!(
+            "{} exceeds the {} MiB page limit",
+            path.display(),
+            MAX_PAGE_BYTES / 1024 / 1024
+        )));
+    }
+    let bytes = fs::read(path)?;
+    let (width, height) = validate_image(&bytes, path.to_string_lossy().as_ref())?;
+    let extension = extension(path).ok_or_else(|| CoreError::from("image extension missing"))?;
+    Ok(RebuiltPage {
+        extension,
+        bytes,
+        width,
+        height,
+    })
+}
+
+#[allow(dead_code)]
+fn rebuild_cbz_page(path: &Path, member: &str) -> CoreResult<RebuiltPage> {
+    if fs::metadata(path)?.len() > MAX_ARCHIVE_BYTES {
+        return Err(CoreError::from("CBZ exceeds the archive size safety limit"));
+    }
+    let normalized_member = validate_archive_name(member)?;
+    let file = File::open(path)?;
+    let mut archive = ZipArchive::new(file)?;
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index)?;
+        if entry.is_dir() || validate_archive_name(entry.name())? != normalized_member {
+            continue;
+        }
+        if entry.encrypted() {
+            return Err(CoreError::from("encrypted CBZ entries are not supported"));
+        }
+        if entry.size() > MAX_PAGE_BYTES {
+            return Err(CoreError::from(format!(
+                "CBZ page {normalized_member} exceeds the {} MiB page limit",
+                MAX_PAGE_BYTES / 1024 / 1024
+            )));
+        }
+        let mut bytes = Vec::with_capacity(entry.size() as usize);
+        entry.read_to_end(&mut bytes)?;
+        let (width, height) = validate_image(&bytes, &normalized_member)?;
+        let extension = extension_from_name(&normalized_member)
+            .ok_or_else(|| CoreError::from("CBZ image extension missing"))?;
+        return Ok(RebuiltPage {
+            extension,
+            bytes,
+            width,
+            height,
+        });
+    }
+    Err(CoreError::from(format!(
+        "CBZ page source is missing: {normalized_member}"
+    )))
+}
+
+fn is_single_path_component(value: &str) -> bool {
+    let mut components = Path::new(value).components();
+    matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none()
 }
 
 fn canonicalize_input(raw_path: &str) -> CoreResult<PathBuf> {
@@ -642,6 +758,16 @@ mod tests {
         let first_publication = &first_import.publications[0];
         assert_eq!(first_publication.pages[0].name, "page2.png");
         assert_eq!(first_publication.pages[1].name, "page10.png");
+        assert_eq!(
+            first_publication.pages[0].source_ref,
+            Some(crate::models::PageSourceRef::Image {
+                path: second_path
+                    .canonicalize()
+                    .expect("canonical second page")
+                    .to_string_lossy()
+                    .into_owned(),
+            })
+        );
         assert!(Path::new(&first_publication.pages[0].cache_path).exists());
 
         database
@@ -697,6 +823,27 @@ mod tests {
         assert_eq!(imported[0].format, "cbz");
         assert_eq!(imported[0].pages[0].name, "page2.png");
         assert_eq!(imported[0].pages[1].name, "page10.png");
+        assert_eq!(
+            imported[0].pages[0].source_ref,
+            Some(crate::models::PageSourceRef::Archive {
+                path: archive_path
+                    .canonicalize()
+                    .expect("canonical archive")
+                    .to_string_lossy()
+                    .into_owned(),
+                member: "page2.png".to_owned(),
+            })
+        );
+        let cached_path = imported[0].pages[0].cache_path.clone();
+        let expected_page = fs::read(&cached_path).expect("cached CBZ page");
+        fs::remove_file(&cached_path).expect("remove derived CBZ page");
+        let rebuilt = database
+            .ensure_page_cache(&imported[0].id, &imported[0].pages[0].id)
+            .expect("rebuild CBZ page");
+        assert_eq!(
+            fs::read(rebuilt.cache_path).expect("rebuilt CBZ page"),
+            expected_page
+        );
 
         let malicious_path = root.join("malicious.cbz");
         let malicious_file = fs::File::create(&malicious_path).expect("malicious archive file");

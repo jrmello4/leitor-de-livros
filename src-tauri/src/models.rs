@@ -2,6 +2,14 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PageSourceRef {
+    Image { path: String },
+    Archive { path: String, member: String },
+    Pdf { path: String, page_index: usize },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativePage {
@@ -9,6 +17,7 @@ pub struct NativePage {
     pub index: usize,
     pub name: String,
     pub cache_path: String,
+    pub source_ref: Option<PageSourceRef>,
     pub width: u32,
     pub height: u32,
 }
@@ -70,6 +79,7 @@ pub struct NewPage {
     pub index: usize,
     pub name: String,
     pub cache_path: PathBuf,
+    pub source_ref: PageSourceRef,
     pub width: u32,
     pub height: u32,
 }
