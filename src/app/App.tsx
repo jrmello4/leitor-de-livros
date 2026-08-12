@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createDemoPublication } from '../data/demo';
 import { canRunActionWhileSettingsOpen, InputMap } from '../domain/input';
 import { calculateProgress, movePage } from '../domain/reader';
-import type { ActionName, Publication, ReadingProfile } from '../domain/types';
+import type { ActionName, Bookmark, CacheInfo, Publication, ReaderState, ReadingProfile } from '../domain/types';
 import { importFiles } from '../services/importers';
 import {
   chooseNativeFiles,
@@ -13,19 +13,35 @@ import {
   loadNativeProfile,
   saveNativeProfile,
   saveNativeProgress,
+  clearNativeCache,
+  deleteNativePublication,
+  getNativeCacheInfo,
+  setNativeCacheLimit,
 } from '../services/nativeLibrary';
-import { hasStoredProfile, loadProfile, loadProgress, resetProfile, saveProfile, saveProgress } from '../services/storage';
+import {
+  listBookmarksForPublication,
+  loadReaderStateForPublication,
+  toggleFavoriteForPublication,
+} from '../services/readerState';
+import { hasStoredProfile, loadFavorites, loadProfile, loadProgress, resetProfile, saveProfile, saveProgress } from '../services/storage';
 import { LibraryView } from './LibraryView';
 import { ProfilePanel } from './ProfilePanel';
 import { ReaderView } from './ReaderView';
 
 function initialLibrary(direction: ReadingProfile['direction']): Publication[] {
   const demo = createDemoPublication();
+  demo.isFavorite = loadFavorites().includes(demo.id);
   const savedPage = loadProgress(demo.id);
   demo.currentPage = direction === 'rtl' && savedPage === 0 ? demo.pages.length - 1 : Math.min(savedPage, demo.pages.length - 1);
   demo.progress = calculateProgress(demo.currentPage, demo.pages.length, direction);
   return [demo];
 }
+
+const DEFAULT_CACHE_INFO: CacheInfo = {
+  usedBytes: 0,
+  maxBytes: 2 * 1024 * 1024 * 1024,
+  entryCount: 0,
+};
 
 export function App() {
   const nativeRuntime = isNativeRuntime();
@@ -36,6 +52,10 @@ export function App() {
   const [capturingAction, setCapturingAction] = useState<ActionName | null>(null);
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<'recent' | 'title'>('recent');
+  const [favoriteOnly, setFavoriteOnly] = useState(false);
+  const [bookmarks, setBookmarks] = useState<Record<string, Bookmark[]>>({});
+  const [readerStates, setReaderStates] = useState<Record<string, ReaderState>>({});
+  const [cacheInfo, setCacheInfo] = useState<CacheInfo>(DEFAULT_CACHE_INFO);
   const [isImporting, setIsImporting] = useState(false);
   const [diagnostic, setDiagnostic] = useState<string | undefined>();
   const [announcement, setAnnouncement] = useState('Library ready.');
@@ -43,6 +63,30 @@ export function App() {
 
   const activePublication = library.find((publication) => publication.id === activeId);
   const inputMap = useMemo(() => new InputMap(profile.bindings), [profile.bindings]);
+
+  const refreshCacheInfo = useCallback(async () => {
+    try {
+      setCacheInfo(await getNativeCacheInfo());
+    } catch {
+      setDiagnostic('Cache usage could not be read. Your original files were not modified.');
+    }
+  }, []);
+
+  const hydrateMetadata = useCallback(async (publications: Publication[]) => {
+    try {
+      const metadata = await Promise.all(publications.map(async (publication) => {
+        const [publicationBookmarks, readerState] = await Promise.all([
+          listBookmarksForPublication(publication.id),
+          loadReaderStateForPublication(publication.id),
+        ]);
+        return { id: publication.id, bookmarks: publicationBookmarks, readerState };
+      }));
+      setBookmarks(Object.fromEntries(metadata.map((entry) => [entry.id, entry.bookmarks])));
+      setReaderStates(Object.fromEntries(metadata.map((entry) => [entry.id, entry.readerState])));
+    } catch {
+      setDiagnostic('Reader metadata could not be restored. Reading can continue in memory.');
+    }
+  }, []);
 
   useEffect(() => {
     if (!nativeRuntime) {
@@ -65,6 +109,8 @@ export function App() {
           setProfile(nativeProfile);
         }
         setLibrary(nativeLibrary);
+        void hydrateMetadata(nativeLibrary);
+        void refreshCacheInfo();
         setAnnouncement(nativeLibrary.length > 0 ? 'Native library ready.' : 'Native library is empty.');
       } catch {
         if (!cancelled) {
@@ -78,7 +124,15 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [nativeRuntime]);
+  }, [hydrateMetadata, nativeRuntime, refreshCacheInfo]);
+
+  useEffect(() => {
+    if (nativeRuntime) {
+      return;
+    }
+    void hydrateMetadata(library);
+    void refreshCacheInfo();
+  }, [hydrateMetadata, library, nativeRuntime, refreshCacheInfo]);
 
   const updateProfile = useCallback((patch: Partial<ReadingProfile>) => {
     setProfile((current) => {
@@ -96,6 +150,62 @@ export function App() {
   const updatePublication = useCallback((id: string, updater: (publication: Publication) => Publication) => {
     setLibrary((current) => current.map((publication) => (publication.id === id ? updater(publication) : publication)));
   }, []);
+
+  const toggleFavorite = useCallback(async (publication: Publication) => {
+    const nextFavorite = !publication.isFavorite;
+    try {
+      await toggleFavoriteForPublication(publication.id, nextFavorite);
+      updatePublication(publication.id, (current) => ({ ...current, isFavorite: nextFavorite }));
+      setAnnouncement(nextFavorite ? `${publication.title} added to favorites.` : `${publication.title} removed from favorites.`);
+    } catch {
+      setDiagnostic('Favorite could not be saved. Your reading data was not changed.');
+    }
+  }, [updatePublication]);
+
+  const removePublication = useCallback(async (publication: Publication) => {
+    try {
+      await deleteNativePublication(publication.id);
+      setLibrary((current) => current.filter((entry) => entry.id !== publication.id));
+      setBookmarks((current) => {
+        const next = { ...current };
+        delete next[publication.id];
+        return next;
+      });
+      setReaderStates((current) => {
+        const next = { ...current };
+        delete next[publication.id];
+        return next;
+      });
+      if (activeId === publication.id) {
+        setActiveId(null);
+      }
+      await refreshCacheInfo();
+      setAnnouncement(`${publication.title} removed. Original files were preserved.`);
+    } catch {
+      setDiagnostic('The publication could not be removed. Your original files were not modified.');
+      throw new Error('delete-publication-failed');
+    }
+  }, [activeId, refreshCacheInfo]);
+
+  const updateCacheLimit = useCallback(async (maxBytes: number) => {
+    try {
+      await setNativeCacheLimit(maxBytes);
+      await refreshCacheInfo();
+      setAnnouncement('Cache limit saved.');
+    } catch {
+      setDiagnostic('Cache limit could not be saved. Existing pages were kept.');
+    }
+  }, [refreshCacheInfo]);
+
+  const clearCache = useCallback(async () => {
+    try {
+      await clearNativeCache();
+      await refreshCacheInfo();
+      setAnnouncement('Derived page cache cleared. Original files were preserved.');
+    } catch {
+      setDiagnostic('Cache could not be cleared. Your original files were not modified.');
+    }
+  }, [refreshCacheInfo]);
 
   const persistProgress = useCallback((publicationId: string, pageIndex: number) => {
     saveProgress(publicationId, pageIndex);
@@ -363,6 +473,10 @@ export function App() {
             onImportNative={() => void handleNativeImport(false)}
             onImportFolder={() => void handleNativeImport(true)}
             onOpenSettings={() => setShowProfile(true)}
+            onToggleFavorite={(publication) => void toggleFavorite(publication)}
+            onDelete={(publication) => removePublication(publication)}
+            favoriteOnly={favoriteOnly}
+            onFavoriteOnlyChange={setFavoriteOnly}
             settingsTriggerRef={settingsTriggerRef}
           />
         )}
@@ -377,6 +491,9 @@ export function App() {
             onChange={updateProfile}
             onStartCapture={setCapturingAction}
             onReset={handleProfileReset}
+            cacheInfo={cacheInfo}
+            onSetCacheLimit={updateCacheLimit}
+            onClearCache={clearCache}
             triggerRef={settingsTriggerRef}
             onClose={() => {
               setCapturingAction(null);

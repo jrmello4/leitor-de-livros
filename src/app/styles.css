@@ -535,6 +535,25 @@ img {
   background: var(--night-raised);
 }
 
+.favorite-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  color: var(--mist);
+  font-family: var(--utility);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.favorite-filter input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--copper);
+}
+
 .diagnostic-banner {
   margin: 18px 7.5% 0;
   padding: 12px 14px;
@@ -621,6 +640,34 @@ img {
   font-weight: 500;
 }
 
+.publication-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.favorite-button {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--line);
+  color: var(--mist);
+  background: transparent;
+  font-size: 19px;
+  line-height: 1;
+}
+
+.favorite-button:hover,
+.favorite-button:focus-visible,
+.favorite-button--active {
+  border-color: var(--copper);
+  color: var(--copper-bright);
+  background: rgba(200, 117, 77, 0.11);
+}
+
 .open-link {
   flex-shrink: 0;
   padding: 0;
@@ -649,9 +696,71 @@ img {
 
 .card-footer {
   justify-content: space-between;
+  gap: 8px;
   margin-top: 9px;
   color: rgba(168, 185, 178, 0.7);
   font-size: 8px;
+}
+
+.delete-link {
+  margin-left: auto;
+  padding: 0;
+  color: rgba(240, 175, 145, 0.8);
+  font-family: var(--utility);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.delete-link:hover,
+.delete-link:focus-visible {
+  color: var(--paper);
+  text-decoration: underline;
+}
+
+.modal-backdrop {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(5, 13, 16, 0.78);
+}
+
+.confirm-dialog {
+  width: min(480px, 100%);
+  padding: 28px;
+  border: 1px solid rgba(240, 230, 208, 0.2);
+  background: var(--night-raised);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+}
+
+.confirm-dialog h2 {
+  margin: 10px 0 12px;
+  color: var(--paper);
+  font-family: var(--display);
+  font-size: 30px;
+  font-weight: 500;
+}
+
+.confirm-dialog p {
+  margin: 0;
+  color: var(--mist);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.dialog-error {
+  margin-top: 14px !important;
+  color: var(--copper-bright) !important;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
 }
 
 .empty-shelf {
@@ -1357,6 +1466,59 @@ html:fullscreen .reader-controls:focus-within {
   font-size: 9px;
   line-height: 1.6;
   text-transform: none;
+}
+
+.cache-summary {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--mist);
+  font-family: var(--utility);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cache-summary strong,
+.cache-summary span {
+  display: block;
+}
+
+.cache-summary strong {
+  color: var(--paper);
+  font-family: var(--display);
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.cache-summary div span {
+  margin-top: 4px;
+}
+
+.cache-meter {
+  height: 3px;
+  margin: 14px 0 15px;
+  background: var(--line);
+}
+
+.cache-meter span {
+  display: block;
+  height: 100%;
+  background: var(--copper);
+}
+
+.cache-help {
+  margin-top: 12px;
+  margin-bottom: 13px;
+}
+
+.cache-clear-button {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 9px;
 }
 
 .binding-list {

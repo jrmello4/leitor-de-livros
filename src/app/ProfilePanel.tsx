@@ -1,5 +1,5 @@
 import { useEffect, useRef, type RefObject } from 'react';
-import type { ActionName, ReadingProfile } from '../domain/types';
+import type { ActionName, CacheInfo, ReadingProfile } from '../domain/types';
 import { ACTION_LABELS, bindingLabel } from '../domain/input';
 
 interface ProfilePanelProps {
@@ -10,6 +10,27 @@ interface ProfilePanelProps {
   onReset: () => void;
   onClose: () => void;
   triggerRef: RefObject<HTMLButtonElement | null>;
+  cacheInfo?: CacheInfo;
+  onSetCacheLimit?: (maxBytes: number) => void | Promise<void>;
+  onClearCache?: () => void | Promise<void>;
+}
+
+const CACHE_LIMITS = [
+  { value: 512 * 1024 * 1024, label: '512 MiB' },
+  { value: 1 * 1024 * 1024 * 1024, label: '1 GiB' },
+  { value: 2 * 1024 * 1024 * 1024, label: '2 GiB' },
+  { value: 5 * 1024 * 1024 * 1024, label: '5 GiB' },
+] as const;
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(bytes % (1024 * 1024 * 1024) === 0 ? 0 : 1)} GiB`;
+  }
+  return `${Math.round(bytes / (1024 * 1024))} MiB`;
+}
+
+function defaultCacheInfo(): CacheInfo {
+  return { usedBytes: 0, maxBytes: 2 * 1024 * 1024 * 1024, entryCount: 0 };
 }
 
 const profileActions: ActionName[] = [
@@ -30,7 +51,13 @@ export function ProfilePanel({
   onReset,
   onClose,
   triggerRef,
+  cacheInfo = defaultCacheInfo(),
+  onSetCacheLimit = () => undefined,
+  onClearCache = () => undefined,
 }: ProfilePanelProps) {
+  const selectedCacheLimit = CACHE_LIMITS.some((limit) => limit.value === cacheInfo.maxBytes)
+    ? cacheInfo.maxBytes
+    : 2 * 1024 * 1024 * 1024;
   const panelRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const onCloseRef = useRef(onClose);
@@ -155,6 +182,36 @@ export function ProfilePanel({
               <option value="high">High contrast</option>
             </select>
           </label>
+        </section>
+
+        <section className="settings-section cache-section">
+          <span className="settings-label">Derived page cache</span>
+          <div className="cache-summary" aria-live="polite">
+            <div>
+              <strong>{formatBytes(cacheInfo.usedBytes)}</strong>
+              <span>used of {formatBytes(cacheInfo.maxBytes)}</span>
+            </div>
+            <span>{cacheInfo.entryCount} derived pages</span>
+          </div>
+          <div className="cache-meter" aria-hidden="true">
+            <span style={{ width: `${Math.min(100, cacheInfo.maxBytes > 0 ? (cacheInfo.usedBytes / cacheInfo.maxBytes) * 100 : 0)}%` }} />
+          </div>
+          <label className="setting-row" htmlFor="cache-limit">
+            <span>Cache limit</span>
+            <select
+              id="cache-limit"
+              value={selectedCacheLimit}
+              onChange={(event) => void onSetCacheLimit(Number(event.target.value))}
+            >
+              {CACHE_LIMITS.map((limit) => (
+                <option key={limit.value} value={limit.value}>{limit.label}</option>
+              ))}
+            </select>
+          </label>
+          <p className="settings-help cache-help">Only derived pages are removed. Original files are never removed.</p>
+          <button className="secondary-button cache-clear-button" type="button" aria-label="Clear derived cache" onClick={() => void onClearCache()}>
+            Clear cache now
+          </button>
         </section>
 
         <section className="settings-section">

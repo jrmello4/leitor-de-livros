@@ -1,4 +1,4 @@
-import { useMemo, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { mostRecentPublication, visiblePublications as getVisiblePublications } from '../domain/library';
 import type { Publication } from '../domain/types';
 
@@ -16,6 +16,10 @@ interface LibraryViewProps {
   onImportNative: () => void;
   onImportFolder: () => void;
   onOpenSettings: () => void;
+  onToggleFavorite: (publication: Publication) => void | Promise<void>;
+  onDelete: (publication: Publication) => void | Promise<void>;
+  favoriteOnly: boolean;
+  onFavoriteOnlyChange: (favoriteOnly: boolean) => void;
   settingsTriggerRef: RefObject<HTMLButtonElement | null>;
 }
 
@@ -37,12 +41,29 @@ export function LibraryView({
   onImportNative,
   onImportFolder,
   onOpenSettings,
+  onToggleFavorite,
+  onDelete,
+  favoriteOnly,
+  onFavoriteOnlyChange,
   settingsTriggerRef,
 }: LibraryViewProps) {
+  const [pendingDelete, setPendingDelete] = useState<Publication | null>(null);
+  const [deleteError, setDeleteError] = useState<string | undefined>();
+  const [isDeleting, setIsDeleting] = useState(false);
+  const deleteCancelRef = useRef<HTMLButtonElement>(null);
   const visiblePublications = useMemo(() => {
-    return getVisiblePublications(publications, query, sort);
-  }, [publications, query, sort]);
+    const visible = getVisiblePublications(publications, query, sort);
+    return favoriteOnly ? visible.filter((publication) => publication.isFavorite) : visible;
+  }, [favoriteOnly, publications, query, sort]);
   const continuePublication = useMemo(() => mostRecentPublication(publications), [publications]);
+
+  useEffect(() => {
+    if (!pendingDelete) {
+      return;
+    }
+    setDeleteError(undefined);
+    deleteCancelRef.current?.focus();
+  }, [pendingDelete]);
 
   const onFileInput = (event: React.ChangeEvent<HTMLInputElement>) => {
     onImport(Array.from(event.target.files ?? []));
@@ -53,6 +74,24 @@ export function LibraryView({
     event.preventDefault();
     if (!isNativeRuntime) {
       onImport(Array.from(event.dataTransfer.files));
+    }
+  };
+
+  const confirmDelete = () => {
+    if (!pendingDelete || isDeleting) {
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      const result = onDelete(pendingDelete);
+      void Promise.resolve(result)
+        .then(() => setPendingDelete(null))
+        .catch(() => setDeleteError('The publication could not be removed. Nothing was changed.'))
+        .finally(() => setIsDeleting(false));
+    } catch {
+      setDeleteError('The publication could not be removed. Nothing was changed.');
+      setIsDeleting(false);
     }
   };
 
@@ -146,6 +185,15 @@ export function LibraryView({
               <option value="title">Title</option>
             </select>
           </label>
+          <label className="favorite-filter" htmlFor="favorite-only">
+            <input
+              id="favorite-only"
+              type="checkbox"
+              checked={favoriteOnly}
+              onChange={(event) => onFavoriteOnlyChange(event.target.checked)}
+            />
+            <span>Favorites only</span>
+          </label>
         </div>
       </section>
 
@@ -155,7 +203,7 @@ export function LibraryView({
         <section className="publication-grid" aria-label="Publications">
           {visiblePublications.map((publication) => (
             <article className="publication-card" key={publication.id}>
-              <button className="cover-button" onClick={() => onOpen(publication)} aria-label={`Open ${publication.title}`}>
+              <button className="cover-button" type="button" onClick={() => onOpen(publication)} aria-label={`Open ${publication.title}`}>
                 <img src={publication.pages[0]?.src} alt="" />
                 <span className="cover-edge" aria-hidden="true" />
                 <span className="cover-stamp">{publication.format === 'demo' ? 'STUDY' : publication.format.toUpperCase()}</span>
@@ -165,7 +213,18 @@ export function LibraryView({
                   <p className="eyebrow">{publication.sourceLabel}</p>
                   <h2>{publication.title}</h2>
                 </div>
-                <button className="open-link" onClick={() => onOpen(publication)}>Open <span aria-hidden="true">↗</span></button>
+                <div className="publication-actions">
+                  <button
+                    className={publication.isFavorite ? 'favorite-button favorite-button--active' : 'favorite-button'}
+                    type="button"
+                    aria-pressed={publication.isFavorite}
+                    aria-label={`${publication.isFavorite ? 'Remove' : 'Add'} ${publication.title} to favorites`}
+                    onClick={() => void onToggleFavorite(publication)}
+                  >
+                    <span aria-hidden="true">{publication.isFavorite ? '★' : '☆'}</span>
+                  </button>
+                  <button className="open-link" type="button" onClick={() => onOpen(publication)}>Open <span aria-hidden="true">↗</span></button>
+                </div>
               </div>
               <div className="progress-line" aria-label={formatProgress(publication.progress)}>
                 <span style={{ width: `${publication.progress * 100}%` }} />
@@ -173,6 +232,14 @@ export function LibraryView({
               <div className="card-footer">
                 <span>{publication.pages.length} pages</span>
                 <span>{formatProgress(publication.progress)}</span>
+                <button
+                  className="delete-link"
+                  type="button"
+                  aria-label={`Remove ${publication.title} from library`}
+                  onClick={() => setPendingDelete(publication)}
+                >
+                  Remove
+                </button>
               </div>
             </article>
           ))}
@@ -191,6 +258,45 @@ export function LibraryView({
         <span>TACTILE READER / LOCAL-FIRST WINDOWS EDITION</span>
         <span>60 FPS TARGET · LTR / RTL · REDUCED MOTION</span>
       </footer>
+
+      {pendingDelete && (
+        <div className="modal-backdrop" role="presentation">
+          <section
+            className="confirm-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="remove-publication-title"
+            aria-describedby="remove-publication-copy"
+          >
+            <span className="eyebrow">LOCAL READER DATA</span>
+            <h2 id="remove-publication-title">Remove {pendingDelete.title}?</h2>
+            <p id="remove-publication-copy">
+              This removes the reader copy, progress, bookmarks, and derived pages only. Your original file will be preserved.
+            </p>
+            {deleteError && <p className="dialog-error" role="alert">{deleteError}</p>}
+            <div className="dialog-actions">
+              <button
+                ref={deleteCancelRef}
+                className="secondary-button"
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setPendingDelete(null)}
+              >
+                Keep publication
+              </button>
+              <button
+                className="primary-button"
+                type="button"
+                disabled={isDeleting}
+                aria-label={`Confirm remove ${pendingDelete.title}`}
+                onClick={confirmDelete}
+              >
+                {isDeleting ? 'Removing...' : 'Remove from library'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
