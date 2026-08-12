@@ -59,6 +59,9 @@ export function isNativeRuntime(): boolean {
 }
 
 export async function chooseNativeFiles(): Promise<string[]> {
+  if (!isNativeRuntime()) {
+    return [];
+  }
   const selection = await open({
     multiple: true,
     directory: false,
@@ -68,6 +71,9 @@ export async function chooseNativeFiles(): Promise<string[]> {
 }
 
 export async function chooseNativeFolder(): Promise<string[]> {
+  if (!isNativeRuntime()) {
+    return [];
+  }
   const selection = await open({ multiple: false, directory: true });
   return normalizeSelection(selection);
 }

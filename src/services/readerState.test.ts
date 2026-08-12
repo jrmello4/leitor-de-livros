@@ -59,4 +59,11 @@ describe('hybrid reader state adapter', () => {
       { pageId: 'page-1', label: 'ok', createdAt: '1', updatedAt: '2' },
     ]);
   });
+
+  it('does not invoke native file pickers in the browser', async () => {
+    const native = await import('./nativeLibrary');
+
+    await expect(native.chooseNativeFiles()).resolves.toEqual([]);
+    await expect(native.chooseNativeFolder()).resolves.toEqual([]);
+  });
 });
