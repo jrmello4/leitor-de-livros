@@ -212,6 +212,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn native_page_does_not_serialize_source_reference_into_ipc() {
+        let page = models::NativePage {
+            id: "page-1".to_owned(),
+            index: 0,
+            name: "page.png".to_owned(),
+            cache_path: "C:\\cache\\page.png".to_owned(),
+            source_ref: Some(models::PageSourceRef::Image {
+                path: "C:\\original\\page.png".to_owned(),
+            }),
+            width: 1200,
+            height: 1700,
+        };
+        let value = serde_json::to_value(page).expect("page");
+
+        assert!(value.get("sourceRef").is_none());
+        assert!(!value.to_string().contains("original"));
+    }
+
+    #[test]
     fn native_metadata_types_serialize_with_frontend_field_names() {
         let publication = NativePublication {
             id: "publication-1".to_owned(),

@@ -17,6 +17,7 @@ pub struct NativePage {
     pub index: usize,
     pub name: String,
     pub cache_path: String,
+    #[serde(skip_serializing)]
     pub source_ref: Option<PageSourceRef>,
     pub width: u32,
     pub height: u32,
