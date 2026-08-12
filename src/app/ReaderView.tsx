@@ -322,6 +322,9 @@ export function ReaderView({
   };
 
   const onWheel = (event: WheelEvent<HTMLDivElement>) => {
+    if (event.target instanceof Element && event.target.closest('[data-reader-control]')) {
+      return;
+    }
     if (Math.abs(event.deltaY) < 4) {
       return;
     }
