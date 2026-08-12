@@ -404,7 +404,42 @@ impl LibraryDb {
         Ok(())
     }
 
-    // Public cache APIs are wired to Tauri commands in the following implementation task.
+    /// Marks cached pages as recently used and pinned for the active reader
+    /// session. Missing derived files are skipped; the next reader open will
+    /// rebuild them through `ensure_page_cache`.
+    pub fn touch_page_cache_for_publication(
+        &self,
+        publication_id: &str,
+        page_ids: &[String],
+    ) -> CoreResult<()> {
+        for page_id in page_ids {
+            let cache_path = {
+                let connection = self
+                    .connection
+                    .lock()
+                    .map_err(|_| CoreError::from("database lock poisoned"))?;
+                connection
+                    .query_row(
+                        "SELECT cache_path FROM pages
+                          WHERE id = ?1 AND publication_id = ?2",
+                        params![page_id, publication_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?
+            };
+            let Some(cache_path) = cache_path else {
+                return Err(CoreError::from("page does not belong to the publication"));
+            };
+            let Some((_, byte_size)) =
+                validated_cache_file(&self.cache_dir, Path::new(&cache_path))?
+            else {
+                continue;
+            };
+            self.record_page_cache(page_id, byte_size, Some(true))?;
+        }
+        Ok(())
+    }
+
     #[allow(dead_code)]
     pub fn touch_page_cache(&self, page_id: &str, byte_size: i64, pinned: bool) -> CoreResult<()> {
         self.record_page_cache(page_id, byte_size, Some(pinned))

@@ -55,5 +55,6 @@ export function createDemoPublication(): Publication {
     direction: 'ltr',
     addedAt: '2026-08-11T00:00:00.000Z',
     updatedAt: '2026-08-11T00:00:00.000Z',
+    isFavorite: false,
   };
 }

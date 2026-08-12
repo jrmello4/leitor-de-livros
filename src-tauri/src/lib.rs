@@ -116,6 +116,17 @@ fn clear_cache(database: State<'_, LibraryDb>) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn touch_pages(
+    publication_id: String,
+    page_ids: Vec<String>,
+    database: State<'_, LibraryDb>,
+) -> Result<(), String> {
+    database
+        .touch_page_cache_for_publication(&publication_id, &page_ids)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn delete_publication(
     publication_id: String,
     database: State<'_, LibraryDb>,
@@ -185,6 +196,7 @@ pub fn run() {
             get_cache_info,
             set_cache_limit,
             clear_cache,
+            touch_pages,
             delete_publication,
             load_profile,
             save_profile,

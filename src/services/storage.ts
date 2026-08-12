@@ -130,6 +130,36 @@ export function saveReaderState(publicationId: string, state: ReaderState): void
   saveValue(READER_STATE_KEY, { ...states, [publicationId]: normalizeReaderState(state) });
 }
 
+/** Remove only browser-side metadata for a publication. Imported source files
+ * are represented by object URLs and are never touched by this operation. */
+export function clearPublicationStorage(publicationId: string): void {
+  const storage = getStorage();
+  if (!storage) {
+    return;
+  }
+
+  try {
+    const favorites = loadFavorites().filter((id) => id !== publicationId);
+    saveValue(FAVORITES_KEY, favorites);
+
+    const bookmarks = loadValue(BOOKMARKS_KEY, {}, isBookmarkMap);
+    delete bookmarks[publicationId];
+    saveValue(BOOKMARKS_KEY, bookmarks);
+
+    const states = loadValue(READER_STATE_KEY, {}, isRecord);
+    delete states[publicationId];
+    saveValue(READER_STATE_KEY, states);
+
+    const progress = loadValue(PROGRESS_KEY, {}, isRecord);
+    delete progress[publicationId];
+    saveValue(PROGRESS_KEY, progress);
+  } catch {
+    // Storage can be unavailable or quota-limited; the native caller reports
+    // no destructive filesystem work even when metadata cleanup is skipped.
+    return;
+  }
+}
+
 function loadValue<T>(key: string, fallback: T, isValid: (value: unknown) => value is T): T {
   const storage = getStorage();
   if (!storage) {

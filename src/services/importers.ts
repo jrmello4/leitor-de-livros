@@ -86,6 +86,7 @@ function publicationFromPages(
     direction: 'ltr',
     addedAt: now,
     updatedAt: now,
+    isFavorite: false,
   };
 }
 
