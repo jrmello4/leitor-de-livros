@@ -8,13 +8,14 @@ interface ReaderSurfaceProps {
   staticContent: ReactNode;
   ariaLabel: string;
   onStatus: (status: RendererStatus) => void;
+  interactionActive: boolean;
 }
 
 function failureMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Renderer initialization failed.';
 }
 
-export function ReaderSurface({ frame, staticContent, ariaLabel, onStatus }: ReaderSurfaceProps) {
+export function ReaderSurface({ frame, staticContent, ariaLabel, onStatus, interactionActive }: ReaderSurfaceProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const backendRef = useRef<CanvasRenderer | undefined>(undefined);
   const failuresRef = useRef<string[]>([]);
@@ -139,13 +140,14 @@ export function ReaderSurface({ frame, staticContent, ariaLabel, onStatus }: Rea
   }, [backend, fps, onStatus, quality]);
 
   const gpuActive = backend !== 'static';
+  const showStatic = backend === 'static' || interactionActive;
   return (
     <div className="render-surface" data-renderer={backend} data-quality={quality}>
-      <div className={gpuActive ? 'render-static render-static--hidden' : 'render-static'}>
+      <div className={showStatic ? 'render-static' : 'render-static render-static--hidden'}>
         {staticContent}
       </div>
       <canvas
-        className={gpuActive ? 'renderer-canvas renderer-canvas--active' : 'renderer-canvas'}
+        className={gpuActive && !interactionActive ? 'renderer-canvas renderer-canvas--active' : 'renderer-canvas'}
         ref={canvasRef}
         aria-hidden="true"
       />

@@ -67,3 +67,5 @@ that bundled DLL, then a side-by-side executable DLL, then a system library; it 
 loaded. PDFium and third-party license notices ship under the package `licenses/pdfium/` directory.
 
 Read the complete design specification in [docs/superpowers/specs/2026-08-11-tactile-comic-reader-design.md](docs/superpowers/specs/2026-08-11-tactile-comic-reader-design.md).
+
+Read the prioritized product improvement roadmap in [docs/roadmap-melhorias.md](docs/roadmap-melhorias.md).

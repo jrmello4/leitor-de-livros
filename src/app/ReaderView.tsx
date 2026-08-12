@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent, WheelEvent } from 'react';
 import { pageCounter, visiblePageIndexes, clamp } from '../domain/reader';
 import type { PageDescriptor, Publication, ReadingProfile } from '../domain/types';
@@ -18,6 +18,16 @@ interface ReaderViewProps {
   onToggleFullscreen: () => void;
   onFlowCorrected: () => void;
   nativeRuntime: boolean;
+}
+
+type TurnPhase = 'idle' | 'dragging' | 'committing' | 'cancelling';
+
+function pageAspect(page?: PageDescriptor): number {
+  if (!page || page.width <= 0 || page.height <= 0) {
+    return 0.705;
+  }
+
+  return page.width / page.height;
 }
 
 function PageSheet({ page, className = '' }: { page: PageDescriptor; className?: string }) {
@@ -42,9 +52,13 @@ export function ReaderView({
   onFlowCorrected,
   nativeRuntime,
 }: ReaderViewProps) {
-  const stageRef = useRef<HTMLDivElement>(null);
+  const paperRef = useRef<HTMLDivElement>(null);
+  const turnTimerRef = useRef<number | undefined>(undefined);
+  const previousPageRef = useRef(publication.currentPage);
   const [dragProgress, setDragProgress] = useState(0);
   const [dragging, setDragging] = useState(false);
+  const [turnPhase, setTurnPhase] = useState<TurnPhase>('idle');
+  const [pageChangeDirection, setPageChangeDirection] = useState<'forward' | 'backward' | null>(null);
   const [flowVisible, setFlowVisible] = useState(false);
   const [rendererStatus, setRendererStatus] = useState<RendererStatus>({ backend: 'static', quality: 'essential' });
   const visibleIndexes = visiblePageIndexes(publication.currentPage, publication.pages, profile.mode, profile.direction);
@@ -53,6 +67,10 @@ export function ReaderView({
   const preloadPages = [publication.currentPage - 1, publication.currentPage, publication.currentPage + 1]
     .map((index) => publication.pages[index])
     .filter((page): page is PageDescriptor => Boolean(page));
+  const currentPageSlot = Math.max(visiblePages.findIndex((page) => page.id === currentPage?.id), 0);
+  const pageSlotCount = Math.max(visiblePages.length, 1);
+  const pageSlotWidth = 100 / pageSlotCount;
+  const spreadAspect = Math.max(visiblePages.reduce((sum, page) => sum + pageAspect(page), 0), 0.1);
   const { graph: flowGraph, state: flowState, swapOrder, useManualRoute } = useAdaptiveFlow({
     publicationId: publication.id,
     page: currentPage,
@@ -60,28 +78,96 @@ export function ReaderView({
     nativeRuntime,
   });
 
+  useEffect(() => {
+    if (previousPageRef.current === publication.currentPage) {
+      return undefined;
+    }
+
+    const previousPage = previousPageRef.current;
+    previousPageRef.current = publication.currentPage;
+    const movedForward = profile.direction === 'rtl'
+      ? publication.currentPage < previousPage
+      : publication.currentPage > previousPage;
+    setPageChangeDirection(movedForward ? 'forward' : 'backward');
+    const timer = window.setTimeout(() => setPageChangeDirection(null), 280);
+    return () => window.clearTimeout(timer);
+  }, [profile.direction, publication.currentPage]);
+
+  useEffect(() => () => {
+    if (turnTimerRef.current !== undefined) {
+      window.clearTimeout(turnTimerRef.current);
+    }
+  }, []);
+
   const isFlowInteraction = (event: PointerEvent<HTMLDivElement>) => (
     event.target instanceof Element && Boolean(event.target.closest('[data-flow-control]'))
   );
 
+  const turnRect = () => {
+    const bounds = paperRef.current?.getBoundingClientRect();
+    if (!bounds) {
+      return undefined;
+    }
+
+    const slotWidth = bounds.width / pageSlotCount;
+    const left = bounds.left + currentPageSlot * slotWidth;
+    return {
+      left,
+      right: left + slotWidth,
+      top: bounds.top,
+      bottom: bounds.bottom,
+      width: slotWidth,
+      height: bounds.height,
+    };
+  };
+
+  const isTurnCorner = (event: PointerEvent<HTMLDivElement>) => {
+    const rect = turnRect();
+    if (!rect) {
+      return false;
+    }
+
+    const edgeReach = Math.min(150, Math.max(72, rect.width * 0.22));
+    const bottomReach = Math.min(180, Math.max(90, rect.height * 0.22));
+    const fromReadingEdge = profile.direction === 'rtl'
+      ? event.clientX - rect.left
+      : rect.right - event.clientX;
+    const fromBottom = rect.bottom - event.clientY;
+    return fromReadingEdge >= -8
+      && fromReadingEdge <= edgeReach
+      && fromBottom >= -8
+      && fromBottom <= bottomReach;
+  };
+
   const progressFromPointer = (event: PointerEvent<HTMLDivElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
+    const rect = turnRect();
+    if (!rect) {
+      return 0;
+    }
+
     const distance = profile.direction === 'rtl' ? event.clientX - rect.left : rect.right - event.clientX;
     return clamp(distance / Math.max(rect.width * 0.72, 1), 0, 1);
   };
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || profile.reducedMotion || isFlowInteraction(event)) {
+    if (
+      event.button !== 0
+      || profile.reducedMotion
+      || turnPhase !== 'idle'
+      || isFlowInteraction(event)
+      || !isTurnCorner(event)
+    ) {
       return;
     }
 
     event.currentTarget.setPointerCapture(event.pointerId);
     setDragging(true);
+    setTurnPhase('dragging');
     setDragProgress(progressFromPointer(event));
   };
 
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
-    if (!dragging || isFlowInteraction(event)) {
+    if (turnPhase !== 'dragging' || !dragging || isFlowInteraction(event)) {
       return;
     }
 
@@ -89,11 +175,28 @@ export function ReaderView({
   };
 
   const finishDrag = (commit: boolean) => {
-    setDragging(false);
-    setDragProgress(0);
-    if (commit) {
-      onNext();
+    if (turnPhase !== 'dragging') {
+      return;
     }
+
+    if (turnTimerRef.current !== undefined) {
+      window.clearTimeout(turnTimerRef.current);
+    }
+    const canAdvance = profile.direction === 'rtl'
+      ? publication.currentPage > 0
+      : publication.currentPage < publication.pages.length - 1;
+    const shouldCommit = commit && canAdvance;
+    setDragging(false);
+    setTurnPhase(shouldCommit ? 'committing' : 'cancelling');
+    setDragProgress(shouldCommit ? 1 : 0);
+    turnTimerRef.current = window.setTimeout(() => {
+      if (shouldCommit) {
+        onNext();
+      }
+      setTurnPhase('idle');
+      setDragProgress(0);
+      turnTimerRef.current = undefined;
+    }, Math.max(profile.pageTurnDuration, 160));
   };
 
   const onPointerUp = (event: PointerEvent<HTMLDivElement>) => {
@@ -101,8 +204,17 @@ export function ReaderView({
       return;
     }
 
-    event.currentTarget.releasePointerCapture(event.pointerId);
-    finishDrag(dragProgress >= 0.42);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    const commit = dragProgress >= 0.42;
+    const canAdvance = profile.direction === 'rtl'
+      ? publication.currentPage > 0
+      : publication.currentPage < publication.pages.length - 1;
+    if (commit && !canAdvance) {
+      onNext();
+    }
+    finishDrag(commit);
   };
 
   const onWheel = (event: WheelEvent<HTMLDivElement>) => {
@@ -121,6 +233,14 @@ export function ReaderView({
   const curlStyle = {
     '--turn-progress': dragProgress,
     '--turn-duration': `${profile.pageTurnDuration}ms`,
+    '--turn-left': `${currentPageSlot * pageSlotWidth}%`,
+    '--turn-width': `${pageSlotWidth}%`,
+  } as CSSProperties;
+  const turnHintStyle = {
+    '--turn-hint-left': profile.direction === 'rtl' ? `${currentPageSlot * pageSlotWidth}%` : 'auto',
+    '--turn-hint-right': profile.direction === 'ltr'
+      ? `${100 - ((currentPageSlot + 1) * pageSlotWidth)}%`
+      : 'auto',
   } as CSSProperties;
   const rendererFrame: RenderFrame = {
     pages: visiblePages,
@@ -136,7 +256,6 @@ export function ReaderView({
     : rendererStatus.backend === 'webgl2'
       ? 'GL'
       : 'PAGE';
-  const currentPageSlot = visiblePages.findIndex((page) => page.id === currentPage?.id);
   const correctFlowOrder = (firstId: string, secondId: string) => {
     swapOrder(firstId, secondId);
     onFlowCorrected();
@@ -183,8 +302,7 @@ export function ReaderView({
       </header>
 
       <section
-        className={`reading-stage ${dragging ? 'reading-stage--dragging' : ''}`}
-        ref={stageRef}
+        className={`reading-stage reading-stage--${profile.mode} ${dragging ? 'reading-stage--dragging' : ''} ${turnPhase !== 'idle' ? `reading-stage--turn-${turnPhase}` : ''}`}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -195,15 +313,20 @@ export function ReaderView({
         <div className="stage-caption stage-caption--left">{profile.direction === 'rtl' ? 'RIGHT TO LEFT' : 'LEFT TO RIGHT'}</div>
         <div className="stage-caption stage-caption--right">{profile.mode === 'spread' ? 'SPREAD VIEW' : 'SINGLE PAGE'}</div>
 
-        <div className={`paper-spread paper-spread--${profile.mode}`}>
+        <div
+          className={`paper-spread paper-spread--${profile.mode} ${pageChangeDirection ? `paper-spread--page-enter-${pageChangeDirection}` : ''}`}
+          ref={paperRef}
+          style={{ '--spread-aspect': spreadAspect } as CSSProperties}
+        >
           <ReaderSurface
             frame={rendererFrame}
             ariaLabel={`${pageCounter(publication.currentPage, publication.pages.length)} rendered with ${rendererStatus.backend}`}
             onStatus={setRendererStatus}
+            interactionActive={turnPhase !== 'idle'}
             staticContent={(
               <>
                 {visiblePages.map((page) => <PageSheet page={page} key={page.id} />)}
-                {currentPage && dragProgress > 0 && (
+                {currentPage && turnPhase !== 'idle' && (
                   <div
                     className={`curl-layer curl-layer--${profile.direction}`}
                     style={curlStyle}
@@ -225,11 +348,10 @@ export function ReaderView({
             onSwap={correctFlowOrder}
             onUseManualRoute={useManualFlowRoute}
           />
-        </div>
-
-        <div className="corner-hint" aria-hidden="true">
-          <span className="corner-line" />
-          <span>DRAG A CORNER</span>
+          <div className="corner-hint" style={turnHintStyle} aria-hidden="true">
+            <span className="corner-line" />
+            <span>DRAG A CORNER</span>
+          </div>
         </div>
         <p className="stage-note">
           {profile.reducedMotion
