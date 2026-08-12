@@ -7,8 +7,11 @@ pub enum CoreError {
     Io(std::io::Error),
     Image(image::ImageError),
     Json(serde_json::Error),
+    Pdfium(String),
     Sqlite(rusqlite::Error),
+    Unrar(String),
     Zip(zip::result::ZipError),
+    AdapterUnavailable(String),
     Invalid(String),
 }
 
@@ -18,8 +21,13 @@ impl fmt::Display for CoreError {
             Self::Io(error) => write!(formatter, "filesystem error: {error}"),
             Self::Image(error) => write!(formatter, "image error: {error}"),
             Self::Json(error) => write!(formatter, "json error: {error}"),
+            Self::Pdfium(message) => write!(formatter, "PDFium error: {message}"),
             Self::Sqlite(error) => write!(formatter, "database error: {error}"),
+            Self::Unrar(message) => write!(formatter, "UnRAR error: {message}"),
             Self::Zip(error) => write!(formatter, "archive error: {error}"),
+            Self::AdapterUnavailable(message) => {
+                write!(formatter, "adapter unavailable: {message}")
+            }
             Self::Invalid(message) => formatter.write_str(message),
         }
     }

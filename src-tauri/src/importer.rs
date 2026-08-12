@@ -16,12 +16,12 @@ use crate::{
     models::{NativeImportResult, NativePublication, NewPage, NewPublication},
 };
 
-const MAX_PAGE_BYTES: u64 = 64 * 1024 * 1024;
-const MAX_ARCHIVE_BYTES: u64 = 1024 * 1024 * 1024;
-const MAX_TOTAL_UNCOMPRESSED_BYTES: u64 = 512 * 1024 * 1024;
-const MAX_PAGE_COUNT: usize = 1024;
-const MAX_IMAGE_DIMENSION: u32 = 20_000;
-const MAX_IMAGE_PIXELS: u64 = 100_000_000;
+pub(crate) const MAX_PAGE_BYTES: u64 = 64 * 1024 * 1024;
+pub(crate) const MAX_ARCHIVE_BYTES: u64 = 1024 * 1024 * 1024;
+pub(crate) const MAX_TOTAL_UNCOMPRESSED_BYTES: u64 = 512 * 1024 * 1024;
+pub(crate) const MAX_PAGE_COUNT: usize = 1024;
+pub(crate) const MAX_IMAGE_DIMENSION: u32 = 20_000;
+pub(crate) const MAX_IMAGE_PIXELS: u64 = 100_000_000;
 
 const IMAGE_EXTENSIONS: &[&str] = &["avif", "gif", "jpeg", "jpg", "png", "webp"];
 
@@ -29,6 +29,8 @@ pub fn import_paths(db: &LibraryDb, raw_paths: &[String]) -> CoreResult<NativeIm
     let mut image_paths = Vec::new();
     let mut image_sources = Vec::new();
     let mut archive_paths = Vec::new();
+    let mut cbr_paths = Vec::new();
+    let mut pdf_paths = Vec::new();
     let mut diagnostics = Vec::new();
 
     for raw_path in raw_paths {
@@ -64,10 +66,8 @@ pub fn import_paths(db: &LibraryDb, raw_paths: &[String]) -> CoreResult<NativeIm
                 image_paths.push(path);
             }
             Some("cbz") => archive_paths.push(path),
-            Some("cbr") | Some("pdf") => diagnostics.push(format!(
-                "{} import remains reserved for the next native adapter slice.",
-                extension(&path).unwrap_or_default().to_uppercase()
-            )),
+            Some("cbr") => cbr_paths.push(path),
+            Some("pdf") => pdf_paths.push(path),
             _ => diagnostics.push(format!("{}: unsupported publication file.", path.display())),
         }
     }
@@ -84,6 +84,22 @@ pub fn import_paths(db: &LibraryDb, raw_paths: &[String]) -> CoreResult<NativeIm
     for path in archive_paths {
         let source_key = format!("archive:{}", path.display());
         match import_cbz(db, &source_key, &path) {
+            Ok(publication) => publications.push(publication),
+            Err(error) => diagnostics.push(format!("{}: {error}", path.display())),
+        }
+    }
+
+    for path in cbr_paths {
+        let source_key = format!("cbr:{}", path.display());
+        match crate::adapters::import_cbr(db, &source_key, &path) {
+            Ok(publication) => publications.push(publication),
+            Err(error) => diagnostics.push(format!("{}: {error}", path.display())),
+        }
+    }
+
+    for path in pdf_paths {
+        let source_key = format!("pdf:{}", path.display());
+        match crate::adapters::import_pdf(db, &source_key, &path) {
             Ok(publication) => publications.push(publication),
             Err(error) => diagnostics.push(format!("{}: {error}", path.display())),
         }
@@ -156,13 +172,7 @@ fn import_image_set(
             return Err(error);
         }
     };
-    match db.insert_publication(&publication) {
-        Ok(publication) => Ok(publication),
-        Err(error) => {
-            let _ = fs::remove_dir_all(cache_dir);
-            Err(error)
-        }
-    }
+    persist_publication(db, &publication, &cache_dir)
 }
 
 fn import_cbz(db: &LibraryDb, source_key: &str, path: &Path) -> CoreResult<NativePublication> {
@@ -185,7 +195,15 @@ fn import_cbz(db: &LibraryDb, source_key: &str, path: &Path) -> CoreResult<Nativ
             return Err(error);
         }
     };
-    match db.insert_publication(&publication) {
+    persist_publication(db, &publication, &cache_dir)
+}
+
+pub(crate) fn persist_publication(
+    db: &LibraryDb,
+    publication: &NewPublication,
+    cache_dir: &Path,
+) -> CoreResult<NativePublication> {
+    match db.insert_publication(publication) {
         Ok(publication) => Ok(publication),
         Err(error) => {
             let _ = fs::remove_dir_all(cache_dir);
@@ -356,7 +374,7 @@ fn build_cbz_publication(
     )
 }
 
-fn new_publication(
+pub(crate) fn new_publication(
     id: String,
     title: String,
     source_label: String,
@@ -385,7 +403,7 @@ fn new_publication(
     })
 }
 
-fn validate_image(bytes: &[u8], label: &str) -> CoreResult<(u32, u32)> {
+pub(crate) fn validate_image(bytes: &[u8], label: &str) -> CoreResult<(u32, u32)> {
     if bytes.is_empty() {
         return Err(CoreError::from(format!("{label}: empty image")));
     }
@@ -404,7 +422,7 @@ fn validate_image(bytes: &[u8], label: &str) -> CoreResult<(u32, u32)> {
     Ok((width, height))
 }
 
-fn cache_page(
+pub(crate) fn cache_page(
     cache_dir: &Path,
     page_id: &str,
     extension: &str,
@@ -452,18 +470,18 @@ fn collect_image_files(root: &Path, current: &Path, output: &mut Vec<PathBuf>) -
     Ok(())
 }
 
-fn validate_archive_name(raw_name: &str) -> CoreResult<String> {
+pub(crate) fn validate_archive_name(raw_name: &str) -> CoreResult<String> {
     let normalized = raw_name.replace('\\', "/");
     if normalized.is_empty()
         || normalized.starts_with('/')
         || normalized.as_bytes().get(1) == Some(&b':')
     {
-        return Err(CoreError::from("CBZ contains an absolute page path"));
+        return Err(CoreError::from("archive contains an absolute page path"));
     }
     for component in Path::new(&normalized).components() {
         match component {
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(CoreError::from("CBZ contains a path traversal entry"));
+                return Err(CoreError::from("archive contains a path traversal entry"));
             }
             Component::CurDir | Component::Normal(_) => {}
         }
@@ -477,14 +495,14 @@ fn extension(path: &Path) -> Option<String> {
         .map(str::to_lowercase)
 }
 
-fn extension_from_name(name: &str) -> Option<String> {
+pub(crate) fn extension_from_name(name: &str) -> Option<String> {
     Path::new(name)
         .extension()
         .and_then(|extension| extension.to_str())
         .map(str::to_lowercase)
 }
 
-fn is_image_extension(extension: &str) -> bool {
+pub(crate) fn is_image_extension(extension: &str) -> bool {
     IMAGE_EXTENSIONS.contains(&extension)
 }
 
@@ -495,7 +513,7 @@ fn source_key(prefix: &str, values: &[String]) -> String {
     format!("{prefix}:{}", digest_id("source", joined.as_bytes()))
 }
 
-fn digest_id(prefix: &str, bytes: &[u8]) -> String {
+pub(crate) fn digest_id(prefix: &str, bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     format!("{prefix}-{}", hex_encode(&digest[..12]))
 }
@@ -519,7 +537,7 @@ fn timestamp() -> String {
         .unwrap_or_else(|_| "0".to_owned())
 }
 
-fn natural_compare(left: &str, right: &str) -> Ordering {
+pub(crate) fn natural_compare(left: &str, right: &str) -> Ordering {
     let left = left.to_lowercase();
     let right = right.to_lowercase();
     let left_bytes = left.as_bytes();

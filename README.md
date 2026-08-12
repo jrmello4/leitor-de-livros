@@ -7,7 +7,8 @@
 Most digital readers treat comics as static images inside a file browser. Tactile Reader is designed around the reading moment itself: a page that bends under the pointer, a transition that follows the reader's gesture, and an adaptive flow that understands panel order without taking control away.
 
 The first version is planned for Windows 10/11 x64 and local CBZ, CBR, PDF, and image folders. The current native
-slice supports raster image folders and CBZ; PDF and CBR remain reserved for the next adapter phase.
+slice supports raster image folders, CBZ, CBR, and PDF. PDF import requires a PDFium runtime beside the application
+or available as a system library; without it, the importer reports an actionable diagnostic and preserves the source.
 
 ## What makes it different
 
@@ -50,8 +51,12 @@ EPUB, accounts, cloud synchronization, online metadata, a store, discovery, and 
 ## Project status
 
 The product concept and engineering design are approved. The current slice includes the React/Vite reader plus a
-Tauri native core for SQLite library/progress/profile persistence, safe raster image and CBZ import, and derived
-page caching. The browser fallback remains available for review. PDF/CBR adapters, Adaptive Flow analysis, and
-production packaging remain subsequent phases.
+Tauri native core for SQLite library/progress/profile persistence, safe raster image, CBZ, CBR, and PDF import, and
+derived page caching. PDF pages are rendered into bounded PNG cache entries; CBR pages are extracted through the
+native UnRAR adapter. The browser fallback remains available for review. Adaptive Flow analysis and production
+packaging remain subsequent phases.
+
+PDFium is intentionally a runtime dependency rather than a checked-in binary. Copy the platform PDFium library
+(on Windows, typically `pdfium.dll`) beside the application executable or install it where the process can load it.
 
 Read the complete design specification in [docs/superpowers/specs/2026-08-11-tactile-comic-reader-design.md](docs/superpowers/specs/2026-08-11-tactile-comic-reader-design.md).
