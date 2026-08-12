@@ -14,6 +14,8 @@ use crate::{
 };
 
 const DEFAULT_CACHE_LIMIT_BYTES: i64 = 2 * 1024 * 1024 * 1024;
+const CACHE_MISSING_DIAGNOSTIC: &str =
+    "Derived cache is unavailable; page reconstruction is required.";
 const MIGRATION_VERSION: i64 = 3;
 
 pub struct LibraryDb {
@@ -35,6 +37,7 @@ impl LibraryDb {
              PRAGMA synchronous = NORMAL;",
         )?;
         migrate(&mut connection)?;
+        reconcile_cache_entries(&mut connection, &cache_dir)?;
 
         Ok(Self {
             connection: Mutex::new(connection),
@@ -146,6 +149,7 @@ impl LibraryDb {
                 .cache_path
                 .to_str()
                 .ok_or_else(|| CoreError::from("cache path is not valid UTF-8"))?;
+            let byte_size = cache_file_size(&self.cache_dir, &page.cache_path)?;
             transaction.execute(
                 "INSERT INTO pages
                     (id, publication_id, page_index, name, cache_path, width, height)
@@ -158,6 +162,18 @@ impl LibraryDb {
                     cache_path,
                     page.width as i64,
                     page.height as i64,
+                ],
+            )?;
+            transaction.execute(
+                "INSERT INTO cache_entries
+                    (page_id, publication_id, cache_path, byte_size, last_accessed_at, pinned)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 0)",
+                params![
+                    page.id,
+                    publication.id,
+                    cache_path,
+                    byte_size,
+                    publication.updated_at
                 ],
             )?;
         }
@@ -248,9 +264,12 @@ impl LibraryDb {
             .connection
             .lock()
             .map_err(|_| CoreError::from("database lock poisoned"))?;
-        connection.execute(
+        let changed = connection.execute(
             "INSERT INTO bookmarks (publication_id, page_id, label, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)
+             SELECT ?1, ?2, ?3, ?4, ?5
+              WHERE EXISTS (
+                    SELECT 1 FROM pages WHERE id = ?2 AND publication_id = ?1
+              )
              ON CONFLICT(publication_id, page_id) DO UPDATE SET
                  label = excluded.label,
                  updated_at = excluded.updated_at",
@@ -262,6 +281,11 @@ impl LibraryDb {
                 bookmark.updated_at,
             ],
         )?;
+        if changed == 0 {
+            return Err(CoreError::from(
+                "bookmark page does not belong to the publication",
+            ));
+        }
         Ok(())
     }
 
@@ -384,11 +408,15 @@ impl LibraryDb {
                 std::fs::remove_file(path)?;
             }
         }
-        let connection = self
+        let mut connection = self
             .connection
             .lock()
             .map_err(|_| CoreError::from("database lock poisoned"))?;
-        connection.execute("DELETE FROM cache_entries", [])?;
+        let transaction = connection.transaction()?;
+        transaction.execute("DELETE FROM cache_entries", [])?;
+        transaction.execute("UPDATE pages SET cache_path = ''", [])?;
+        mark_publications_cache_missing(&transaction)?;
+        transaction.commit()?;
         Ok(())
     }
 
@@ -750,6 +778,103 @@ fn column_exists(
         .map_err(Into::into)
 }
 
+fn reconcile_cache_entries(connection: &mut Connection, cache_dir: &Path) -> CoreResult<()> {
+    let pages = {
+        let mut statement = connection.prepare(
+            "SELECT id, publication_id, cache_path
+               FROM pages",
+        )?;
+        let pages = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        pages
+    };
+    let transaction = connection.transaction()?;
+    for (page_id, publication_id, cache_path) in pages {
+        match cache_file_size_if_valid(cache_dir, Path::new(&cache_path))? {
+            Some(byte_size) => {
+                transaction.execute(
+                    "INSERT INTO cache_entries
+                        (page_id, publication_id, cache_path, byte_size, last_accessed_at, pinned)
+                     VALUES (?1, ?2, ?3, ?4, ?5, 0)
+                     ON CONFLICT(page_id) DO UPDATE SET
+                         publication_id = excluded.publication_id,
+                         cache_path = excluded.cache_path,
+                         byte_size = excluded.byte_size",
+                    params![page_id, publication_id, cache_path, byte_size, now()],
+                )?;
+            }
+            None => {
+                transaction.execute("DELETE FROM cache_entries WHERE page_id = ?1", [&page_id])?;
+                transaction
+                    .execute("UPDATE pages SET cache_path = '' WHERE id = ?1", [&page_id])?;
+                mark_publication_cache_missing(&transaction, &publication_id)?;
+            }
+        }
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
+fn cache_file_size(cache_dir: &Path, cache_path: &Path) -> CoreResult<i64> {
+    cache_file_size_if_valid(cache_dir, cache_path)?.ok_or_else(|| {
+        CoreError::from("derived page cache is missing or outside the cache directory")
+    })
+}
+
+fn cache_file_size_if_valid(cache_dir: &Path, cache_path: &Path) -> CoreResult<Option<i64>> {
+    if cache_path.as_os_str().is_empty() || !cache_path.exists() {
+        return Ok(None);
+    }
+    let cache_root = cache_dir.canonicalize()?;
+    let canonical_path = cache_path.canonicalize()?;
+    if !canonical_path.starts_with(cache_root) || !canonical_path.is_file() {
+        return Ok(None);
+    }
+    let byte_size = i64::try_from(canonical_path.metadata()?.len())
+        .map_err(|_| CoreError::from("derived page cache is too large to record"))?;
+    Ok(Some(byte_size))
+}
+
+fn mark_publication_cache_missing(
+    transaction: &rusqlite::Transaction<'_>,
+    publication_id: &str,
+) -> CoreResult<()> {
+    transaction.execute(
+        "UPDATE publications
+            SET diagnostic = CASE
+                WHEN diagnostic IS NULL OR diagnostic = '' THEN ?1
+                WHEN instr(diagnostic, ?1) > 0 THEN diagnostic
+                ELSE diagnostic || ' ' || ?1
+            END
+          WHERE id = ?2",
+        params![CACHE_MISSING_DIAGNOSTIC, publication_id],
+    )?;
+    Ok(())
+}
+
+fn mark_publications_cache_missing(transaction: &rusqlite::Transaction<'_>) -> CoreResult<()> {
+    transaction.execute(
+        "UPDATE publications
+            SET diagnostic = CASE
+                WHEN diagnostic IS NULL OR diagnostic = '' THEN ?1
+                WHEN instr(diagnostic, ?1) > 0 THEN diagnostic
+                ELSE diagnostic || ' ' || ?1
+            END
+          WHERE EXISTS (
+                SELECT 1 FROM pages WHERE pages.publication_id = publications.id
+          )",
+        [CACHE_MISSING_DIAGNOSTIC],
+    )?;
+    Ok(())
+}
+
 fn calculate_progress(current_page: usize, page_count: usize, direction: &str) -> f64 {
     if page_count == 0 {
         return 0.0;
@@ -787,29 +912,38 @@ mod tests {
     }
 
     fn insert_test_publication(database: &LibraryDb, source_path: &str) {
+        insert_test_publication_with_ids(database, "publication-1", "page-1", source_path);
+    }
+
+    fn insert_test_publication_with_ids(
+        database: &LibraryDb,
+        publication_id: &str,
+        page_id: &str,
+        source_path: &str,
+    ) {
         let cache_path = database
             .cache_dir()
-            .join("publication-1")
-            .join("page-1.png");
+            .join(publication_id)
+            .join(format!("{page_id}.png"));
         std::fs::create_dir_all(cache_path.parent().expect("cache parent"))
             .expect("cache directory");
         std::fs::write(&cache_path, b"derived page").expect("cache page");
         database
             .insert_publication(&NewPublication {
-                id: "publication-1".to_owned(),
+                id: publication_id.to_owned(),
                 title: "Test publication".to_owned(),
                 source_label: "Test source".to_owned(),
                 source_path: source_path.to_owned(),
                 format: "images".to_owned(),
                 pages: vec![NewPage {
-                    id: "page-1".to_owned(),
+                    id: page_id.to_owned(),
                     index: 0,
-                    name: "page-1.png".to_owned(),
+                    name: format!("{page_id}.png"),
                     cache_path,
                     width: 1,
                     height: 1,
                 }],
-                cover_page_id: "page-1".to_owned(),
+                cover_page_id: page_id.to_owned(),
                 current_page: 0,
                 direction: "ltr".to_owned(),
                 added_at: "0".to_owned(),
@@ -1038,6 +1172,44 @@ mod tests {
     }
 
     #[test]
+    fn bookmark_page_must_belong_to_its_publication() {
+        let root = temporary_root("bookmark-ownership");
+        std::fs::create_dir_all(&root).expect("root");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        insert_test_publication_with_ids(
+            &database,
+            "publication-1",
+            "page-1",
+            &root.join("source-1.cbz").to_string_lossy(),
+        );
+        insert_test_publication_with_ids(
+            &database,
+            "publication-2",
+            "page-2",
+            &root.join("source-2.cbz").to_string_lossy(),
+        );
+
+        let result = database.upsert_bookmark(
+            "publication-1",
+            &NativeBookmark {
+                page_id: "page-2".to_owned(),
+                label: "Wrong publication".to_owned(),
+                created_at: "1".to_owned(),
+                updated_at: "1".to_owned(),
+            },
+        );
+
+        assert!(result.is_err());
+        assert!(database
+            .list_bookmarks("publication-1")
+            .expect("bookmarks")
+            .is_empty());
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
     fn bookmarks_cascade_when_the_publication_row_is_deleted() {
         let root = temporary_root("bookmark-cascade");
         let source_path = root.join("source.cbz");
@@ -1087,23 +1259,6 @@ mod tests {
         let cached_bytes = std::fs::metadata(&cached_page)
             .expect("cached page metadata")
             .len() as i64;
-        let connection = database.connection.lock().expect("database lock");
-        connection
-            .execute(
-                "INSERT INTO cache_entries
-                    (page_id, publication_id, cache_path, byte_size, last_accessed_at, pinned)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 0)",
-                params![
-                    "page-1",
-                    "publication-1",
-                    cached_page.to_string_lossy(),
-                    cached_bytes,
-                    "1"
-                ],
-            )
-            .expect("cache entry");
-        drop(connection);
-
         assert_eq!(
             database.cache_info().expect("initial cache info"),
             CacheInfo {
@@ -1126,8 +1281,56 @@ mod tests {
         );
         assert!(!cached_page.exists());
         assert!(database.cache_dir().is_dir());
+        let cleared_publication = database
+            .find_by_source_path(&source_path.to_string_lossy())
+            .expect("deduplicated publication lookup")
+            .expect("existing publication");
+        assert_eq!(cleared_publication.pages[0].cache_path, "");
+        assert!(cleared_publication
+            .diagnostic
+            .as_deref()
+            .expect("cache diagnostic")
+            .contains("cache"));
 
         drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
+    fn opening_database_reconciles_missing_cache_entries_from_existing_files() {
+        let root = temporary_root("cache-reconcile");
+        let source_path = root.join("source.cbz");
+        std::fs::create_dir_all(&root).expect("root");
+        std::fs::write(&source_path, b"original source").expect("source");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        insert_test_publication(&database, &source_path.to_string_lossy());
+        let expected_bytes = std::fs::metadata(
+            database
+                .cache_dir()
+                .join("publication-1")
+                .join("page-1.png"),
+        )
+        .expect("cache metadata")
+        .len() as i64;
+        let connection = database.connection.lock().expect("database lock");
+        connection
+            .execute("DELETE FROM cache_entries", [])
+            .expect("simulate pre-v3 cache metadata");
+        drop(connection);
+        drop(database);
+
+        let reopened = LibraryDb::open(root.clone()).expect("reopen database");
+
+        assert_eq!(
+            reopened.cache_info().expect("reconciled cache info"),
+            CacheInfo {
+                used_bytes: expected_bytes,
+                max_bytes: TWO_GIB,
+                entry_count: 1,
+            }
+        );
+
+        drop(reopened);
         std::fs::remove_dir_all(root).expect("cleanup database");
     }
 
