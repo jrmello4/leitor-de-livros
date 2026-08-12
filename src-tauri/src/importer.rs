@@ -618,7 +618,7 @@ mod tests {
         fs::write(&second_path, second_bytes.into_inner()).expect("write second png");
         let original = fs::read(&first_path).expect("read original");
 
-        let database = LibraryDb::open(app_dir).expect("database");
+        let database = LibraryDb::open(app_dir.clone()).expect("database");
         let selected = vec![source_dir.to_string_lossy().into_owned()];
         let first_import = import_paths(&database, &selected).expect("first import");
         let first_publication = &first_import.publications[0];
@@ -641,6 +641,14 @@ mod tests {
         );
 
         drop(database);
+        let reopened = LibraryDb::open(app_dir).expect("reopened database");
+        assert_eq!(
+            reopened.list_publications().expect("reopened list")[0].current_page,
+            1
+        );
+        let after_restart = import_paths(&reopened, &selected).expect("reopened deduplication");
+        assert_eq!(after_restart.publications[0].id, first_publication.id);
+        drop(reopened);
         fs::remove_dir_all(root).expect("cleanup test directory");
     }
 
