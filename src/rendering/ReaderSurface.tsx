@@ -142,7 +142,12 @@ export function ReaderSurface({ frame, staticContent, ariaLabel, onStatus, inter
   const gpuActive = backend !== 'static';
   const showStatic = backend === 'static' || interactionActive;
   return (
-    <div className="render-surface" data-renderer={backend} data-quality={quality}>
+    <div
+      className="render-surface"
+      data-renderer={backend}
+      data-quality={quality}
+      aria-busy={backend === 'static' && failuresRef.current.length === 0}
+    >
       <div className={showStatic ? 'render-static' : 'render-static render-static--hidden'}>
         {staticContent}
       </div>

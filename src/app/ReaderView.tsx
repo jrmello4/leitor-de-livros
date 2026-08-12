@@ -7,6 +7,7 @@ import { touchNativePages } from '../services/nativeLibrary';
 import { useAdaptiveFlow } from '../flow/useAdaptiveFlow';
 import { ReaderSurface } from '../rendering/ReaderSurface';
 import type { RenderFrame, RendererStatus } from '../rendering/contracts';
+import { rendererStatusMessage } from '../rendering/telemetry';
 import { AdaptiveFlowOverlay } from './AdaptiveFlowOverlay';
 import { PageNavigator } from './PageNavigator';
 import { ZoomControls } from './ZoomControls';
@@ -101,6 +102,7 @@ export function ReaderView({
     profile.direction,
   );
   const safeReaderState = useMemo(() => normalizeReaderState(localReaderState), [localReaderState]);
+  const rendererAnnouncement = useMemo(() => rendererStatusMessage(rendererStatus), [rendererStatus]);
   const manualScale = safeReaderState.zoomMode === 'manual' ? clampZoomScale(safeReaderState.zoomScale) : 1;
   const effectiveScale = safeReaderState.zoomMode === 'width' ? 1.16 : manualScale;
   const canPan = safeReaderState.zoomMode === 'manual' && manualScale > 1;
@@ -541,9 +543,19 @@ export function ReaderView({
         <p className="stage-note">
           {profile.reducedMotion
             ? 'Reduced motion is on · use the controls below'
-            : rendererStatus.backend === 'static'
-              ? 'Accessible static page mode is active'
-              : 'Drag a lower corner to turn the page'}
+            : rendererAnnouncement.message}
+        </p>
+        <p
+          className="sr-only"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          data-testid="renderer-status-announcement"
+        >
+          {rendererAnnouncement.message}
+        </p>
+        <p className="sr-only" data-testid="renderer-diagnostic">
+          {rendererAnnouncement.diagnostic}
         </p>
       </section>
 

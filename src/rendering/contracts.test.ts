@@ -53,4 +53,5 @@ describe('reader renderer contracts', () => {
     expect(adaptRenderQuality('balanced', 40)).toBe('essential');
     expect(adaptRenderQuality('essential', 60)).toBe('balanced');
   });
+
 });

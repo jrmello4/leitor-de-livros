@@ -1,4 +1,12 @@
-import type { RenderQuality } from './contracts';
+import type { RenderQuality, RendererStatus } from './contracts';
+
+export type RendererStatusPhase = 'ready' | 'fallback' | 'recovering';
+
+export interface RendererStatusMessage {
+  phase: RendererStatusPhase;
+  message: string;
+  diagnostic: string;
+}
 
 export interface FrameTelemetrySnapshot {
   fps: number;
@@ -51,4 +59,29 @@ export function adaptRenderQuality(current: RenderQuality, fps: number): RenderQ
     return 'rich';
   }
   return current;
+}
+
+/**
+ * Keeps implementation details out of the reader's primary language while
+ * retaining a copyable diagnostic for support and automated checks.
+ */
+export function rendererStatusMessage(status: RendererStatus): RendererStatusMessage {
+  const phase: RendererStatusPhase = status.backend === 'static'
+    ? status.fallbackReason ? 'fallback' : 'recovering'
+    : status.fallbackReason ? 'fallback' : 'ready';
+
+  const message = phase === 'ready'
+    ? 'Leitura pronta.'
+    : phase === 'fallback'
+      ? 'O modo compatível está ativo. A leitura continua disponível.'
+      : 'Preparando a leitura. O conteúdo continua disponível.';
+
+  const diagnosticParts = [
+    `backend=${status.backend}`,
+    `quality=${status.quality}`,
+    status.fps === undefined ? undefined : `fps=${status.fps}`,
+    status.fallbackReason ? `fallback=${status.fallbackReason}` : undefined,
+  ].filter((part): part is string => Boolean(part));
+
+  return { phase, message, diagnostic: diagnosticParts.join(' · ') };
 }
