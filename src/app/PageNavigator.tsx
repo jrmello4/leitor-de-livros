@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import type { Bookmark, PageDescriptor } from '../domain/types';
 import { clamp } from '../domain/reader';
 
@@ -46,10 +46,6 @@ export function PageNavigator({
       return;
     }
     onSelectPage(clamp(Math.round(pageIndex), 0, pages.length - 1));
-  };
-
-  const onScrub = (event: ChangeEvent<HTMLInputElement>) => {
-    selectPage(Number(event.currentTarget.value) - 1);
   };
 
   const onJumpKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -107,7 +103,6 @@ export function PageNavigator({
             aria-valuemin={1}
             aria-valuemax={Math.max(pages.length, 1)}
             aria-valuenow={safeCurrent + 1}
-            onChange={onScrub}
             onInput={(event) => selectPage(Number(event.currentTarget.value) - 1)}
           />
         </label>
