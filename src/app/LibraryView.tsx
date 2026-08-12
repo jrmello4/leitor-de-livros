@@ -11,6 +11,9 @@ interface LibraryViewProps {
   onSortChange: (sort: 'recent' | 'title') => void;
   onOpen: (publication: Publication) => void;
   onImport: (files: File[]) => void;
+  isNativeRuntime: boolean;
+  onImportNative: () => void;
+  onImportFolder: () => void;
   onOpenSettings: () => void;
 }
 
@@ -28,6 +31,9 @@ export function LibraryView({
   onSortChange,
   onOpen,
   onImport,
+  isNativeRuntime,
+  onImportNative,
+  onImportFolder,
   onOpenSettings,
 }: LibraryViewProps) {
   const visiblePublications = useMemo(() => {
@@ -48,7 +54,9 @@ export function LibraryView({
 
   const onDrop = (event: React.DragEvent<HTMLElement>) => {
     event.preventDefault();
-    onImport(Array.from(event.dataTransfer.files));
+    if (!isNativeRuntime) {
+      onImport(Array.from(event.dataTransfer.files));
+    }
   };
 
   return (
@@ -76,17 +84,30 @@ export function LibraryView({
             the interface recede when the reading begins.
           </p>
           <div className="intro-actions">
-            <label className="primary-button">
-              {isImporting ? 'Reading file…' : 'Import publication'}
-              <input
-                type="file"
-                accept=".cbz,.cbr,.pdf,image/*"
-                multiple
-                disabled={isImporting}
-                onChange={onFileInput}
-              />
-            </label>
-            <span className="shortcut-note">Drop images or a CBZ anywhere on this shelf</span>
+            {isNativeRuntime ? (
+              <>
+                <button className="primary-button" disabled={isImporting} onClick={onImportNative}>
+                  {isImporting ? 'Reading files...' : 'Import publication'}
+                </button>
+                <button className="secondary-button" disabled={isImporting} onClick={onImportFolder}>
+                  Import folder
+                </button>
+              </>
+            ) : (
+              <label className="primary-button">
+                {isImporting ? 'Reading file...' : 'Import publication'}
+                <input
+                  type="file"
+                  accept=".cbz,.cbr,.pdf,image/*"
+                  multiple
+                  disabled={isImporting}
+                  onChange={onFileInput}
+                />
+              </label>
+            )}
+            <span className="shortcut-note">
+              {isNativeRuntime ? 'Choose files or a folder; originals remain read-only' : 'Drop images or a CBZ anywhere on this shelf'}
+            </span>
           </div>
         </div>
 

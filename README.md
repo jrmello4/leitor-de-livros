@@ -6,7 +6,8 @@
 
 Most digital readers treat comics as static images inside a file browser. Tactile Reader is designed around the reading moment itself: a page that bends under the pointer, a transition that follows the reader's gesture, and an adaptive flow that understands panel order without taking control away.
 
-The first version is planned for Windows 10/11 x64 and local CBZ, CBR, PDF, and image folders.
+The first version is planned for Windows 10/11 x64 and local CBZ, CBR, PDF, and image folders. The current native
+slice supports raster image folders and CBZ; PDF and CBR remain reserved for the next adapter phase.
 
 ## What makes it different
 
@@ -48,9 +49,9 @@ EPUB, accounts, cloud synchronization, online metadata, a store, discovery, and 
 
 ## Project status
 
-The product concept and engineering design are approved. A first React/Vite vertical slice is now in place: it
-opens a built-in reading sample, imports image sets and CBZ files, supports page navigation and tactile corner drag,
-and stores reader preferences locally. Native SQLite, PDF/CBR adapters, Adaptive Flow analysis, and production
-packaging remain subsequent phases.
+The product concept and engineering design are approved. The current slice includes the React/Vite reader plus a
+Tauri native core for SQLite library/progress/profile persistence, safe raster image and CBZ import, and derived
+page caching. The browser fallback remains available for review. PDF/CBR adapters, Adaptive Flow analysis, and
+production packaging remain subsequent phases.
 
 Read the complete design specification in [docs/superpowers/specs/2026-08-11-tactile-comic-reader-design.md](docs/superpowers/specs/2026-08-11-tactile-comic-reader-design.md).

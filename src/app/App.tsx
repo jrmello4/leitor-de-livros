@@ -4,7 +4,17 @@ import { InputMap } from '../domain/input';
 import { calculateProgress, movePage } from '../domain/reader';
 import type { ActionName, Publication, ReadingProfile } from '../domain/types';
 import { importFiles } from '../services/importers';
-import { loadProfile, loadProgress, resetProfile, saveProfile, saveProgress } from '../services/storage';
+import {
+  chooseNativeFiles,
+  chooseNativeFolder,
+  importNativePaths,
+  isNativeRuntime,
+  listNativePublications,
+  loadNativeProfile,
+  saveNativeProfile,
+  saveNativeProgress,
+} from '../services/nativeLibrary';
+import { hasStoredProfile, loadProfile, loadProgress, resetProfile, saveProfile, saveProgress } from '../services/storage';
 import { LibraryView } from './LibraryView';
 import { ProfilePanel } from './ProfilePanel';
 import { ReaderView } from './ReaderView';
@@ -18,7 +28,8 @@ function initialLibrary(direction: ReadingProfile['direction']): Publication[] {
 }
 
 export function App() {
-  const [profile, setProfile] = useState<ReadingProfile>(loadProfile);
+  const nativeRuntime = isNativeRuntime();
+  const [profile, setProfile] = useState<ReadingProfile>(() => loadProfile());
   const [library, setLibrary] = useState<Publication[]>(() => initialLibrary(profile.direction));
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showProfile, setShowProfile] = useState(false);
@@ -32,17 +43,67 @@ export function App() {
   const activePublication = library.find((publication) => publication.id === activeId);
   const inputMap = useMemo(() => new InputMap(profile.bindings), [profile.bindings]);
 
+  useEffect(() => {
+    if (!nativeRuntime) {
+      return;
+    }
+
+    let cancelled = false;
+    const bootNativeLibrary = async () => {
+      try {
+        const nativeProfile = await loadNativeProfile();
+        const nextProfile = nativeProfile ?? profile;
+        if (!nativeProfile) {
+          await saveNativeProfile(hasStoredProfile() ? profile : nextProfile);
+        }
+        const nativeLibrary = await listNativePublications(nextProfile.direction);
+        if (cancelled) {
+          return;
+        }
+        if (nativeProfile) {
+          setProfile(nativeProfile);
+        }
+        setLibrary(nativeLibrary);
+        setAnnouncement(nativeLibrary.length > 0 ? 'Native library ready.' : 'Native library is empty.');
+      } catch {
+        if (!cancelled) {
+          setDiagnostic('The native library could not be opened. Your original files were not modified.');
+          setAnnouncement('Native library unavailable.');
+        }
+      }
+    };
+
+    void bootNativeLibrary();
+    return () => {
+      cancelled = true;
+    };
+  }, [nativeRuntime]);
+
   const updateProfile = useCallback((patch: Partial<ReadingProfile>) => {
     setProfile((current) => {
       const next = { ...current, ...patch };
       saveProfile(next);
+      if (nativeRuntime) {
+        void saveNativeProfile(next).catch(() => {
+          setDiagnostic('Reader preferences could not be saved to the native library.');
+        });
+      }
       return next;
     });
-  }, []);
+  }, [nativeRuntime]);
 
   const updatePublication = useCallback((id: string, updater: (publication: Publication) => Publication) => {
     setLibrary((current) => current.map((publication) => (publication.id === id ? updater(publication) : publication)));
   }, []);
+
+  const persistProgress = useCallback((publicationId: string, pageIndex: number) => {
+    saveProgress(publicationId, pageIndex);
+    if (nativeRuntime) {
+      void saveNativeProgress(publicationId, pageIndex).catch(() => {
+        setDiagnostic('Reading progress could not be saved to the native library.');
+      });
+    }
+  }, [nativeRuntime]);
 
   const moveActivePage = useCallback(
     (delta: number) => {
@@ -68,10 +129,10 @@ export function App() {
         progress: calculateProgress(nextPage, publication.pages.length, profile.direction),
         updatedAt: new Date().toISOString(),
       }));
-      saveProgress(activePublication.id, nextPage);
+      persistProgress(activePublication.id, nextPage);
       setAnnouncement(`Page ${nextPage + 1} of ${activePublication.pages.length}.`);
     },
-    [activePublication, profile.direction, updatePublication],
+    [activePublication, persistProgress, profile.direction, updatePublication],
   );
 
   const toggleFullscreen = useCallback(async () => {
@@ -177,7 +238,7 @@ export function App() {
 
     if (openingPublication !== publication) {
       updatePublication(publication.id, () => openingPublication);
-      saveProgress(publication.id, openingPublication.currentPage);
+      persistProgress(publication.id, openingPublication.currentPage);
     }
 
     setActiveId(openingPublication.id);
@@ -215,9 +276,47 @@ export function App() {
     setAnnouncement(`${openingPublication.title} imported locally.`);
   };
 
+  const handleNativeImport = async (selectFolder: boolean) => {
+    setIsImporting(true);
+    setDiagnostic(undefined);
+    try {
+      const paths = selectFolder ? await chooseNativeFolder() : await chooseNativeFiles();
+      if (paths.length === 0) {
+        setAnnouncement('Import cancelled.');
+        return;
+      }
+
+      const result = await importNativePaths(paths, profile.direction);
+      const diagnosticMessage = result.diagnostics.length > 0 ? result.diagnostics.join(' ') : undefined;
+      setDiagnostic(diagnosticMessage);
+      if (result.publications.length === 0) {
+        setAnnouncement(diagnosticMessage ?? 'No supported native publication was found.');
+        return;
+      }
+
+      setLibrary((current) => {
+        const importedIds = new Set(result.publications.map((publication) => publication.id));
+        return [...result.publications, ...current.filter((publication) => !importedIds.has(publication.id))];
+      });
+      const openingPublication = result.publications[0];
+      openPublication(openingPublication);
+      setAnnouncement(`${openingPublication.title} imported into the native library.`);
+    } catch {
+      setDiagnostic('The native import failed. The original files were not modified.');
+      setAnnouncement('Native import failed.');
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   const handleProfileReset = () => {
     const fresh = resetProfile();
     setProfile(fresh);
+    if (nativeRuntime) {
+      void saveNativeProfile(fresh).catch(() => {
+        setDiagnostic('Reader preferences could not be reset in the native library.');
+      });
+    }
     setCapturingAction(null);
     setAnnouncement('Reader preferences reset.');
   };
@@ -249,6 +348,9 @@ export function App() {
           onSortChange={setSort}
           onOpen={openPublication}
           onImport={handleImport}
+          isNativeRuntime={nativeRuntime}
+          onImportNative={() => void handleNativeImport(false)}
+          onImportFolder={() => void handleNativeImport(true)}
           onOpenSettings={() => setShowProfile(true)}
         />
       )}

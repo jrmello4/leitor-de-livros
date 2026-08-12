@@ -50,7 +50,8 @@ fn technical_icon() -> Vec<u8> {
 }
 
 fn main() {
-    let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest directory"));
+    let manifest_dir =
+        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest directory"));
     let icon_dir = manifest_dir.join("icons");
     fs::create_dir_all(&icon_dir).expect("create Tauri icon directory");
     fs::write(icon_dir.join("icon.ico"), technical_icon()).expect("write technical Tauri icon");

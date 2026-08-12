@@ -50,6 +50,10 @@ export function saveProfile(profile: ReadingProfile): void {
   getStorage()?.setItem(PROFILE_KEY, JSON.stringify(profile));
 }
 
+export function hasStoredProfile(): boolean {
+  return getStorage()?.getItem(PROFILE_KEY) !== null;
+}
+
 export function loadProgress(publicationId: string): number {
   const storage = getStorage();
   if (!storage) {
