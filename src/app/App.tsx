@@ -68,8 +68,11 @@ export function App() {
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
   const metadataGenerationRef = useRef(0);
   const favoriteInFlightRef = useRef(new Set<string>());
+  const pageSelectionGenerationRef = useRef(0);
 
   const activePublication = library.find((publication) => publication.id === activeId);
+  const activePublicationIdRef = useRef<string | null>(activePublication?.id ?? null);
+  activePublicationIdRef.current = activePublication?.id ?? null;
   const inputMap = useMemo(() => new InputMap(profile.bindings), [profile.bindings]);
 
   const refreshCacheInfo = useCallback(async () => {
@@ -390,6 +393,8 @@ export function App() {
       if (!activePublication) {
         return;
       }
+      const selectionGeneration = ++pageSelectionGenerationRef.current;
+      const publicationId = activePublication.id;
 
       const nextPage = movePage(
         activePublication.currentPage,
@@ -416,6 +421,12 @@ export function App() {
           return;
         }
       }
+      if (
+        selectionGeneration !== pageSelectionGenerationRef.current
+        || activePublicationIdRef.current !== publicationId
+      ) {
+        return;
+      }
 
       updatePublication(activePublication.id, (publication) => ({
         ...publication,
@@ -437,6 +448,8 @@ export function App() {
       if (!activePublication || activePublication.pages.length === 0) {
         return;
       }
+      const selectionGeneration = ++pageSelectionGenerationRef.current;
+      const publicationId = activePublication.id;
       const nextPage = clamp(pageIndex, 0, activePublication.pages.length - 1);
       if (nextPage === activePublication.currentPage) {
         return;
@@ -453,6 +466,12 @@ export function App() {
           setDiagnostic('This page could not be rebuilt from the original. Your file was not modified.');
           return;
         }
+      }
+      if (
+        selectionGeneration !== pageSelectionGenerationRef.current
+        || activePublicationIdRef.current !== publicationId
+      ) {
+        return;
       }
       updatePublication(activePublication.id, (publication) => ({
         ...publication,
