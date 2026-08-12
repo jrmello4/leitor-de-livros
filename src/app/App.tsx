@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createDemoPublication } from '../data/demo';
 import { canRunActionWhileSettingsOpen, InputMap } from '../domain/input';
-import { calculateProgress, movePage } from '../domain/reader';
+import { calculateProgress, movePage, clamp } from '../domain/reader';
+import { nextBookmark } from '../domain/library';
+import { defaultReaderState } from '../domain/readerState';
 import type { ActionName, Bookmark, CacheInfo, Publication, ReaderState, ReadingProfile } from '../domain/types';
 import { importFiles } from '../services/importers';
 import {
@@ -22,6 +24,9 @@ import {
 import {
   listBookmarksForPublication,
   loadReaderStateForPublication,
+  removeBookmarkForPublication,
+  saveBookmarkForPublication,
+  saveReaderStateForPublication,
   toggleFavoriteForPublication,
 } from '../services/readerState';
 import { hasStoredProfile, loadFavorites, loadProfile, loadProgress, resetProfile, saveProfile, saveProgress } from '../services/storage';
@@ -339,6 +344,35 @@ export function App() {
     }
   }, [nativeRuntime]);
 
+  const persistReaderState = useCallback(async (publicationId: string, state: ReaderState) => {
+    setReaderStates((current) => ({ ...current, [publicationId]: state }));
+    try {
+      await saveReaderStateForPublication(publicationId, state);
+    } catch {
+      setDiagnostic('Zoom and pan could not be saved. Reading can continue, but this change may not survive closing.');
+    }
+  }, []);
+
+  const toggleBookmark = useCallback(async (publicationId: string, pageId: string) => {
+    const current = bookmarks[publicationId] ?? [];
+    const existing = current.find((bookmark) => bookmark.pageId === pageId);
+    const next = nextBookmark(current, pageId, '', new Date().toISOString());
+    setBookmarks((all) => ({ ...all, [publicationId]: next }));
+    try {
+      if (existing) {
+        await removeBookmarkForPublication(publicationId, pageId);
+      } else {
+        const created = next.find((bookmark) => bookmark.pageId === pageId);
+        if (created) {
+          await saveBookmarkForPublication(publicationId, created);
+        }
+      }
+    } catch {
+      setBookmarks((all) => ({ ...all, [publicationId]: current }));
+      setDiagnostic('Page bookmark could not be saved. Your other reading data was not changed.');
+    }
+  }, [bookmarks]);
+
   const moveActivePage = useCallback(
     async (delta: number) => {
       if (!activePublication) {
@@ -385,6 +419,55 @@ export function App() {
     },
     [activePublication, nativeRuntime, persistProgress, profile.direction, updatePublication],
   );
+
+  const selectActivePage = useCallback(
+    async (pageIndex: number) => {
+      if (!activePublication || activePublication.pages.length === 0) {
+        return;
+      }
+      const nextPage = clamp(pageIndex, 0, activePublication.pages.length - 1);
+      if (nextPage === activePublication.currentPage) {
+        return;
+      }
+      let ensuredPage: Awaited<ReturnType<typeof ensureNativePage>>;
+      if (nativeRuntime) {
+        try {
+          ensuredPage = await ensureNativePage(activePublication.id, activePublication.pages[nextPage]?.id ?? '');
+        } catch {
+          setDiagnostic('This page could not be rebuilt from the original. Your file was not modified.');
+          return;
+        }
+        if (!ensuredPage) {
+          setDiagnostic('This page could not be rebuilt from the original. Your file was not modified.');
+          return;
+        }
+      }
+      updatePublication(activePublication.id, (publication) => ({
+        ...publication,
+        pages: ensuredPage
+          ? publication.pages.map((page) => page.id === ensuredPage.id ? ensuredPage : page)
+          : publication.pages,
+        currentPage: nextPage,
+        progress: calculateProgress(nextPage, publication.pages.length, profile.direction),
+        updatedAt: new Date().toISOString(),
+      }));
+      persistProgress(activePublication.id, nextPage);
+      setAnnouncement(`Page ${nextPage + 1} of ${activePublication.pages.length}.`);
+    },
+    [activePublication, nativeRuntime, persistProgress, profile.direction, updatePublication],
+  );
+
+  const saveActiveReaderState = useCallback((state: ReaderState) => {
+    if (activePublication) {
+      void persistReaderState(activePublication.id, state);
+    }
+  }, [activePublication?.id, persistReaderState]);
+
+  const toggleActiveBookmark = useCallback((pageId: string) => {
+    if (activePublication) {
+      void toggleBookmark(activePublication.id, pageId);
+    }
+  }, [activePublication?.id, toggleBookmark]);
 
   const toggleFullscreen = useCallback(async () => {
     try {
@@ -620,6 +703,11 @@ export function App() {
             onFlowManualRoute={() => setAnnouncement('Full-page reading enabled for this page.')}
             nativeRuntime={nativeRuntime}
             settingsTriggerRef={settingsTriggerRef}
+            bookmarks={bookmarks[activePublication.id] ?? []}
+            readerState={readerStates[activePublication.id] ?? defaultReaderState}
+            onSaveReaderState={saveActiveReaderState}
+            onSelectPage={selectActivePage}
+            onToggleBookmark={toggleActiveBookmark}
           />
         ) : (
           <LibraryView

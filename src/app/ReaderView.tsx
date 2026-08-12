@@ -1,11 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent, RefObject, WheelEvent } from 'react';
-import { navigationAvailability, pageCounter, visiblePageIndexes, clamp } from '../domain/reader';
-import type { PageDescriptor, Publication, ReadingProfile } from '../domain/types';
+import { clamp, clampPan, clampZoomScale, navigationAvailability, pageCounter, visiblePageIndexes } from '../domain/reader';
+import { defaultReaderState, normalizeReaderState } from '../domain/readerState';
+import type { Bookmark, PageDescriptor, Publication, ReaderState, ReadingProfile, ZoomMode } from '../domain/types';
+import { touchNativePages } from '../services/nativeLibrary';
 import { useAdaptiveFlow } from '../flow/useAdaptiveFlow';
 import { ReaderSurface } from '../rendering/ReaderSurface';
 import type { RenderFrame, RendererStatus } from '../rendering/contracts';
 import { AdaptiveFlowOverlay } from './AdaptiveFlowOverlay';
+import { PageNavigator } from './PageNavigator';
+import { ZoomControls } from './ZoomControls';
 
 interface ReaderViewProps {
   publication: Publication;
@@ -20,6 +24,11 @@ interface ReaderViewProps {
   onFlowManualRoute: () => void;
   nativeRuntime: boolean;
   settingsTriggerRef: RefObject<HTMLButtonElement | null>;
+  bookmarks: Bookmark[];
+  readerState?: ReaderState;
+  onSaveReaderState: (state: ReaderState) => void;
+  onSelectPage: (pageIndex: number) => void;
+  onToggleBookmark: (pageId: string) => void;
 }
 
 type TurnPhase = 'idle' | 'dragging' | 'committing' | 'cancelling';
@@ -55,6 +64,11 @@ export function ReaderView({
   onFlowManualRoute,
   nativeRuntime,
   settingsTriggerRef,
+  bookmarks,
+  readerState,
+  onSaveReaderState,
+  onSelectPage,
+  onToggleBookmark,
 }: ReaderViewProps) {
   const paperRef = useRef<HTMLDivElement>(null);
   const turnTimerRef = useRef<number | undefined>(undefined);
@@ -64,6 +78,12 @@ export function ReaderView({
   const [turnPhase, setTurnPhase] = useState<TurnPhase>('idle');
   const [pageChangeDirection, setPageChangeDirection] = useState<'forward' | 'backward' | null>(null);
   const [flowVisible, setFlowVisible] = useState(false);
+  const [navigatorVisible, setNavigatorVisible] = useState(false);
+  const [localReaderState, setLocalReaderState] = useState<ReaderState>(() => normalizeReaderState(readerState ?? defaultReaderState));
+  const [panDragging, setPanDragging] = useState(false);
+  const spaceHeldRef = useRef(false);
+  const panStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+  const skipNextStateSaveRef = useRef(true);
   const [rendererStatus, setRendererStatus] = useState<RendererStatus>({ backend: 'static', quality: 'essential' });
   const visibleIndexes = visiblePageIndexes(publication.currentPage, publication.pages, profile.mode, profile.direction);
   const visiblePages = visibleIndexes.map((index) => publication.pages[index]).filter(Boolean);
@@ -80,6 +100,53 @@ export function ReaderView({
     publication.pages.length,
     profile.direction,
   );
+  const safeReaderState = useMemo(() => normalizeReaderState(localReaderState), [localReaderState]);
+  const manualScale = safeReaderState.zoomMode === 'manual' ? clampZoomScale(safeReaderState.zoomScale) : 1;
+  const effectiveScale = safeReaderState.zoomMode === 'width' ? 1.16 : manualScale;
+  const canPan = safeReaderState.zoomMode === 'manual' && manualScale > 1;
+  const currentBookmarked = Boolean(currentPage && bookmarks.some((bookmark) => bookmark.pageId === currentPage.id));
+
+  useEffect(() => {
+    skipNextStateSaveRef.current = true;
+    setLocalReaderState(normalizeReaderState(readerState ?? defaultReaderState));
+  }, [publication.id, readerState]);
+
+  useEffect(() => {
+    if (skipNextStateSaveRef.current) {
+      skipNextStateSaveRef.current = false;
+      return;
+    }
+    onSaveReaderState(safeReaderState);
+  }, [onSaveReaderState, safeReaderState]);
+
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.code === 'Space' && !(event.target instanceof HTMLInputElement) && !(event.target instanceof HTMLTextAreaElement)) {
+        spaceHeldRef.current = true;
+      }
+    };
+    const onKeyUp = (event: globalThis.KeyboardEvent) => {
+      if (event.code === 'Space') {
+        spaceHeldRef.current = false;
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!nativeRuntime) {
+      return;
+    }
+    const ids = [publication.currentPage - 1, publication.currentPage, publication.currentPage + 1]
+      .map((index) => publication.pages[index]?.id)
+      .filter((id): id is string => Boolean(id));
+    void touchNativePages(publication.id, ids).catch(() => undefined);
+  }, [nativeRuntime, publication.currentPage, publication.id, publication.pages]);
   const { graph: flowGraph, state: flowState, swapOrder, useManualRoute } = useAdaptiveFlow({
     publicationId: publication.id,
     page: currentPage,
@@ -109,7 +176,7 @@ export function ReaderView({
   }, []);
 
   const isFlowInteraction = (event: PointerEvent<HTMLDivElement>) => (
-    event.target instanceof Element && Boolean(event.target.closest('[data-flow-control]'))
+    event.target instanceof Element && Boolean(event.target.closest('[data-flow-control], [data-reader-control]'))
   );
 
   const turnRect = () => {
@@ -159,6 +226,22 @@ export function ReaderView({
   };
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (isFlowInteraction(event)) {
+      return;
+    }
+
+    if (event.button === 0 && canPan && spaceHeldRef.current && turnPhase === 'idle') {
+      event.currentTarget.setPointerCapture(event.pointerId);
+      panStartRef.current = {
+        x: event.clientX,
+        y: event.clientY,
+        panX: safeReaderState.panX,
+        panY: safeReaderState.panY,
+      };
+      setPanDragging(true);
+      return;
+    }
+
     if (
       event.button !== 0
       || profile.reducedMotion
@@ -176,6 +259,19 @@ export function ReaderView({
   };
 
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (panDragging) {
+      const start = panStartRef.current;
+      const next = clampPan(
+        start.panX + event.clientX - start.x,
+        start.panY + event.clientY - start.y,
+        manualScale,
+        160,
+        120,
+      );
+      setLocalReaderState((current) => ({ ...current, panX: next.x, panY: next.y }));
+      return;
+    }
+
     if (turnPhase !== 'dragging' || !dragging || isFlowInteraction(event)) {
       return;
     }
@@ -206,6 +302,14 @@ export function ReaderView({
   };
 
   const onPointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    if (panDragging) {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      setPanDragging(false);
+      return;
+    }
+
     if (!dragging) {
       return;
     }
@@ -229,6 +333,26 @@ export function ReaderView({
       onPrevious();
     }
   };
+
+  const changeZoomMode = (mode: ZoomMode) => {
+    setLocalReaderState((current) => ({
+      ...current,
+      zoomMode: mode,
+      zoomScale: mode === 'manual' ? clampZoomScale(current.zoomScale) : current.zoomScale,
+      panX: mode === 'manual' ? current.panX : 0,
+      panY: mode === 'manual' ? current.panY : 0,
+    }));
+  };
+
+  const changeZoomScale = (scale: number) => {
+    const nextScale = clampZoomScale(scale);
+    setLocalReaderState((current) => {
+      const pan = clampPan(current.panX, current.panY, nextScale, 160, 120);
+      return { ...current, zoomMode: 'manual', zoomScale: nextScale, panX: pan.x, panY: pan.y };
+    });
+  };
+
+  const resetPan = () => setLocalReaderState((current) => ({ ...current, panX: 0, panY: 0 }));
 
   const curlStyle = {
     '--turn-progress': dragProgress,
@@ -259,6 +383,9 @@ export function ReaderView({
     useManualRoute();
     onFlowManualRoute();
   };
+  const contentTransformStyle = {
+    transform: `translate(${safeReaderState.panX}px, ${safeReaderState.panY}px) scale(${effectiveScale})`,
+  } as CSSProperties;
 
   return (
     <main
@@ -285,6 +412,28 @@ export function ReaderView({
             <span className="reader-tool-label">Flow</span>
             <span className="reader-tool-symbol" aria-hidden="true">↘</span>
           </button>
+          <button
+            className={`reader-tool ${navigatorVisible ? 'reader-tool--active' : ''}`}
+            type="button"
+            onClick={() => setNavigatorVisible((current) => !current)}
+            aria-pressed={navigatorVisible}
+            aria-label={navigatorVisible ? 'Hide page navigator' : 'Show page navigator'}
+            data-reader-control
+          >
+            <span className="reader-tool-label">Pages</span>
+            <span className="reader-tool-symbol" aria-hidden="true">▦</span>
+          </button>
+          <button
+            className={`reader-tool ${currentBookmarked ? 'reader-tool--active' : ''}`}
+            type="button"
+            onClick={() => currentPage && onToggleBookmark(currentPage.id)}
+            aria-pressed={currentBookmarked}
+            aria-label={currentBookmarked ? 'Remove bookmark from current page' : 'Bookmark current page'}
+            data-reader-control
+          >
+            <span className="reader-tool-label">Bookmark</span>
+            <span className="reader-tool-symbol" aria-hidden="true">{currentBookmarked ? '◆' : '◇'}</span>
+          </button>
           <button className="reader-tool" onClick={onToggleFullscreen} aria-label="Fullscreen">
             <span className="reader-tool-label">Fullscreen</span>
             <span className="reader-tool-symbol" aria-hidden="true">↗</span>
@@ -296,53 +445,80 @@ export function ReaderView({
         </div>
       </header>
 
+      {navigatorVisible && (
+        <PageNavigator
+          pages={publication.pages}
+          currentPage={publication.currentPage}
+          bookmarks={bookmarks}
+          onSelectPage={onSelectPage}
+          onToggleBookmark={onToggleBookmark}
+          onClose={() => setNavigatorVisible(false)}
+        />
+      )}
+
       <section
         className={`reading-stage reading-stage--${profile.mode} ${dragging ? 'reading-stage--dragging' : ''} ${turnPhase !== 'idle' ? `reading-stage--turn-${turnPhase}` : ''}`}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={() => finishDrag(false)}
+        onPointerCancel={() => {
+          if (panDragging) {
+            setPanDragging(false);
+          } else {
+            finishDrag(false);
+          }
+        }}
         onWheel={onWheel}
         aria-label="Reading canvas. Drag the lower corner to turn the page."
       >
         <div className="stage-caption stage-caption--left">{profile.direction === 'rtl' ? 'RIGHT TO LEFT' : 'LEFT TO RIGHT'}</div>
         <div className="stage-caption stage-caption--right">{profile.mode === 'spread' ? 'SPREAD VIEW' : 'SINGLE PAGE'}</div>
 
+        <ZoomControls
+          mode={safeReaderState.zoomMode}
+          scale={safeReaderState.zoomScale}
+          onModeChange={changeZoomMode}
+          onScaleChange={changeZoomScale}
+          onResetPan={resetPan}
+        />
+
         <div
           className={`paper-spread paper-spread--${profile.mode} ${pageChangeDirection ? `paper-spread--page-enter-${pageChangeDirection}` : ''}`}
           ref={paperRef}
           style={{ '--spread-aspect': spreadAspect } as CSSProperties}
         >
-          <ReaderSurface
-            frame={rendererFrame}
-            ariaLabel={`${pageCounter(publication.currentPage, publication.pages.length)} page ready for reading`}
-            onStatus={setRendererStatus}
-            interactionActive={turnPhase !== 'idle'}
-            staticContent={(
-              <>
-                {visiblePages.map((page) => <PageSheet page={page} key={page.id} />)}
-                {currentPage && turnPhase !== 'idle' && (
-                  <div
-                    className={`curl-layer curl-layer--${profile.direction}`}
-                    style={curlStyle}
-                    aria-hidden="true"
-                  >
-                    <PageSheet page={currentPage} />
-                    <span className="curl-glint" />
-                  </div>
-                )}
-              </>
-            )}
-          />
-          <AdaptiveFlowOverlay
-            graph={flowGraph}
-            isAnalyzing={flowState === 'analyzing'}
-            visible={flowVisible}
-            pageSlot={Math.max(currentPageSlot, 0)}
-            pageCount={visiblePages.length}
-            onSwap={correctFlowOrder}
-            onUseManualRoute={useManualFlowRoute}
-          />
+          <div className="reader-content-transform" style={contentTransformStyle} data-reader-content>
+            <ReaderSurface
+              frame={rendererFrame}
+              ariaLabel={`${pageCounter(publication.currentPage, publication.pages.length)} page ready for reading`}
+              onStatus={setRendererStatus}
+              interactionActive={turnPhase !== 'idle'}
+              staticContent={(
+                <>
+                  {visiblePages.map((page) => <PageSheet page={page} key={page.id} />)}
+                  {currentPage && turnPhase !== 'idle' && (
+                    <div
+                      className={`curl-layer curl-layer--${profile.direction}`}
+                      style={curlStyle}
+                      aria-hidden="true"
+                    >
+                      <PageSheet page={currentPage} />
+                      <span className="curl-glint" />
+                    </div>
+                  )}
+                </>
+              )}
+            />
+            <AdaptiveFlowOverlay
+              graph={flowGraph}
+              isAnalyzing={flowState === 'analyzing'}
+              visible={flowVisible}
+              pageSlot={Math.max(currentPageSlot, 0)}
+              pageCount={visiblePages.length}
+              onSwap={correctFlowOrder}
+              onUseManualRoute={useManualFlowRoute}
+            />
+          </div>
           <div className="corner-hint" style={turnHintStyle} aria-hidden="true">
             <span className="corner-line" />
             <span>DRAG A CORNER</span>

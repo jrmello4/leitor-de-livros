@@ -35,6 +35,30 @@ export function clampZoomScale(scale: number): number {
   return clamp(scale, 0.5, 3);
 }
 
+export interface PanPosition {
+  x: number;
+  y: number;
+}
+
+/** Keep manual panning bounded; scale 1 has no available pan distance. */
+export function clampPan(
+  panX: number,
+  panY: number,
+  scale: number,
+  maxX = 80,
+  maxY = maxX,
+): PanPosition {
+  const safeScale = clampZoomScale(scale);
+  const xLimit = Math.max(0, (safeScale - 1) * maxX);
+  const yLimit = Math.max(0, (safeScale - 1) * maxY);
+  const x = clamp(Number.isFinite(panX) ? panX : 0, -xLimit, xLimit);
+  const y = clamp(Number.isFinite(panY) ? panY : 0, -yLimit, yLimit);
+  return {
+    x: x === 0 ? 0 : x,
+    y: y === 0 ? 0 : y,
+  };
+}
+
 export interface NavigationAvailability {
   canNext: boolean;
   canPrevious: boolean;

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { calculateProgress, clampZoomScale, movePage, navigationAvailability, pageCounter, visiblePageIndexes } from './reader';
+import {
+  calculateProgress,
+  clampPan,
+  clampZoomScale,
+  movePage,
+  navigationAvailability,
+  pageCounter,
+  visiblePageIndexes,
+} from './reader';
 import type { PageDescriptor } from './types';
 
 const pages: PageDescriptor[] = [1, 2, 3, 4].map((number, index) => ({
@@ -16,6 +24,11 @@ describe('reader navigation contracts', () => {
     expect(clampZoomScale(0.1)).toBe(0.5);
     expect(clampZoomScale(1.4)).toBe(1.4);
     expect(clampZoomScale(4)).toBe(3);
+  });
+
+  it('keeps pan inside the bounded viewport for manual zoom', () => {
+    expect(clampPan(420, -80, 2)).toEqual({ x: 80, y: -80 });
+    expect(clampPan(-420, 420, 1)).toEqual({ x: 0, y: 0 });
   });
 
   it('moves forward in LTR and backward in RTL without leaving the book', () => {
