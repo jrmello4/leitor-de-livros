@@ -1287,6 +1287,35 @@ html:fullscreen .reader-controls:focus-within {
   transform: translateX(-50%);
 }
 
+.renderer-diagnostic-panel {
+  position: absolute;
+  right: 22px;
+  bottom: 18px;
+  z-index: 10;
+  max-width: min(360px, 42vw);
+  color: rgba(206, 220, 212, 0.66);
+  font-family: var(--utility);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.renderer-diagnostic-panel summary {
+  cursor: pointer;
+  color: rgba(229, 183, 122, 0.76);
+}
+
+.renderer-diagnostic-panel code {
+  display: block;
+  max-width: 100%;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+  color: rgba(206, 220, 212, 0.7);
+  font: inherit;
+  line-height: 1.45;
+  text-transform: none;
+}
+
 .reader-controls {
   gap: 30px;
   padding: 0 34px;

@@ -557,6 +557,10 @@ export function ReaderView({
         <p className="sr-only" data-testid="renderer-diagnostic">
           {rendererAnnouncement.diagnostic}
         </p>
+        <details className="renderer-diagnostic-panel">
+          <summary>Renderer diagnostics</summary>
+          <code>{rendererAnnouncement.diagnostic}</code>
+        </details>
       </section>
 
       <footer className="reader-controls">
