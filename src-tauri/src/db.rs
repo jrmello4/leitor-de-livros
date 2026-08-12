@@ -406,9 +406,12 @@ impl LibraryDb {
         Ok(())
     }
 
-    /// Marks cached pages as recently used and pinned for the active reader
-    /// session. Missing derived files are skipped; the next reader open will
-    /// rebuild them through `ensure_page_cache`.
+    /// Marks cached pages as recently used for the active reader session.
+    /// This is a recency hint only: it must not turn every visited page into
+    /// a permanent pin, otherwise LRU cleanup could never reclaim it. An
+    /// explicitly pinned entry remains pinned through `record_page_cache`'s
+    /// `None` update. Missing derived files are skipped; the next reader open
+    /// will rebuild them through `ensure_page_cache`.
     pub fn touch_page_cache_for_publication(
         &self,
         publication_id: &str,
@@ -437,7 +440,7 @@ impl LibraryDb {
             else {
                 continue;
             };
-            self.record_page_cache(page_id, byte_size, Some(true))?;
+            self.record_page_cache(page_id, byte_size, None)?;
         }
         Ok(())
     }
@@ -2255,6 +2258,41 @@ mod tests {
             .expect("pin state");
         assert_eq!(pinned, 1);
         drop(connection);
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
+    fn touch_page_cache_updates_recency_without_permanent_pin() {
+        let root = temporary_root("cache-touch-evictable");
+        std::fs::create_dir_all(&root).expect("root");
+        let source_path = root.join("source.png");
+        std::fs::write(&source_path, b"source").expect("source");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        insert_test_publication(&database, &source_path.to_string_lossy());
+        let cached_page = database
+            .cache_dir()
+            .join("publication-1")
+            .join("page-1.png");
+
+        database
+            .touch_page_cache_for_publication("publication-1", &["page-1".to_owned()])
+            .expect("touch page");
+
+        let connection = database.connection.lock().expect("database lock");
+        let pinned: i64 = connection
+            .query_row(
+                "SELECT pinned FROM cache_entries WHERE page_id = 'page-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("pin state");
+        assert_eq!(pinned, 0);
+        drop(connection);
+
+        database.set_cache_limit(1).expect("evict touched page");
+        assert!(!cached_page.exists());
 
         drop(database);
         std::fs::remove_dir_all(root).expect("cleanup database");
