@@ -97,4 +97,25 @@ describe('ProfilePanel focus management', () => {
     expect(onClearCache).toHaveBeenCalledTimes(1);
     expect(host.textContent).toContain('Original files are never removed');
   });
+
+  it('explains when cache controls require the desktop app', () => {
+    act(() => {
+      root.render(
+        <ProfilePanel
+          profile={loadProfile()}
+          capturingAction={null}
+          onChange={vi.fn()}
+          onStartCapture={vi.fn()}
+          onReset={vi.fn()}
+          onClose={vi.fn()}
+          triggerRef={{ current: null }}
+          cacheAvailable={false}
+        />,
+      );
+    });
+
+    expect(host.textContent).toContain('Cache controls are available in the desktop app.');
+    expect(host.querySelector<HTMLSelectElement>('#cache-limit')?.disabled).toBe(true);
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="Clear derived cache"]')?.disabled).toBe(true);
+  });
 });

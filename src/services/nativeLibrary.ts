@@ -5,6 +5,7 @@ import { defaultReaderState, normalizeReaderState } from '../domain/readerState'
 import type {
   Bookmark,
   CacheInfo,
+  PageDescriptor,
   Publication,
   ReaderState,
   ReadingDirection,
@@ -233,6 +234,25 @@ export async function clearNativeCache(): Promise<void> {
     return;
   }
   await invoke('clear_cache');
+}
+
+export async function ensureNativePage(publicationId: string, pageId: string): Promise<PageDescriptor | null> {
+  if (!isNativeRuntime()) {
+    return null;
+  }
+  const value = await invoke<unknown>('ensure_page_cache', { publicationId, pageId });
+  const page = normalizePage(value);
+  if (!page) {
+    return null;
+  }
+  return {
+    id: page.id,
+    index: page.index,
+    name: page.name,
+    src: page.cachePath ? convertFileSrc(page.cachePath) : '',
+    width: page.width,
+    height: page.height,
+  };
 }
 
 /**

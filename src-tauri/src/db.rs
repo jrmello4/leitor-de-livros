@@ -401,6 +401,8 @@ impl LibraryDb {
                  updated_at = excluded.updated_at",
             params![max_bytes, now()],
         )?;
+        drop(connection);
+        self.enforce_cache_limit(&[])?;
         Ok(())
     }
 
@@ -1889,6 +1891,63 @@ mod tests {
     }
 
     #[test]
+    fn setting_a_lower_cache_limit_evicts_unprotected_entries_immediately() {
+        let root = temporary_root("cache-limit-enforcement");
+        std::fs::create_dir_all(&root).expect("root");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        let source_path = root.join("source.png");
+        std::fs::write(&source_path, b"source").expect("source");
+        let publication_cache = database.cache_dir().join("publication-limit");
+        std::fs::create_dir_all(&publication_cache).expect("cache directory");
+        let pages = ["page-limit-a", "page-limit-b"]
+            .iter()
+            .enumerate()
+            .map(|(index, page_id)| {
+                let cache_path = publication_cache.join(format!("{page_id}.png"));
+                std::fs::write(&cache_path, [index as u8; 4]).expect("cache page");
+                NewPage {
+                    id: (*page_id).to_owned(),
+                    index,
+                    name: format!("{page_id}.png"),
+                    cache_path,
+                    source_ref: PageSourceRef::Image {
+                        path: source_path.to_string_lossy().into_owned(),
+                    },
+                    width: 1,
+                    height: 1,
+                }
+            })
+            .collect::<Vec<_>>();
+        database
+            .insert_publication(&NewPublication {
+                id: "publication-limit".to_owned(),
+                title: "Limit".to_owned(),
+                source_label: "source".to_owned(),
+                source_path: source_path.to_string_lossy().into_owned(),
+                format: "images".to_owned(),
+                pages,
+                cover_page_id: "page-limit-a".to_owned(),
+                current_page: 0,
+                direction: "ltr".to_owned(),
+                added_at: "0".to_owned(),
+                updated_at: "0".to_owned(),
+                diagnostic: None,
+            })
+            .expect("publication");
+
+        database.set_cache_limit(1).expect("set cache limit");
+
+        assert_eq!(database.cache_info().expect("cache info").max_bytes, 1);
+        assert!(database.cache_info().expect("cache info").used_bytes <= 1);
+        assert_eq!(database.cache_info().expect("cache info").entry_count, 0);
+        assert!(!publication_cache.join("page-limit-a.png").exists());
+        assert!(!publication_cache.join("page-limit-b.png").exists());
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
     fn deleting_publication_removes_only_its_derived_cache_and_preserves_source_bytes() {
         let root = temporary_root("delete");
         let source_path = root.join("external-source.cbz");
@@ -2138,7 +2197,18 @@ mod tests {
                 .expect("access order");
         }
         drop(connection);
-        database.set_cache_limit(8).expect("cache limit");
+        // Keep the cache over the eventual limit so this test can exercise
+        // `enforce_cache_limit`'s protected-page behavior explicitly. The
+        // public setter enforces immediately by design.
+        database.set_cache_limit(12).expect("cache limit");
+        let connection = database.connection.lock().expect("database lock");
+        connection
+            .execute(
+                "UPDATE cache_settings SET max_bytes = 8 WHERE id = 'default'",
+                [],
+            )
+            .expect("lower cache setting for enforcement test");
+        drop(connection);
 
         let freed = database
             .enforce_cache_limit(&["page-protected".to_owned()])

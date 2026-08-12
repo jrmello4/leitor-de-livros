@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createDemoPublication } from '../data/demo';
 import { canRunActionWhileSettingsOpen, InputMap } from '../domain/input';
 import { calculateProgress, movePage } from '../domain/reader';
-import type { ActionName, Bookmark, CacheInfo, Publication, ReaderState, ReadingProfile } from '../domain/types';
+import type { ActionName, Bookmark, CacheInfo, PageDescriptor, Publication, ReaderState, ReadingProfile } from '../domain/types';
 import { importFiles } from '../services/importers';
 import {
   chooseNativeFiles,
@@ -15,6 +15,7 @@ import {
   saveNativeProgress,
   clearNativeCache,
   deleteNativePublication,
+  ensureNativePage,
   getNativeCacheInfo,
   setNativeCacheLimit,
 } from '../services/nativeLibrary';
@@ -60,6 +61,8 @@ export function App() {
   const [diagnostic, setDiagnostic] = useState<string | undefined>();
   const [announcement, setAnnouncement] = useState('Library ready.');
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
+  const metadataGenerationRef = useRef(0);
+  const favoriteInFlightRef = useRef(new Set<string>());
 
   const activePublication = library.find((publication) => publication.id === activeId);
   const inputMap = useMemo(() => new InputMap(profile.bindings), [profile.bindings]);
@@ -73,6 +76,8 @@ export function App() {
   }, []);
 
   const hydrateMetadata = useCallback(async (publications: Publication[]) => {
+    const generation = ++metadataGenerationRef.current;
+    const publicationIds = new Set(publications.map((publication) => publication.id));
     try {
       const metadata = await Promise.all(publications.map(async (publication) => {
         const [publicationBookmarks, readerState] = await Promise.all([
@@ -81,11 +86,55 @@ export function App() {
         ]);
         return { id: publication.id, bookmarks: publicationBookmarks, readerState };
       }));
-      setBookmarks(Object.fromEntries(metadata.map((entry) => [entry.id, entry.bookmarks])));
-      setReaderStates(Object.fromEntries(metadata.map((entry) => [entry.id, entry.readerState])));
+      if (generation !== metadataGenerationRef.current) {
+        return;
+      }
+      setBookmarks(Object.fromEntries(metadata.filter((entry) => publicationIds.has(entry.id)).map((entry) => [entry.id, entry.bookmarks])));
+      setReaderStates(Object.fromEntries(metadata.filter((entry) => publicationIds.has(entry.id)).map((entry) => [entry.id, entry.readerState])));
     } catch {
-      setDiagnostic('Reader metadata could not be restored. Reading can continue in memory.');
+      if (generation === metadataGenerationRef.current) {
+        setDiagnostic('Reader metadata could not be restored. Reading can continue in memory.');
+      }
     }
+  }, []);
+
+  const reloadNativeLibraryWithEssentials = useCallback(async (direction: ReadingProfile['direction']) => {
+    const initial = await listNativePublications(direction);
+    const ensuredPages = new Map<string, Map<string, PageDescriptor>>();
+    let incomplete = false;
+    for (const publication of initial) {
+      const pageIds = new Set([
+        publication.pages[publication.currentPage]?.id,
+        publication.pages.find((page) => page.id === publication.coverPageId)?.id,
+      ].filter((pageId): pageId is string => Boolean(pageId)));
+      const publicationPages = new Map<string, PageDescriptor>();
+      for (const pageId of pageIds) {
+        try {
+          const ensured = await ensureNativePage(publication.id, pageId);
+          if (ensured) {
+            publicationPages.set(pageId, ensured);
+          } else {
+            incomplete = true;
+          }
+        } catch {
+          // A legacy publication may no longer have a rebuildable source. Keep
+          // the rest of the library usable and surface that state to the UI.
+          incomplete = true;
+        }
+      }
+      ensuredPages.set(publication.id, publicationPages);
+    }
+    const refreshed = await listNativePublications(direction);
+    const library = refreshed.map((publication) => {
+      const ensured = ensuredPages.get(publication.id);
+      return ensured
+        ? { ...publication, pages: publication.pages.map((page) => ensured.get(page.id) ?? page) }
+        : publication;
+    });
+    if (library.some((publication) => publication.pages.some((page) => !page.src))) {
+      incomplete = true;
+    }
+    return { library, incomplete };
   }, []);
 
   useEffect(() => {
@@ -123,6 +172,7 @@ export function App() {
     void bootNativeLibrary();
     return () => {
       cancelled = true;
+      metadataGenerationRef.current += 1;
     };
   }, [hydrateMetadata, nativeRuntime, refreshCacheInfo]);
 
@@ -152,17 +202,24 @@ export function App() {
   }, []);
 
   const toggleFavorite = useCallback(async (publication: Publication) => {
+    if (favoriteInFlightRef.current.has(publication.id)) {
+      return;
+    }
     const nextFavorite = !publication.isFavorite;
+    favoriteInFlightRef.current.add(publication.id);
     try {
       await toggleFavoriteForPublication(publication.id, nextFavorite);
       updatePublication(publication.id, (current) => ({ ...current, isFavorite: nextFavorite }));
       setAnnouncement(nextFavorite ? `${publication.title} added to favorites.` : `${publication.title} removed from favorites.`);
     } catch {
       setDiagnostic('Favorite could not be saved. Your reading data was not changed.');
+    } finally {
+      favoriteInFlightRef.current.delete(publication.id);
     }
   }, [updatePublication]);
 
   const removePublication = useCallback(async (publication: Publication) => {
+    metadataGenerationRef.current += 1;
     try {
       await deleteNativePublication(publication.id);
       setLibrary((current) => current.filter((entry) => entry.id !== publication.id));
@@ -188,24 +245,68 @@ export function App() {
   }, [activeId, refreshCacheInfo]);
 
   const updateCacheLimit = useCallback(async (maxBytes: number) => {
+    if (!nativeRuntime) {
+      return;
+    }
+    let limitApplied = false;
     try {
       await setNativeCacheLimit(maxBytes);
+      limitApplied = true;
+      const { library: refreshedLibrary, incomplete } = await reloadNativeLibraryWithEssentials(profile.direction);
+      setLibrary(refreshedLibrary);
+      void hydrateMetadata(refreshedLibrary);
       await refreshCacheInfo();
-      setAnnouncement('Cache limit saved.');
+      if (incomplete) {
+        setDiagnostic('Some pages could not be rebuilt yet; the original files were preserved. They will retry when opened.');
+        setAnnouncement('Cache limit saved with some pages unavailable until opened.');
+      } else {
+        setAnnouncement('Cache limit saved.');
+      }
     } catch {
-      setDiagnostic('Cache limit could not be saved. Existing pages were kept.');
+      if (limitApplied) {
+        metadataGenerationRef.current += 1;
+        setActiveId(null);
+        setLibrary([]);
+        setBookmarks({});
+        setReaderStates({});
+        setDiagnostic('Cache limit was saved, but the library could not be refreshed. Reopen the app to reload it; original files were preserved.');
+      } else {
+        setDiagnostic('Cache limit could not be saved. Existing pages were kept.');
+      }
     }
-  }, [refreshCacheInfo]);
+  }, [hydrateMetadata, nativeRuntime, profile.direction, refreshCacheInfo, reloadNativeLibraryWithEssentials]);
 
   const clearCache = useCallback(async () => {
+    if (!nativeRuntime) {
+      return;
+    }
+    let cacheCleared = false;
     try {
       await clearNativeCache();
+      cacheCleared = true;
+      const { library: readyLibrary, incomplete } = await reloadNativeLibraryWithEssentials(profile.direction);
+      setLibrary(readyLibrary);
+      void hydrateMetadata(readyLibrary);
       await refreshCacheInfo();
-      setAnnouncement('Derived page cache cleared. Original files were preserved.');
+      if (incomplete) {
+        setDiagnostic('Some pages could not be rebuilt yet; the original files were preserved. They will retry when opened.');
+        setAnnouncement('Derived page cache cleared with some pages unavailable until opened.');
+      } else {
+        setAnnouncement('Derived page cache cleared. Original files were preserved.');
+      }
     } catch {
-      setDiagnostic('Cache could not be cleared. Your original files were not modified.');
+      if (cacheCleared) {
+        metadataGenerationRef.current += 1;
+        setActiveId(null);
+        setLibrary([]);
+        setBookmarks({});
+        setReaderStates({});
+        setDiagnostic('Cache was cleared, but the library could not be refreshed. Reopen the app to reload it; original files were preserved.');
+      } else {
+        setDiagnostic('Cache could not be cleared. Your original files were not modified.');
+      }
     }
-  }, [refreshCacheInfo]);
+  }, [hydrateMetadata, nativeRuntime, profile.direction, refreshCacheInfo, reloadNativeLibraryWithEssentials]);
 
   const persistProgress = useCallback((publicationId: string, pageIndex: number) => {
     saveProgress(publicationId, pageIndex);
@@ -217,7 +318,7 @@ export function App() {
   }, [nativeRuntime]);
 
   const moveActivePage = useCallback(
-    (delta: number) => {
+    async (delta: number) => {
       if (!activePublication) {
         return;
       }
@@ -234,8 +335,25 @@ export function App() {
         return;
       }
 
+      let ensuredPage: Awaited<ReturnType<typeof ensureNativePage>>;
+      if (nativeRuntime) {
+        try {
+          ensuredPage = await ensureNativePage(activePublication.id, activePublication.pages[nextPage]?.id ?? '');
+        } catch {
+          setDiagnostic('This page could not be rebuilt from the original. Your file was not modified.');
+          return;
+        }
+        if (!ensuredPage) {
+          setDiagnostic('This page could not be rebuilt from the original. Your file was not modified.');
+          return;
+        }
+      }
+
       updatePublication(activePublication.id, (publication) => ({
         ...publication,
+        pages: ensuredPage
+          ? publication.pages.map((page) => page.id === ensuredPage.id ? ensuredPage : page)
+          : publication.pages,
         currentPage: nextPage,
         progress: calculateProgress(nextPage, publication.pages.length, profile.direction),
         updatedAt: new Date().toISOString(),
@@ -243,7 +361,7 @@ export function App() {
       persistProgress(activePublication.id, nextPage);
       setAnnouncement(`Page ${nextPage + 1} of ${activePublication.pages.length}.`);
     },
-    [activePublication, persistProgress, profile.direction, updatePublication],
+    [activePublication, nativeRuntime, persistProgress, profile.direction, updatePublication],
   );
 
   const toggleFullscreen = useCallback(async () => {
@@ -339,7 +457,7 @@ export function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [capturingAction, handleAction, inputMap, updateProfile]);
 
-  const openPublication = (publication: Publication) => {
+  const openPublication = async (publication: Publication) => {
     const startsAtFreshRtlPage =
       profile.direction === 'rtl' &&
       publication.currentPage === 0 &&
@@ -352,15 +470,34 @@ export function App() {
         }
       : publication;
 
-    if (openingPublication !== publication) {
-      updatePublication(publication.id, () => openingPublication);
-      persistProgress(publication.id, openingPublication.currentPage);
+    let readyPublication = openingPublication;
+    if (nativeRuntime) {
+      try {
+        const ensuredPage = await ensureNativePage(
+          openingPublication.id,
+          openingPublication.pages[openingPublication.currentPage]?.id ?? '',
+        );
+        if (ensuredPage) {
+          readyPublication = {
+            ...openingPublication,
+            pages: openingPublication.pages.map((page) => page.id === ensuredPage.id ? ensuredPage : page),
+          };
+        }
+      } catch {
+        setDiagnostic('This page could not be rebuilt from the original. Your file was not modified.');
+        return;
+      }
     }
 
-    setActiveId(openingPublication.id);
+    if (readyPublication !== publication) {
+      updatePublication(publication.id, () => readyPublication);
+      persistProgress(publication.id, readyPublication.currentPage);
+    }
+
+    setActiveId(readyPublication.id);
     setShowProfile(false);
     setDiagnostic(undefined);
-    setAnnouncement(`${openingPublication.title} opened. Page ${openingPublication.currentPage + 1} of ${openingPublication.pages.length}.`);
+    setAnnouncement(`${readyPublication.title} opened. Page ${readyPublication.currentPage + 1} of ${readyPublication.pages.length}.`);
   };
 
   const handleImport = async (files: File[]) => {
@@ -388,7 +525,7 @@ export function App() {
         }
       : importedPublication;
     setLibrary((current) => [openingPublication, ...current]);
-    openPublication(openingPublication);
+    void openPublication(openingPublication);
     setAnnouncement(`${openingPublication.title} imported locally.`);
   };
 
@@ -414,8 +551,12 @@ export function App() {
         const importedIds = new Set(result.publications.map((publication) => publication.id));
         return [...result.publications, ...current.filter((publication) => !importedIds.has(publication.id))];
       });
+      const nextLibrary = await listNativePublications(profile.direction);
+      setLibrary(nextLibrary);
+      void hydrateMetadata(nextLibrary);
+      await refreshCacheInfo();
       const openingPublication = result.publications[0];
-      openPublication(openingPublication);
+      void openPublication(openingPublication);
       setAnnouncement(`${openingPublication.title} imported into the native library.`);
     } catch {
       setDiagnostic('The native import failed. The original files were not modified.');
@@ -472,7 +613,10 @@ export function App() {
             isNativeRuntime={nativeRuntime}
             onImportNative={() => void handleNativeImport(false)}
             onImportFolder={() => void handleNativeImport(true)}
-            onOpenSettings={() => setShowProfile(true)}
+            onOpenSettings={() => {
+              void refreshCacheInfo();
+              setShowProfile(true);
+            }}
             onToggleFavorite={(publication) => void toggleFavorite(publication)}
             onDelete={(publication) => removePublication(publication)}
             favoriteOnly={favoriteOnly}
@@ -494,6 +638,7 @@ export function App() {
             cacheInfo={cacheInfo}
             onSetCacheLimit={updateCacheLimit}
             onClearCache={clearCache}
+            cacheAvailable={nativeRuntime}
             triggerRef={settingsTriggerRef}
             onClose={() => {
               setCapturingAction(null);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { mostRecentPublication, visiblePublications as getVisiblePublications } from '../domain/library';
 import type { Publication } from '../domain/types';
 
@@ -51,18 +51,75 @@ export function LibraryView({
   const [deleteError, setDeleteError] = useState<string | undefined>();
   const [isDeleting, setIsDeleting] = useState(false);
   const deleteCancelRef = useRef<HTMLButtonElement>(null);
+  const deleteTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const restoreTriggerOnCloseRef = useRef(false);
+  const libraryMainRef = useRef<HTMLElement>(null);
+  const restoreDeleteFocus = () => {
+    const trigger = deleteTriggerRef.current
+      ?? libraryMainRef.current?.querySelector<HTMLButtonElement>('.delete-link');
+    if (trigger?.isConnected) {
+      trigger.focus();
+      return;
+    }
+    if (settingsTriggerRef.current?.isConnected) {
+      settingsTriggerRef.current.focus();
+    } else {
+      libraryMainRef.current?.focus();
+    }
+  };
   const visiblePublications = useMemo(() => {
     const visible = getVisiblePublications(publications, query, sort);
     return favoriteOnly ? visible.filter((publication) => publication.isFavorite) : visible;
   }, [favoriteOnly, publications, query, sort]);
   const continuePublication = useMemo(() => mostRecentPublication(publications), [publications]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!pendingDelete) {
+      if (restoreTriggerOnCloseRef.current) {
+        restoreTriggerOnCloseRef.current = false;
+        restoreDeleteFocus();
+      }
       return;
     }
     setDeleteError(undefined);
     deleteCancelRef.current?.focus();
+  }, [pendingDelete]);
+
+  useEffect(() => {
+    if (!pendingDelete) {
+      return;
+    }
+
+    const onDialogKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        restoreTriggerOnCloseRef.current = true;
+        setPendingDelete(null);
+        return;
+      }
+      if (event.key !== 'Tab') {
+        return;
+      }
+
+      const focusable = Array.from(document.querySelectorAll<HTMLElement>(
+        '.confirm-dialog button:not([disabled]), .confirm-dialog [href], .confirm-dialog input:not([disabled]), .confirm-dialog select:not([disabled])',
+      ));
+      if (focusable.length === 0) {
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', onDialogKeyDown);
+    return () => document.removeEventListener('keydown', onDialogKeyDown);
   }, [pendingDelete]);
 
   const onFileInput = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -86,7 +143,12 @@ export function LibraryView({
     try {
       const result = onDelete(pendingDelete);
       void Promise.resolve(result)
-        .then(() => setPendingDelete(null))
+        .then(() => {
+          // The card may be removed by the parent as soon as onDelete resolves,
+          // so focus a stable target before unmounting the dialog/card.
+          libraryMainRef.current?.focus();
+          setPendingDelete(null);
+        })
         .catch(() => setDeleteError('The publication could not be removed. Nothing was changed.'))
         .finally(() => setIsDeleting(false));
     } catch {
@@ -96,7 +158,7 @@ export function LibraryView({
   };
 
   return (
-    <main className="library-view" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
+    <main ref={libraryMainRef} className="library-view" tabIndex={-1} onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
       <header className="library-header">
         <div className="brand-lockup" aria-label="Tactile Reader home">
           <span className="brand-glyph" aria-hidden="true">T</span>
@@ -236,7 +298,10 @@ export function LibraryView({
                   className="delete-link"
                   type="button"
                   aria-label={`Remove ${publication.title} from library`}
-                  onClick={() => setPendingDelete(publication)}
+                  onClick={(event) => {
+                    deleteTriggerRef.current = event.currentTarget;
+                    setPendingDelete(publication);
+                  }}
                 >
                   Remove
                 </button>
@@ -280,7 +345,12 @@ export function LibraryView({
                 className="secondary-button"
                 type="button"
                 disabled={isDeleting}
-                onClick={() => setPendingDelete(null)}
+                aria-label="Keep publication"
+                onClick={(event) => {
+                  event.currentTarget.blur();
+                  restoreTriggerOnCloseRef.current = true;
+                  setPendingDelete(null);
+                }}
               >
                 Keep publication
               </button>

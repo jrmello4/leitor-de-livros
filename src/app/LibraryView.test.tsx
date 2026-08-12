@@ -111,15 +111,43 @@ describe('LibraryView favorites and safe deletion', () => {
     expect(onDelete).toHaveBeenCalledWith(book);
   });
 
-  it('keeps the publication when the confirmation is cancelled', () => {
+  it('keeps the publication when the confirmation is cancelled', async () => {
     const book = publication('book-a', 'Book A', false);
     const onDelete = vi.fn();
     root = renderLibrary(host, [book], { onDelete });
 
-    act(() => host.querySelector<HTMLButtonElement>('[aria-label="Remove Book A from library"]')?.click());
-    act(() => host.querySelector<HTMLButtonElement>('[aria-label="Keep publication"]')?.click());
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[aria-label="Remove Book A from library"]')?.click();
+      await Promise.resolve();
+    });
+    const removeButton = host.querySelector<HTMLButtonElement>('[aria-label="Remove Book A from library"]');
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull();
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[aria-label="Keep publication"]')?.click();
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
 
     expect(host.textContent).toContain('Book A');
     expect(onDelete).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(removeButton);
+  });
+
+  it('restores focus after a successful removal request while the card remains mounted', async () => {
+    const book = publication('book-a', 'Book A', false);
+    const onDelete = vi.fn(async () => undefined);
+    root = renderLibrary(host, [book], { onDelete });
+    const removeButton = host.querySelector<HTMLButtonElement>('[aria-label="Remove Book A from library"]');
+
+    await act(async () => {
+      removeButton?.click();
+      await Promise.resolve();
+      host.querySelector<HTMLButtonElement>('[aria-label="Confirm remove Book A"]')?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+
+    expect(onDelete).toHaveBeenCalledWith(book);
+    expect(document.activeElement).toBe(host.querySelector('main.library-view'));
   });
 });

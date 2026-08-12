@@ -11,6 +11,7 @@ interface ProfilePanelProps {
   onClose: () => void;
   triggerRef: RefObject<HTMLButtonElement | null>;
   cacheInfo?: CacheInfo;
+  cacheAvailable?: boolean;
   onSetCacheLimit?: (maxBytes: number) => void | Promise<void>;
   onClearCache?: () => void | Promise<void>;
 }
@@ -52,6 +53,7 @@ export function ProfilePanel({
   onClose,
   triggerRef,
   cacheInfo = defaultCacheInfo(),
+  cacheAvailable = true,
   onSetCacheLimit = () => undefined,
   onClearCache = () => undefined,
 }: ProfilePanelProps) {
@@ -196,10 +198,12 @@ export function ProfilePanel({
           <div className="cache-meter" aria-hidden="true">
             <span style={{ width: `${Math.min(100, cacheInfo.maxBytes > 0 ? (cacheInfo.usedBytes / cacheInfo.maxBytes) * 100 : 0)}%` }} />
           </div>
+          {!cacheAvailable && <p className="settings-help cache-help">Cache controls are available in the desktop app.</p>}
           <label className="setting-row" htmlFor="cache-limit">
             <span>Cache limit</span>
             <select
               id="cache-limit"
+              disabled={!cacheAvailable}
               value={selectedCacheLimit}
               onChange={(event) => void onSetCacheLimit(Number(event.target.value))}
             >
@@ -208,8 +212,8 @@ export function ProfilePanel({
               ))}
             </select>
           </label>
-          <p className="settings-help cache-help">Only derived pages are removed. Original files are never removed.</p>
-          <button className="secondary-button cache-clear-button" type="button" aria-label="Clear derived cache" onClick={() => void onClearCache()}>
+          {cacheAvailable && <p className="settings-help cache-help">Only derived pages are removed. Original files are never removed.</p>}
+          <button className="secondary-button cache-clear-button" type="button" disabled={!cacheAvailable} aria-label="Clear derived cache" onClick={() => void onClearCache()}>
             Clear cache now
           </button>
         </section>
