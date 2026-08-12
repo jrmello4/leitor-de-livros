@@ -500,7 +500,6 @@ impl LibraryDb {
                 .filter_map(|source_ref| source_ref_path(&source_ref).canonicalize().ok())
                 .collect::<HashSet<_>>()
         };
-        let transaction = connection.transaction()?;
         let mut freed_bytes = 0_i64;
         for (page_id, publication_id, cache_path, recorded_size) in candidates {
             if used_bytes <= max_bytes {
@@ -509,20 +508,41 @@ impl LibraryDb {
             if protected.contains(page_id.as_str()) {
                 continue;
             }
-            if let Some((validated_path, actual_size)) =
+            let renamed_cache = if let Some((validated_path, actual_size)) =
                 validated_cache_file(&self.cache_dir, Path::new(&cache_path))?
             {
                 if !origin_paths.contains(&validated_path) {
-                    std::fs::remove_file(validated_path)?;
-                    freed_bytes = freed_bytes.saturating_add(actual_size);
+                    let eviction_path =
+                        validated_path.with_file_name(format!(".{}.{}.evict", page_id, now()));
+                    std::fs::rename(&validated_path, &eviction_path)?;
+                    Some((validated_path, eviction_path, actual_size))
+                } else {
+                    None
                 }
+            } else {
+                None
+            };
+            let database_update = (|| -> CoreResult<()> {
+                let transaction = connection.transaction()?;
+                transaction.execute("DELETE FROM cache_entries WHERE page_id = ?1", [&page_id])?;
+                transaction
+                    .execute("UPDATE pages SET cache_path = '' WHERE id = ?1", [&page_id])?;
+                mark_publication_cache_missing(&transaction, &publication_id)?;
+                transaction.commit()?;
+                Ok(())
+            })();
+            if let Err(error) = database_update {
+                if let Some((original, eviction, _)) = renamed_cache {
+                    let _ = std::fs::rename(eviction, original);
+                }
+                return Err(error);
             }
-            transaction.execute("DELETE FROM cache_entries WHERE page_id = ?1", [&page_id])?;
-            transaction.execute("UPDATE pages SET cache_path = '' WHERE id = ?1", [&page_id])?;
-            mark_publication_cache_missing(&transaction, &publication_id)?;
+            if let Some((_, eviction, actual_size)) = renamed_cache {
+                std::fs::remove_file(eviction)?;
+                freed_bytes = freed_bytes.saturating_add(actual_size);
+            }
             used_bytes = used_bytes.saturating_sub(recorded_size.max(0));
         }
-        transaction.commit()?;
         Ok(freed_bytes)
     }
 
@@ -587,12 +607,13 @@ impl LibraryDb {
             .to_str()
             .ok_or_else(|| CoreError::from("cache path is not valid UTF-8"))?
             .to_owned();
-        {
-            let connection = self
+        let database_update = (|| -> CoreResult<()> {
+            let mut connection = self
                 .connection
                 .lock()
                 .map_err(|_| CoreError::from("database lock poisoned"))?;
-            connection.execute(
+            let transaction = connection.transaction()?;
+            transaction.execute(
                 "UPDATE pages SET cache_path = ?1, width = ?2, height = ?3
                   WHERE publication_id = ?4 AND id = ?5",
                 params![
@@ -603,9 +624,33 @@ impl LibraryDb {
                     page_id,
                 ],
             )?;
+            transaction.execute(
+                "INSERT INTO cache_entries
+                    (page_id, publication_id, cache_path, byte_size, last_accessed_at, pinned)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 0)
+                 ON CONFLICT(page_id) DO UPDATE SET
+                    publication_id = excluded.publication_id,
+                    cache_path = excluded.cache_path,
+                    byte_size = excluded.byte_size,
+                    last_accessed_at = excluded.last_accessed_at",
+                params![
+                    page_id,
+                    publication_id,
+                    cache_path_string,
+                    i64::try_from(rebuilt.bytes.len()).map_err(|_| CoreError::from(
+                        "derived page cache is too large to record"
+                    ))?,
+                    now(),
+                ],
+            )?;
+            transaction.commit()?;
+            Ok(())
+        })();
+        if let Err(error) = database_update {
+            let _ = std::fs::remove_file(&cache_path);
+            return Err(error);
         }
-        let byte_size = cache_file_size(&self.cache_dir, &cache_path)?;
-        self.touch_page_cache(page_id, byte_size, false)?;
+        cache_file_size(&self.cache_dir, &cache_path)?;
         self.enforce_cache_limit(&protected_page_ids)?;
         page.cache_path = cache_path_string;
         page.width = rebuilt.width;
@@ -615,19 +660,12 @@ impl LibraryDb {
 
     pub fn clear_cache(&self) -> CoreResult<()> {
         let cache_root = self.cache_dir.canonicalize()?;
-        for entry in std::fs::read_dir(&cache_root)? {
-            let entry = entry?;
-            let path = entry.path();
-            if entry.file_type()?.is_dir() {
-                std::fs::remove_dir_all(path)?;
-            } else {
-                std::fs::remove_file(path)?;
-            }
-        }
         let mut connection = self
             .connection
             .lock()
             .map_err(|_| CoreError::from("database lock poisoned"))?;
+        let origin_paths = canonical_origin_paths(&connection)?;
+        remove_derived_files(&cache_root, &cache_root, &origin_paths)?;
         let transaction = connection.transaction()?;
         transaction.execute("DELETE FROM cache_entries", [])?;
         transaction.execute("UPDATE pages SET cache_path = ''", [])?;
@@ -1190,6 +1228,43 @@ fn source_ref_path(source_ref: &PageSourceRef) -> &Path {
         | PageSourceRef::Archive { path, .. }
         | PageSourceRef::Pdf { path, .. } => Path::new(path),
     }
+}
+
+fn canonical_origin_paths(connection: &Connection) -> CoreResult<HashSet<PathBuf>> {
+    let mut statement =
+        connection.prepare("SELECT source_ref FROM pages WHERE source_ref <> ''")?;
+    let source_refs = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(source_refs
+        .iter()
+        .filter_map(|value| decode_source_ref(value))
+        .filter_map(|source_ref| source_ref_path(&source_ref).canonicalize().ok())
+        .collect())
+}
+
+fn remove_derived_files(
+    cache_root: &Path,
+    directory: &Path,
+    origin_paths: &HashSet<PathBuf>,
+) -> CoreResult<()> {
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            remove_derived_files(cache_root, &path, origin_paths)?;
+            if path.read_dir()?.next().is_none() {
+                std::fs::remove_dir(path)?;
+            }
+        } else {
+            let canonical = path.canonicalize()?;
+            if canonical.starts_with(cache_root) && !origin_paths.contains(&canonical) {
+                std::fs::remove_file(path)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn mark_publication_cache_missing(
@@ -1923,6 +1998,11 @@ mod tests {
         assert_eq!(freed, 0);
         assert_eq!(
             std::fs::read(&source_path).expect("source remains"),
+            source_bytes
+        );
+        database.clear_cache().expect("clear derived cache");
+        assert_eq!(
+            std::fs::read(&source_path).expect("source remains after clear"),
             source_bytes
         );
 

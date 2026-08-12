@@ -461,11 +461,23 @@ pub(crate) fn cache_page(
     file.write_all(bytes)?;
     file.sync_all()?;
     drop(file);
+    let backup = cache_dir.join(format!(
+        ".{page_id}.{}.{}.backup",
+        std::process::id(),
+        timestamp()
+    ));
     if target.exists() {
-        fs::remove_file(&temporary)?;
-    } else if let Err(error) = fs::rename(&temporary, &target) {
+        fs::rename(&target, &backup)?;
+    }
+    if let Err(error) = fs::rename(&temporary, &target) {
         let _ = fs::remove_file(&temporary);
+        if backup.exists() {
+            let _ = fs::rename(&backup, &target);
+        }
         return Err(error.into());
+    }
+    if backup.exists() {
+        fs::remove_file(backup)?;
     }
     Ok(target)
 }

@@ -482,6 +482,12 @@ pub(crate) fn rebuild_cbr_page(path: &Path, member: &str) -> CoreResult<importer
         let (bytes, _) = entry
             .read()
             .map_err(|error| CoreError::Unrar(format!("{error:?}")))?;
+        if bytes.len() as u64 > importer::MAX_PAGE_BYTES {
+            return Err(CoreError::from(format!(
+                "CBR page {normalized_member} exceeds the {} MiB page limit after extraction",
+                importer::MAX_PAGE_BYTES / 1024 / 1024
+            )));
+        }
         let (width, height) = importer::validate_image(&bytes, &normalized_member)?;
         let extension = importer::extension_from_name(&normalized_member)
             .ok_or_else(|| CoreError::from("CBR image extension missing"))?;
