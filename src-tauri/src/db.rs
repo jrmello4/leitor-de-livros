@@ -42,6 +42,7 @@ impl LibraryDb {
              PRAGMA synchronous = NORMAL;",
         )?;
         migrate(&mut connection)?;
+        retry_eviction_tombstones(&connection, &cache_dir)?;
         reconcile_cache_entries(&mut connection, &cache_dir)?;
 
         Ok(Self {
@@ -406,6 +407,15 @@ impl LibraryDb {
     // Public cache APIs are wired to Tauri commands in the following implementation task.
     #[allow(dead_code)]
     pub fn touch_page_cache(&self, page_id: &str, byte_size: i64, pinned: bool) -> CoreResult<()> {
+        self.record_page_cache(page_id, byte_size, Some(pinned))
+    }
+
+    fn record_page_cache(
+        &self,
+        page_id: &str,
+        byte_size: i64,
+        pinned: Option<bool>,
+    ) -> CoreResult<()> {
         if byte_size < 0 {
             return Err(CoreError::from("cache byte size cannot be negative"));
         }
@@ -430,20 +440,20 @@ impl LibraryDb {
         connection.execute(
             "INSERT INTO cache_entries
                 (page_id, publication_id, cache_path, byte_size, last_accessed_at, pinned)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             VALUES (?1, ?2, ?3, ?4, ?5, COALESCE(?6, 0))
              ON CONFLICT(page_id) DO UPDATE SET
                 publication_id = excluded.publication_id,
                 cache_path = excluded.cache_path,
                 byte_size = excluded.byte_size,
                 last_accessed_at = excluded.last_accessed_at,
-                pinned = excluded.pinned",
+                pinned = COALESCE(?6, cache_entries.pinned)",
             params![
                 page_id,
                 page.0,
                 page.1,
                 actual_size,
                 now(),
-                i64::from(pinned)
+                pinned.map(i64::from)
             ],
         )?;
         Ok(())
@@ -584,7 +594,7 @@ impl LibraryDb {
         if let Some((_, byte_size)) =
             validated_cache_file(&self.cache_dir, Path::new(&page.cache_path))?
         {
-            self.touch_page_cache(page_id, byte_size, false)?;
+            self.record_page_cache(page_id, byte_size, None)?;
             self.enforce_cache_limit(&protected_page_ids)?;
             return Ok(page);
         }
@@ -676,10 +686,12 @@ impl LibraryDb {
 
     pub fn delete_publication(&self, publication_id: &str) -> CoreResult<()> {
         let cache_publication_dir = self.publication_cache_dir(publication_id)?;
+        let cache_root = self.cache_dir.canonicalize()?;
         let mut connection = self
             .connection
             .lock()
             .map_err(|_| CoreError::from("database lock poisoned"))?;
+        let origin_paths = canonical_publication_origin_paths(&connection, publication_id)?;
         let transaction = connection.transaction()?;
         for table in [
             "bookmarks",
@@ -699,7 +711,10 @@ impl LibraryDb {
         drop(connection);
 
         if cache_publication_dir.exists() {
-            std::fs::remove_dir_all(cache_publication_dir)?;
+            remove_derived_files(&cache_root, &cache_publication_dir, &origin_paths)?;
+            if cache_publication_dir.read_dir()?.next().is_none() {
+                std::fs::remove_dir(cache_publication_dir)?;
+            }
         }
         Ok(())
     }
@@ -1241,6 +1256,57 @@ fn canonical_origin_paths(connection: &Connection) -> CoreResult<HashSet<PathBuf
         .filter_map(|value| decode_source_ref(value))
         .filter_map(|source_ref| source_ref_path(&source_ref).canonicalize().ok())
         .collect())
+}
+
+fn canonical_publication_origin_paths(
+    connection: &Connection,
+    publication_id: &str,
+) -> CoreResult<HashSet<PathBuf>> {
+    let mut statement = connection.prepare(
+        "SELECT source_ref FROM pages
+          WHERE publication_id = ?1 AND source_ref <> ''",
+    )?;
+    let source_refs = statement
+        .query_map([publication_id], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(source_refs
+        .iter()
+        .filter_map(|value| decode_source_ref(value))
+        .filter_map(|source_ref| source_ref_path(&source_ref).canonicalize().ok())
+        .collect())
+}
+
+fn retry_eviction_tombstones(connection: &Connection, cache_dir: &Path) -> CoreResult<()> {
+    let cache_root = cache_dir.canonicalize()?;
+    let origin_paths = canonical_origin_paths(connection)?;
+    remove_eviction_tombstones(&cache_root, &cache_root, &origin_paths)
+}
+
+fn remove_eviction_tombstones(
+    cache_root: &Path,
+    directory: &Path,
+    origin_paths: &HashSet<PathBuf>,
+) -> CoreResult<()> {
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            remove_eviction_tombstones(cache_root, &path, origin_paths)?;
+            continue;
+        }
+        if !path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with('.') && name.ends_with(".evict"))
+        {
+            continue;
+        }
+        let canonical = path.canonicalize()?;
+        if canonical.starts_with(cache_root) && !origin_paths.contains(&canonical) {
+            std::fs::remove_file(path)?;
+        }
+    }
+    Ok(())
 }
 
 fn remove_derived_files(
@@ -1809,6 +1875,34 @@ mod tests {
     }
 
     #[test]
+    fn deleting_publication_preserves_origin_inside_its_cache_tree() {
+        let root = temporary_root("delete-origin-in-cache");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        let publication_cache = database.cache_dir().join("publication-1");
+        std::fs::create_dir_all(&publication_cache).expect("publication cache");
+        let source_path = publication_cache.join("original.png");
+        let source_bytes = b"origin must never be deleted";
+        std::fs::write(&source_path, source_bytes).expect("origin");
+        insert_test_publication(&database, &source_path.to_string_lossy());
+
+        database
+            .delete_publication("publication-1")
+            .expect("delete publication");
+
+        assert_eq!(
+            std::fs::read(&source_path).expect("origin remains"),
+            source_bytes
+        );
+        assert!(database
+            .list_publications()
+            .expect("publications")
+            .is_empty());
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
     fn deleting_publication_rejects_current_directory_as_an_id() {
         let root = temporary_root("delete-current-directory");
         let database = LibraryDb::open(root.clone()).expect("database");
@@ -1936,6 +2030,59 @@ mod tests {
         assert_eq!(database.cache_info().expect("cache info").used_bytes, 8);
 
         drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
+    fn cache_hit_preserves_an_existing_pin() {
+        let root = temporary_root("cache-pin-hit");
+        std::fs::create_dir_all(&root).expect("root");
+        let source_path = root.join("source.png");
+        std::fs::write(&source_path, b"source").expect("source");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        insert_test_publication(&database, &source_path.to_string_lossy());
+        let connection = database.connection.lock().expect("database lock");
+        connection
+            .execute(
+                "UPDATE cache_entries SET pinned = 1 WHERE page_id = 'page-1'",
+                [],
+            )
+            .expect("pin page");
+        drop(connection);
+
+        database
+            .ensure_page_cache("publication-1", "page-1")
+            .expect("cache hit");
+
+        let connection = database.connection.lock().expect("database lock");
+        let pinned: i64 = connection
+            .query_row(
+                "SELECT pinned FROM cache_entries WHERE page_id = 'page-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("pin state");
+        assert_eq!(pinned, 1);
+        drop(connection);
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
+    fn opening_database_retries_removal_of_eviction_tombstones() {
+        let root = temporary_root("cache-eviction-retry");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        let publication_cache = database.cache_dir().join("publication-1");
+        std::fs::create_dir_all(&publication_cache).expect("publication cache");
+        let tombstone = publication_cache.join(".page-1.123.evict");
+        std::fs::write(&tombstone, b"evicted derived bytes").expect("tombstone");
+        drop(database);
+
+        let reopened = LibraryDb::open(root.clone()).expect("reopen database");
+
+        assert!(!tombstone.exists());
+        drop(reopened);
         std::fs::remove_dir_all(root).expect("cleanup database");
     }
 
