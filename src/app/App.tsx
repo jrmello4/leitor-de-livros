@@ -345,7 +345,19 @@ export function App() {
   }, [nativeRuntime]);
 
   const persistReaderState = useCallback(async (publicationId: string, state: ReaderState) => {
-    setReaderStates((current) => ({ ...current, [publicationId]: state }));
+    setReaderStates((current) => {
+      const previous = current[publicationId];
+      if (
+        previous
+        && previous.zoomMode === state.zoomMode
+        && previous.zoomScale === state.zoomScale
+        && previous.panX === state.panX
+        && previous.panY === state.panY
+      ) {
+        return current;
+      }
+      return { ...current, [publicationId]: state };
+    });
     try {
       await saveReaderStateForPublication(publicationId, state);
     } catch {

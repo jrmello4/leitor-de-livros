@@ -107,8 +107,19 @@ export function ReaderView({
   const currentBookmarked = Boolean(currentPage && bookmarks.some((bookmark) => bookmark.pageId === currentPage.id));
 
   useEffect(() => {
-    skipNextStateSaveRef.current = true;
-    setLocalReaderState(normalizeReaderState(readerState ?? defaultReaderState));
+    const nextState = normalizeReaderState(readerState ?? defaultReaderState);
+    setLocalReaderState((current) => {
+      if (
+        current.zoomMode === nextState.zoomMode
+        && current.zoomScale === nextState.zoomScale
+        && current.panX === nextState.panX
+        && current.panY === nextState.panY
+      ) {
+        return current;
+      }
+      skipNextStateSaveRef.current = true;
+      return nextState;
+    });
   }, [publication.id, readerState]);
 
   useEffect(() => {
