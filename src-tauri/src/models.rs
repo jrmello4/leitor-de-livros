@@ -27,7 +27,34 @@ pub struct NativePublication {
     pub direction: String,
     pub added_at: String,
     pub updated_at: String,
+    pub is_favorite: bool,
     pub diagnostic: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeBookmark {
+    pub page_id: String,
+    pub label: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeReaderState {
+    pub zoom_mode: String,
+    pub zoom_scale: f64,
+    pub pan_x: f64,
+    pub pan_y: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheInfo {
+    pub used_bytes: i64,
+    pub max_bytes: i64,
+    pub entry_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
