@@ -691,7 +691,7 @@ impl LibraryDb {
             .connection
             .lock()
             .map_err(|_| CoreError::from("database lock poisoned"))?;
-        let origin_paths = canonical_publication_origin_paths(&connection, publication_id)?;
+        let origin_paths = canonical_origin_paths(&connection)?;
         let transaction = connection.transaction()?;
         for table in [
             "bookmarks",
@@ -1251,43 +1251,21 @@ fn canonical_origin_paths(connection: &Connection) -> CoreResult<HashSet<PathBuf
     let source_refs = statement
         .query_map([], |row| row.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(source_refs
-        .iter()
-        .filter_map(|value| decode_source_ref(value))
-        .filter_map(|source_ref| source_ref_path(&source_ref).canonicalize().ok())
-        .collect())
-}
-
-fn canonical_publication_origin_paths(
-    connection: &Connection,
-    publication_id: &str,
-) -> CoreResult<HashSet<PathBuf>> {
-    let mut statement = connection.prepare(
-        "SELECT source_ref FROM pages
-          WHERE publication_id = ?1 AND source_ref <> ''",
-    )?;
-    let source_refs = statement
-        .query_map([publication_id], |row| row.get::<_, String>(0))?
-        .collect::<Result<Vec<_>, _>>()?;
     let mut origin_paths = source_refs
         .iter()
         .filter_map(|value| decode_source_ref(value))
         .filter_map(|source_ref| source_ref_path(&source_ref).canonicalize().ok())
         .collect::<HashSet<_>>();
-    let legacy_source_path = connection
-        .query_row(
-            "SELECT source_path FROM publications WHERE id = ?1",
-            [publication_id],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()?;
-    if let Some(path) = legacy_source_path
-        .as_deref()
-        .and_then(legacy_origin_path)
-        .and_then(|path| path.canonicalize().ok())
-    {
-        origin_paths.insert(path);
-    }
+    let mut statement = connection.prepare("SELECT source_path FROM publications")?;
+    let source_paths = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    origin_paths.extend(
+        source_paths
+            .iter()
+            .filter_map(|source_path| legacy_origin_path(source_path))
+            .filter_map(|path| path.canonicalize().ok()),
+    );
     Ok(origin_paths)
 }
 
@@ -1966,6 +1944,45 @@ mod tests {
             std::fs::read(&source_path).expect("legacy origin remains"),
             source_bytes
         );
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
+    fn deleting_publication_preserves_another_publications_origin_inside_its_cache_tree() {
+        let root = temporary_root("delete-cross-publication-origin");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        let first_source = root.join("first-source.png");
+        std::fs::write(&first_source, b"first source").expect("first source");
+        insert_test_publication_with_ids(
+            &database,
+            "publication-1",
+            "page-1",
+            &first_source.to_string_lossy(),
+        );
+        let second_source = database
+            .cache_dir()
+            .join("publication-1")
+            .join("second-source.png");
+        let second_bytes = b"second publication origin";
+        std::fs::write(&second_source, second_bytes).expect("second source");
+        insert_test_publication_with_ids(
+            &database,
+            "publication-2",
+            "page-2",
+            &second_source.to_string_lossy(),
+        );
+
+        database
+            .delete_publication("publication-1")
+            .expect("delete first publication");
+
+        assert_eq!(
+            std::fs::read(&second_source).expect("second origin remains"),
+            second_bytes
+        );
+        assert_eq!(database.list_publications().expect("publications").len(), 1);
 
         drop(database);
         std::fs::remove_dir_all(root).expect("cleanup database");
