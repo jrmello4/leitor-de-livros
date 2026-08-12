@@ -31,6 +31,23 @@ export function movePage(
   return clamp(currentPage + signedDelta, 0, pageCount - 1);
 }
 
+export interface NavigationAvailability {
+  canNext: boolean;
+  canPrevious: boolean;
+}
+
+export function navigationAvailability(
+  currentPage: number,
+  pageCount: number,
+  direction: ReadingDirection,
+): NavigationAvailability {
+  const safeCurrent = pageCount > 0 ? clamp(currentPage, 0, pageCount - 1) : 0;
+  return {
+    canNext: movePage(safeCurrent, pageCount, direction, 1) !== safeCurrent,
+    canPrevious: movePage(safeCurrent, pageCount, direction, -1) !== safeCurrent,
+  };
+}
+
 export function visiblePageIndexes(
   currentPage: number,
   pages: PageDescriptor[],

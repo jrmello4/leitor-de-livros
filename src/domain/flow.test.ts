@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { analyzePanelRaster, createManualPanelGraph, orderedPanels, swapPanelOrder, type RasterImage } from './flow';
+import {
+  analyzePanelRaster,
+  createManualPanelGraph,
+  flowResolution,
+  orderedPanels,
+  swapPanelOrder,
+  type RasterImage,
+} from './flow';
 
 function rasterWithPanels(): RasterImage {
   const width = 120;
@@ -57,5 +64,15 @@ describe('Adaptive Flow geometry', () => {
     expect(corrected.corrections).toBe(1);
     expect(orderedPanels(corrected)[0].id).toBe(second.id);
     expect(createManualPanelGraph('fallback', 'rtl').direction).toBe('rtl');
+  });
+
+  it('classifies automatic, uncertain, and manual routes as exclusive states', () => {
+    const ready = analyzePanelRaster('ready', rasterWithPanels(), 'ltr');
+    const review = { ...ready, confidence: 0.5 };
+    const manual = createManualPanelGraph('manual', 'ltr');
+
+    expect(flowResolution(ready)).toBe('ready');
+    expect(flowResolution(review)).toBe('review');
+    expect(flowResolution(manual)).toBe('manual');
   });
 });

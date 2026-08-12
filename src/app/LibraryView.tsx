@@ -1,4 +1,5 @@
-import { useMemo } from 'react';
+import { useMemo, type RefObject } from 'react';
+import { mostRecentPublication, visiblePublications as getVisiblePublications } from '../domain/library';
 import type { Publication } from '../domain/types';
 
 interface LibraryViewProps {
@@ -15,6 +16,7 @@ interface LibraryViewProps {
   onImportNative: () => void;
   onImportFolder: () => void;
   onOpenSettings: () => void;
+  settingsTriggerRef: RefObject<HTMLButtonElement | null>;
 }
 
 function formatProgress(progress: number): string {
@@ -35,17 +37,12 @@ export function LibraryView({
   onImportNative,
   onImportFolder,
   onOpenSettings,
+  settingsTriggerRef,
 }: LibraryViewProps) {
   const visiblePublications = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    return [...publications]
-      .filter((publication) => publication.title.toLowerCase().includes(normalizedQuery))
-      .sort((left, right) =>
-        sort === 'title'
-          ? left.title.localeCompare(right.title)
-          : right.updatedAt.localeCompare(left.updatedAt),
-      );
+    return getVisiblePublications(publications, query, sort);
   }, [publications, query, sort]);
+  const continuePublication = useMemo(() => mostRecentPublication(publications), [publications]);
 
   const onFileInput = (event: React.ChangeEvent<HTMLInputElement>) => {
     onImport(Array.from(event.target.files ?? []));
@@ -71,9 +68,22 @@ export function LibraryView({
         </div>
         <div className="header-actions">
           <span className="privacy-chip"><span className="status-dot" /> device only</span>
-          <button className="quiet-button" onClick={onOpenSettings}>Reader settings</button>
+          <button ref={settingsTriggerRef} className="quiet-button" onClick={onOpenSettings}>Reader settings</button>
         </div>
       </header>
+
+      {continuePublication && (
+        <section className="continue-card" aria-label="Continue reading">
+          <div>
+            <span className="eyebrow">PICK UP WHERE YOU LEFT OFF</span>
+            <strong className="continue-title">{continuePublication.title}</strong>
+            <p>{formatProgress(continuePublication.progress)} · {continuePublication.pages.length} pages</p>
+          </div>
+          <button className="continue-button" type="button" onClick={() => onOpen(continuePublication)}>
+            Continue <span aria-hidden="true">↗</span>
+          </button>
+        </section>
+      )}
 
       <section className="library-intro">
         <div className="intro-copy">
@@ -171,7 +181,9 @@ export function LibraryView({
         <section className="empty-shelf">
           <span className="empty-mark" aria-hidden="true">∅</span>
           <h2>No publication matches that search.</h2>
-          <p>Clear the search or drop a supported image set/CBZ onto the shelf.</p>
+          <p>{isNativeRuntime
+            ? 'Clear the search or use Import publication to choose a supported file.'
+            : 'Clear the search or drop a supported image set/CBZ onto the shelf.'}</p>
         </section>
       )}
 

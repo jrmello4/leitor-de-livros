@@ -200,6 +200,63 @@ img {
   gap: 18px;
 }
 
+.continue-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin: 24px 7.5% 0;
+  padding: 18px 20px;
+  border: 1px solid rgba(200, 117, 77, 0.38);
+  background: linear-gradient(110deg, rgba(200, 117, 77, 0.14), rgba(20, 36, 42, 0.62));
+}
+
+.continue-title {
+  display: block;
+  margin: 7px 0 4px;
+  color: var(--paper);
+  font-family: var(--display);
+  font-size: 25px;
+  font-weight: 500;
+}
+
+.profile-backdrop {
+  position: fixed;
+  z-index: 9;
+  inset: 0;
+  background: rgba(5, 13, 16, 0.62);
+}
+
+.continue-card p {
+  margin: 0;
+  color: var(--mist);
+  font-family: var(--utility);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.continue-button {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 0 15px;
+  border: 1px solid var(--copper);
+  background: transparent;
+  color: var(--copper-bright);
+  font-family: var(--utility);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transition: background 180ms ease, color 180ms ease, transform 180ms ease;
+}
+
+.continue-button:hover {
+  background: var(--copper);
+  color: var(--ink);
+  transform: translateY(-1px);
+}
+
 .privacy-chip,
 .shortcut-note,
 .eyebrow,
@@ -685,19 +742,6 @@ img {
   font-size: 11px;
 }
 
-.renderer-mark {
-  display: inline-grid;
-  width: 30px;
-  height: 19px;
-  place-items: center;
-  border: 1px solid rgba(200, 117, 77, 0.5);
-  color: var(--copper-bright);
-  font-family: var(--utility);
-  font-size: 7px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-}
-
 .reader-flow-toggle {
   position: relative;
   color: var(--sage);
@@ -1150,6 +1194,12 @@ html:fullscreen .reader-controls:focus-within {
   text-align: right;
 }
 
+.nav-button:disabled {
+  color: rgba(168, 185, 178, 0.32);
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .reader-progress {
   display: flex;
   align-items: center;
@@ -1377,6 +1427,11 @@ html:fullscreen .reader-controls:focus-within {
     padding-left: 0;
   }
 
+  .continue-card {
+    margin-right: 0;
+    margin-left: 0;
+  }
+
   .intro-aside {
     max-width: 380px;
   }
@@ -1418,6 +1473,13 @@ html:fullscreen .reader-controls:focus-within {
   .library-intro {
     padding-top: 76px;
     padding-bottom: 70px;
+  }
+
+  .continue-card {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 15px;
+    margin-top: 18px;
   }
 
   .intro-copy h1 {
@@ -1472,15 +1534,21 @@ html:fullscreen .reader-controls:focus-within {
   }
 
   .reader-topbar-end {
-    gap: 10px;
+    gap: 4px;
   }
 
   .reader-topbar-end .reader-tool {
-    display: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    min-height: 44px;
+    padding: 0;
+    font-size: 0;
   }
 
-  .reader-topbar-end .reader-flow-toggle {
-    display: inline-block;
+  .reader-tool-symbol {
+    font-size: 13px;
   }
 
   .reader-title strong {
@@ -1553,7 +1621,7 @@ html:fullscreen .reader-controls:focus-within {
   }
 
   .nav-button {
-    min-width: 34px;
+    min-width: 44px;
     font-size: 0;
   }
 

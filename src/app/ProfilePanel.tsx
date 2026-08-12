@@ -1,3 +1,4 @@
+import { useEffect, useRef, type RefObject } from 'react';
 import type { ActionName, ReadingProfile } from '../domain/types';
 import { ACTION_LABELS, bindingLabel } from '../domain/input';
 
@@ -8,6 +9,7 @@ interface ProfilePanelProps {
   onStartCapture: (action: ActionName) => void;
   onReset: () => void;
   onClose: () => void;
+  triggerRef: RefObject<HTMLButtonElement | null>;
 }
 
 const profileActions: ActionName[] = [
@@ -27,15 +29,81 @@ export function ProfilePanel({
   onStartCapture,
   onReset,
   onClose,
+  triggerRef,
 }: ProfilePanelProps) {
+  const panelRef = useRef<HTMLElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    const activeElement = document.activeElement;
+    const opener = activeElement instanceof HTMLElement && activeElement !== document.body
+      ? activeElement
+      : triggerRef.current;
+    closeRef.current?.focus();
+
+    const focusableSelector = [
+      'button:not([disabled])',
+      'input:not([disabled])',
+      'select:not([disabled])',
+      'textarea:not([disabled])',
+      '[tabindex]:not([tabindex="-1"])',
+    ].join(',');
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        onCloseRef.current();
+        return;
+      }
+
+      if (event.key !== 'Tab') {
+        return;
+      }
+
+      const focusable = Array.from(panelRef.current?.querySelectorAll<HTMLElement>(focusableSelector) ?? []);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        panelRef.current?.focus();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      const restoreTarget = opener?.isConnected ? opener : triggerRef.current;
+      restoreTarget?.focus();
+    };
+  }, [triggerRef]);
+
   return (
-    <aside className="profile-panel" aria-label="Reader settings">
+    <aside
+      ref={panelRef}
+      className="profile-panel"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="profile-panel-title"
+      tabIndex={-1}
+    >
       <div className="panel-heading">
         <div>
           <span className="eyebrow">PROFILE / V1</span>
-          <h2>{profile.name}</h2>
+          <h2 id="profile-panel-title">{profile.name}</h2>
         </div>
-        <button className="panel-close" onClick={onClose} aria-label="Close settings">×</button>
+        <button ref={closeRef} className="panel-close" onClick={onClose} aria-label="Close settings">×</button>
       </div>
 
       <div className="panel-scroll">

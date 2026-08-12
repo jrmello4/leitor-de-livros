@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createDemoPublication } from '../data/demo';
-import { InputMap } from '../domain/input';
+import { canRunActionWhileSettingsOpen, InputMap } from '../domain/input';
 import { calculateProgress, movePage } from '../domain/reader';
 import type { ActionName, Publication, ReadingProfile } from '../domain/types';
 import { importFiles } from '../services/importers';
@@ -39,6 +39,7 @@ export function App() {
   const [isImporting, setIsImporting] = useState(false);
   const [diagnostic, setDiagnostic] = useState<string | undefined>();
   const [announcement, setAnnouncement] = useState('Library ready.');
+  const settingsTriggerRef = useRef<HTMLButtonElement>(null);
 
   const activePublication = library.find((publication) => publication.id === activeId);
   const inputMap = useMemo(() => new InputMap(profile.bindings), [profile.bindings]);
@@ -215,6 +216,11 @@ export function App() {
         return;
       }
 
+      if (showProfile && !canRunActionWhileSettingsOpen(action)) {
+        event.preventDefault();
+        return;
+      }
+
       event.preventDefault();
       handleAction(action);
     };
@@ -326,49 +332,58 @@ export function App() {
       <div className="ambient-mark ambient-mark--one" aria-hidden="true" />
       <div className="ambient-mark ambient-mark--two" aria-hidden="true" />
 
-      {activePublication ? (
-        <ReaderView
-          publication={activePublication}
-          profile={profile}
-          announcement={announcement}
-          onBack={() => setActiveId(null)}
-          onNext={() => moveActivePage(1)}
-          onPrevious={() => moveActivePage(-1)}
-          onToggleSettings={() => setShowProfile((current) => !current)}
-          onToggleFullscreen={() => void toggleFullscreen()}
-          onFlowCorrected={() => setAnnouncement('Panel order corrected and saved for this publication.')}
-          nativeRuntime={nativeRuntime}
-        />
-      ) : (
-        <LibraryView
-          publications={library}
-          query={query}
-          sort={sort}
-          diagnostic={diagnostic}
-          isImporting={isImporting}
-          onQueryChange={setQuery}
-          onSortChange={setSort}
-          onOpen={openPublication}
-          onImport={handleImport}
-          isNativeRuntime={nativeRuntime}
-          onImportNative={() => void handleNativeImport(false)}
-          onImportFolder={() => void handleNativeImport(true)}
-          onOpenSettings={() => setShowProfile(true)}
-        />
-      )}
+      <div className="app-content" inert={showProfile} aria-hidden={showProfile || undefined}>
+        {activePublication ? (
+          <ReaderView
+            publication={activePublication}
+            profile={profile}
+            announcement={announcement}
+            onBack={() => setActiveId(null)}
+            onNext={() => moveActivePage(1)}
+            onPrevious={() => moveActivePage(-1)}
+            onToggleSettings={() => setShowProfile((current) => !current)}
+            onToggleFullscreen={() => void toggleFullscreen()}
+            onFlowCorrected={() => setAnnouncement('Panel order corrected and saved for this publication.')}
+            onFlowManualRoute={() => setAnnouncement('Full-page reading enabled for this page.')}
+            nativeRuntime={nativeRuntime}
+            settingsTriggerRef={settingsTriggerRef}
+          />
+        ) : (
+          <LibraryView
+            publications={library}
+            query={query}
+            sort={sort}
+            diagnostic={diagnostic}
+            isImporting={isImporting}
+            onQueryChange={setQuery}
+            onSortChange={setSort}
+            onOpen={openPublication}
+            onImport={handleImport}
+            isNativeRuntime={nativeRuntime}
+            onImportNative={() => void handleNativeImport(false)}
+            onImportFolder={() => void handleNativeImport(true)}
+            onOpenSettings={() => setShowProfile(true)}
+            settingsTriggerRef={settingsTriggerRef}
+          />
+        )}
+      </div>
 
       {showProfile && (
-        <ProfilePanel
-          profile={profile}
-          capturingAction={capturingAction}
-          onChange={updateProfile}
-          onStartCapture={setCapturingAction}
-          onReset={handleProfileReset}
-          onClose={() => {
-            setCapturingAction(null);
-            setShowProfile(false);
-          }}
-        />
+        <>
+          <div className="profile-backdrop" aria-hidden="true" />
+          <ProfilePanel
+            profile={profile}
+            capturingAction={capturingAction}
+            onChange={updateProfile}
+            onStartCapture={setCapturingAction}
+            onReset={handleProfileReset}
+            triggerRef={settingsTriggerRef}
+            onClose={() => {
+              setCapturingAction(null);
+              setShowProfile(false);
+            }}
+          />
+        </>
       )}
 
       <div className="sr-only" aria-live="polite" aria-atomic="true">

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_BINDINGS, InputMap } from './input';
+import { canRunActionWhileSettingsOpen, DEFAULT_BINDINGS, InputMap } from './input';
 
 describe('named input map', () => {
   it('resolves actions without coupling readers to physical keys', () => {
@@ -21,5 +21,13 @@ describe('named input map', () => {
     input.bind('cancel', 'KeyX');
     input.reset();
     expect(input.getBindings()).toEqual(DEFAULT_BINDINGS);
+  });
+
+  it('allows only dialog-closing actions while settings are open', () => {
+    expect(canRunActionWhileSettingsOpen('toggle_settings')).toBe(true);
+    expect(canRunActionWhileSettingsOpen('cancel')).toBe(true);
+    expect(canRunActionWhileSettingsOpen('next_page')).toBe(false);
+    expect(canRunActionWhileSettingsOpen('previous_page')).toBe(false);
+    expect(canRunActionWhileSettingsOpen('toggle_fullscreen')).toBe(false);
   });
 });

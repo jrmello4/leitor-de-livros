@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { orderedPanels, type PanelGraph } from '../domain/flow';
+import { flowResolution, orderedPanels, type PanelGraph } from '../domain/flow';
 
 interface AdaptiveFlowOverlayProps {
   graph: PanelGraph | null;
@@ -11,11 +11,33 @@ interface AdaptiveFlowOverlayProps {
   onUseManualRoute: () => void;
 }
 
-function confidenceLabel(graph: PanelGraph): string {
-  if (graph.source === 'manual') {
-    return 'Manual route';
+function statusLabel(graph: PanelGraph): string {
+  switch (flowResolution(graph)) {
+    case 'manual':
+      return 'Full-page reading active';
+    case 'review':
+      return 'Panel guidance needs a check';
+    default:
+      return 'Panel guidance ready';
   }
-  return graph.confidence >= 0.72 ? 'Geometry confident' : 'Geometry needs review';
+}
+
+function guidanceLabel(graph: PanelGraph, canCorrectOrder: boolean, hasSelection: boolean): string {
+  switch (flowResolution(graph)) {
+    case 'manual':
+      return 'Assistance is off for this page; the full composition stays intact.';
+    case 'review':
+      if (canCorrectOrder) {
+        return hasSelection
+          ? 'Choose the second marker to swap, or read the full page.'
+          : 'The suggested order is uncertain. Choose two markers to swap, or read the full page.';
+      }
+      return 'The suggestion is uncertain. Read the full page to keep the composition intact.';
+    default:
+      return canCorrectOrder
+        ? (hasSelection ? 'Choose the second marker to swap.' : 'Choose two markers to correct the order.')
+        : 'The full-page route keeps reading uninterrupted.';
+  }
 }
 
 export function AdaptiveFlowOverlay({
@@ -47,7 +69,8 @@ export function AdaptiveFlowOverlay({
 
   const panels = orderedPanels(graph);
   const canCorrectOrder = panels.length > 1;
-  const canUseManualRoute = graph.source === 'geometry' && graph.confidence < 0.72;
+  const resolution = flowResolution(graph);
+  const canUseManualRoute = resolution === 'review';
   const width = 100 / Math.max(pageCount, 1);
   const pageOffset = width * pageSlot;
   const choosePanel = (panelId: string) => {
@@ -65,18 +88,22 @@ export function AdaptiveFlowOverlay({
 
   return (
     <div className="flow-overlay" aria-label="Adaptive Flow panel order">
-      <div className="flow-overlay-legend" data-flow-control>
-        <span>FLOW / {String(panels.length).padStart(2, '0')}</span>
-        <strong>{confidenceLabel(graph)}</strong>
-        <p>{canCorrectOrder
-          ? (firstSelection ? 'Choose the second marker to swap order.' : 'Choose two markers to correct order.')
-          : 'One full-page region keeps reading uninterrupted.'}</p>
+      <section className="flow-overlay-legend" data-flow-control aria-labelledby="flow-overlay-title">
+        <span id="flow-overlay-title">FLOW / {String(panels.length).padStart(2, '0')}</span>
+        <strong>{statusLabel(graph)}</strong>
+        <p>{guidanceLabel(graph, canCorrectOrder, Boolean(firstSelection))}</p>
         {canUseManualRoute && (
-          <button className="flow-manual-route" data-flow-control type="button" onClick={onUseManualRoute}>
-            Use full page
+          <button
+            className="flow-manual-route"
+            data-flow-control
+            type="button"
+            onClick={onUseManualRoute}
+            aria-label="Read this page as one full page"
+          >
+            Read full page
           </button>
         )}
-      </div>
+      </section>
       {panels.map((panel, index) => (
         <button
           className={`flow-panel-marker ${firstSelection === panel.id ? 'flow-panel-marker--selected' : ''}`}

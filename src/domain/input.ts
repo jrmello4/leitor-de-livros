@@ -20,6 +20,10 @@ export const DEFAULT_BINDINGS: BindingMap = {
   cancel: ['Escape'],
 };
 
+export function canRunActionWhileSettingsOpen(action: ActionName): boolean {
+  return action === 'toggle_settings' || action === 'cancel';
+}
+
 const ACTION_ORDER: ActionName[] = [
   'next_page',
   'previous_page',

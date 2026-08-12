@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculateProgress, movePage, pageCounter, visiblePageIndexes } from './reader';
+import { calculateProgress, movePage, navigationAvailability, pageCounter, visiblePageIndexes } from './reader';
 import type { PageDescriptor } from './types';
 
 const pages: PageDescriptor[] = [1, 2, 3, 4].map((number, index) => ({
@@ -32,5 +32,12 @@ describe('reader navigation contracts', () => {
     expect(calculateProgress(99, 4)).toBe(1);
     expect(calculateProgress(0, 0)).toBe(0);
     expect(pageCounter(1, 4)).toBe('02 / 04');
+  });
+
+  it('reports logical next and previous availability at both reading boundaries', () => {
+    expect(navigationAvailability(0, 4, 'ltr')).toEqual({ canNext: true, canPrevious: false });
+    expect(navigationAvailability(3, 4, 'ltr')).toEqual({ canNext: false, canPrevious: true });
+    expect(navigationAvailability(3, 4, 'rtl')).toEqual({ canNext: true, canPrevious: false });
+    expect(navigationAvailability(0, 4, 'rtl')).toEqual({ canNext: false, canPrevious: true });
   });
 });

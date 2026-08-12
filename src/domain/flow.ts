@@ -4,6 +4,8 @@ export const PANEL_GRAPH_VERSION = 1;
 
 export type PanelAnalysisSource = 'geometry' | 'manual';
 
+export type FlowResolution = 'ready' | 'review' | 'manual';
+
 export interface PanelBounds {
   x: number;
   y: number;
@@ -26,6 +28,14 @@ export interface PanelGraph {
   corrections: number;
   regions: PanelRegion[];
   updatedAt: string;
+}
+
+export function flowResolution(graph: PanelGraph): FlowResolution {
+  if (graph.source === 'manual') {
+    return 'manual';
+  }
+
+  return graph.confidence >= 0.72 ? 'ready' : 'review';
 }
 
 export interface RasterImage {
