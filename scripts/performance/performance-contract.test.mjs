@@ -14,6 +14,7 @@ test('computes frame-time p95 and rejects threshold breaches', () => {
     frameTimeP95Ms: 20,
     peakMemoryBytes: 200,
     steadyMemoryBytes: 100,
+    memoryGrowthBytes: 100,
     cacheGrowthBytes: 200,
     qualityDegradedBeforeStall: true,
   }).status, 'passed');
@@ -22,8 +23,22 @@ test('computes frame-time p95 and rejects threshold breaches', () => {
     frameTimeP95Ms: 40,
     peakMemoryBytes: 300 * 1024 * 1024,
     steadyMemoryBytes: 0,
+    memoryGrowthBytes: 300 * 1024 * 1024,
     cacheGrowthBytes: 600 * 1024 * 1024,
     qualityDegradedBeforeStall: false,
+  }).status, 'failed');
+  assert.equal(evaluateScenarioMetrics({
+    firstFrameMs: 500,
+    frameTimeP95Ms: 20,
+    memoryGrowthBytes: 0,
+    cacheGrowthBytes: 0,
+    qualityDegradedBeforeStall: true,
+    requireFrameSamples: true,
+    frameSampleCount: 0,
+    requireQualitySamples: true,
+    qualitySampleCount: 0,
+    requireMemorySamples: true,
+    memorySampleCount: 0,
   }).status, 'failed');
 });
 
@@ -33,6 +48,7 @@ test('requires complete hardware/build/scenario identity', () => {
     'hardware.gpuClass must be integrated or dedicated',
     'build.commit and build.version are required',
     'hardware.os, hardware.gpu, and hardware.memoryBytes are required',
+    'hardware.gpuClassDetected must be integrated or dedicated',
     'missing scenario: import',
     'missing scenario: first-frame',
     'missing scenario: navigation-50-pages',
@@ -41,7 +57,7 @@ test('requires complete hardware/build/scenario identity', () => {
   ]);
 });
 
-function report(gpuClass, passed = true) {
+function report(gpuClass, passed = true, commit = 'abc1234') {
   const scenarios = Object.fromEntries([
     'import',
     'first-frame',
@@ -51,8 +67,8 @@ function report(gpuClass, passed = true) {
   ].map((name) => [name, { status: 'passed' }]));
   return {
     schemaVersion: 1,
-    hardware: { gpuClass, os: 'Windows 11', gpu: gpuClass, memoryBytes: 8 * 1024 ** 3 },
-    build: { commit: 'abc1234', version: '0.1.0' },
+    hardware: { gpuClass, gpuClassDetected: gpuClass, os: 'Windows 11', gpu: gpuClass, memoryBytes: 8 * 1024 ** 3 },
+    build: { commit, version: '0.1.0' },
     scenarios,
     summary: {
       status: passed ? 'passed' : 'failed',
@@ -67,4 +83,5 @@ test('compares one integrated and one dedicated report', () => {
   assert.equal(comparePerformanceReports([report('integrated'), report('dedicated')]).status, 'passed');
   assert.equal(comparePerformanceReports([report('integrated')]).status, 'invalid');
   assert.equal(comparePerformanceReports([report('integrated'), report('dedicated', false)]).status, 'failed');
+  assert.equal(comparePerformanceReports([report('integrated'), report('dedicated', true, 'different')]).status, 'invalid');
 });

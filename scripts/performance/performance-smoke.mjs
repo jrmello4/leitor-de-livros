@@ -50,12 +50,37 @@ function readBuildCommit() {
   return process.env.GITHUB_SHA ?? commandOutput('git', ['rev-parse', 'HEAD'], { cwd: repositoryRoot });
 }
 
-function readHardwareSnapshot() {
+function classifyGpu(name, adapterRam = 0) {
+  const normalized = String(name ?? '').toLowerCase();
+  if (/nvidia|geforce|quadro|rtx|gtx|tesla|radeon\s+(rx|pro)|intel\s+arc/.test(normalized)) {
+    return 'dedicated';
+  }
+  if (/intel.*(uhd|iris|hd\s+graphics)|amd.*radeon\s+graphics|radeon\s+vega|apu|microsoft basic display/.test(normalized)) {
+    return 'integrated';
+  }
+  if (Number(adapterRam) >= 2 * 1024 ** 3) {
+    return 'dedicated';
+  }
+  return undefined;
+}
+
+async function readWebglRenderer(page) {
+  return page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
+    const extension = context?.getExtension('WEBGL_debug_renderer_info');
+    return extension && context
+      ? String(context.getParameter(extension.UNMASKED_RENDERER_WEBGL))
+      : undefined;
+  });
+}
+
+function readHardwareSnapshot(webglRenderer) {
   const script = `
 $os = Get-CimInstance Win32_OperatingSystem
 $computer = Get-CimInstance Win32_ComputerSystem
 $processor = Get-CimInstance Win32_Processor | Select-Object -First 1
-$gpus = @(Get-CimInstance Win32_VideoController | ForEach-Object { [ordered]@{ name = $_.Name; driver = $_.DriverVersion } })
+$gpus = @(Get-CimInstance Win32_VideoController | ForEach-Object { [ordered]@{ name = $_.Name; driver = $_.DriverVersion; adapterRam = [int64]$_.AdapterRAM } })
 [ordered]@{
   os = ($os.Caption + ' ' + $os.Version).Trim()
   cpu = [string]$processor.Name
@@ -66,12 +91,21 @@ $gpus = @(Get-CimInstance Win32_VideoController | ForEach-Object { [ordered]@{ n
   try {
     const value = JSON.parse(commandOutput('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script]));
     const gpus = Array.isArray(value.gpus) ? value.gpus : [value.gpus];
+    const candidates = [
+      { name: webglRenderer, adapterRam: 0 },
+      ...gpus.map((entry) => ({ name: entry?.name, adapterRam: Number(entry?.adapterRam) || 0 })),
+    ];
+    const webglClass = classifyGpu(webglRenderer);
+    const wmiClasses = gpus.map((entry) => classifyGpu(entry?.name, Number(entry?.adapterRam) || 0)).filter(Boolean);
+    const uniqueWmiClasses = [...new Set(wmiClasses)];
     return {
       os: value.os || 'Windows (unknown version)',
       cpu: value.cpu || 'unknown CPU',
       memoryBytes: Number(value.memoryBytes) || 0,
       gpu: gpus.map((entry) => entry?.name).filter(Boolean).join('; ') || 'unknown GPU',
       gpuDriver: gpus.map((entry) => entry?.driver).filter(Boolean).join('; ') || 'unknown driver',
+      gpuRenderer: webglRenderer || 'unknown renderer',
+      gpuClassDetected: webglClass ?? (uniqueWmiClasses.length === 1 ? uniqueWmiClasses[0] : undefined),
     };
   } catch {
     return {
@@ -80,6 +114,8 @@ $gpus = @(Get-CimInstance Win32_VideoController | ForEach-Object { [ordered]@{ n
       memoryBytes: 1,
       gpu: 'unknown GPU',
       gpuDriver: 'unknown driver',
+      gpuRenderer: webglRenderer || 'unknown renderer',
+      gpuClassDetected: classifyGpu(webglRenderer),
     };
   }
 }
@@ -333,12 +369,27 @@ async function waitForLibrary(page) {
   await page.getByTestId('library-publication-card').first().waitFor({ state: 'visible' });
 }
 
+async function resetReaderToFirstPage(page) {
+  const currentPage = Number(await page.getByTestId('reader-current-page').getAttribute('data-page-index'));
+  for (let pageIndex = currentPage; pageIndex > 0; pageIndex -= 1) {
+    await page.getByTestId('reader-previous').click();
+    await page.getByTestId('reader-current-page').toHaveAttribute('data-page-index', String(pageIndex - 1));
+  }
+}
+
 async function importSource(page, sourcePath) {
   await page.getByTestId('smoke-source-path').fill(sourcePath);
   const started = performance.now();
   await page.getByTestId('smoke-import').click();
   await waitForStatus(page, 'Imported');
   return performance.now() - started;
+}
+
+async function waitForImportComplete(page, previousSequence) {
+  return waitFor(async () => {
+    const sequence = Number(await page.getByTestId('smoke-import-complete').getAttribute('data-sequence'));
+    return sequence > previousSequence ? sequence : undefined;
+  }, 'Native import did not complete');
 }
 
 async function openCard(page, sourceName) {
@@ -370,7 +421,7 @@ async function startFrameSampler(page) {
       }
       if (last !== undefined) {
         const frameMs = now - last;
-        if (frameMs > 0 && frameMs < 250) {
+        if (frameMs > 0) {
           samples.push({ atMs: now, frameMs });
         }
       }
@@ -441,7 +492,7 @@ async function measureInteraction(page, action) {
 function summarizeFrames(frames) {
   return {
     frameCount: frames.length,
-    frameTimeP95Ms: percentile(frames.map((sample) => sample.frameMs), 95) ?? 0,
+    frameTimeP95Ms: percentile(frames.map((sample) => sample.frameMs), 95),
     maxFrameTimeMs: frames.reduce((max, sample) => Math.max(max, sample.frameMs), 0),
   };
 }
@@ -449,12 +500,16 @@ function summarizeFrames(frames) {
 function qualityEvidence(qualityEvents, frames, frameSummary, threshold = PERFORMANCE_THRESHOLDS.navigationFrameTimeP95Ms) {
   const transitions = qualityEvents.filter((event, index) => index > 0 && event.quality !== qualityEvents[index - 1].quality);
   const stallAt = frames.find((sample) => sample.frameMs > threshold)?.atMs;
-  const degradedBeforeStall = transitions.some((event) => event.quality !== 'rich' && (stallAt === undefined || event.atMs <= stallAt))
-    || stallAt === undefined;
+  const degradedBeforeStall = qualityEvents.length > 0 && (transitions.some((event) => event.quality !== 'rich' && (stallAt === undefined || event.atMs <= stallAt))
+    || stallAt === undefined);
   return {
     transitions,
+    qualitySampleCount: qualityEvents.length,
+    frameSampleCount: frames.length,
     qualityDegradedBeforeInteractionStall: degradedBeforeStall,
-    rationale: transitions.length === 0 && stallAt === undefined
+    rationale: qualityEvents.length === 0
+      ? 'Quality sampler produced no valid samples.'
+      : transitions.length === 0 && stallAt === undefined
       ? 'No quality reduction was required because interaction frame times stayed below the stall threshold.'
       : 'Quality transition was observed before the first unacceptable frame-time sample.',
   };
@@ -462,10 +517,15 @@ function qualityEvidence(qualityEvents, frames, frameSummary, threshold = PERFOR
 
 function memorySummary(samples) {
   const values = samples.map((sample) => sample.bytes);
+  const baselineMemoryBytes = values[0] ?? 0;
   const steadyValues = values.slice(-5);
+  const steadyMemoryBytes = steadyValues.length > 0 ? Math.round(steadyValues.reduce((sum, value) => sum + value, 0) / steadyValues.length) : 0;
   return {
+    baselineMemoryBytes,
     peakMemoryBytes: values.length > 0 ? Math.max(...values) : 0,
-    steadyMemoryBytes: steadyValues.length > 0 ? Math.round(steadyValues.reduce((sum, value) => sum + value, 0) / steadyValues.length) : 0,
+    steadyMemoryBytes,
+    memoryGrowthBytes: Math.max(0, steadyMemoryBytes - baselineMemoryBytes),
+    peakMemoryGrowthBytes: Math.max(0, (values.length > 0 ? Math.max(...values) : 0) - baselineMemoryBytes),
     sampleCount: values.length,
   };
 }
@@ -477,18 +537,22 @@ function cacheGrowth(before, after) {
 async function runPerformanceScenarios(session, fixtures) {
   const { page, child } = session;
   await waitForNativeReady(page);
-  const memorySampler = startMemorySampler(child.pid);
   const scenarioResults = {};
   let qualitySummary;
+  let memorySampler;
+  let memorySamples = [];
 
   try {
     const importStarted = performance.now();
+    const importSequence = Number(await page.getByTestId('smoke-import-complete').getAttribute('data-sequence'));
     await page.getByTestId('smoke-source-path').fill(fixtures.navigation);
     await page.getByTestId('smoke-import').click();
+    await waitForImportComplete(page, importSequence);
+    const importCompletedAt = performance.now();
+    const importMs = importCompletedAt - importStarted;
     await waitForReader(page);
-    const firstFrameMs = performance.now() - importStarted;
+    const firstFrameMs = performance.now() - importCompletedAt;
     await waitForStatus(page, 'Imported');
-    const importMs = performance.now() - importStarted;
     scenarioResults.import = { status: 'passed', source: 'performance-50.cbz', pageCount: 50, importMs };
     scenarioResults['first-frame'] = { status: firstFrameMs <= PERFORMANCE_THRESHOLDS.firstFrameMs ? 'passed' : 'failed', firstFrameMs };
 
@@ -559,6 +623,8 @@ async function runPerformanceScenarios(session, fixtures) {
     const navigationCard = page.locator('[data-testid="library-publication-card"][data-publication-source*="performance-50.cbz"]').first();
     await navigationCard.locator('.cover-button').click();
     await waitForReader(page);
+    await resetReaderToFirstPage(page);
+    memorySampler = startMemorySampler(child.pid);
     const longBefore = await getCacheInfo(page);
     const longMeasurement = await measureInteraction(page, async () => {
       const cycles = Number(process.env.PERFORMANCE_LONG_SESSION_CYCLES ?? 2);
@@ -577,14 +643,23 @@ async function runPerformanceScenarios(session, fixtures) {
     const longAfter = await getCacheInfo(page);
     const longFrame = summarizeFrames(longMeasurement.frames);
     const longQuality = qualityEvidence(longMeasurement.qualityEvents, longMeasurement.frames, longFrame);
-    const longMemory = memorySummary(memorySampler.stop());
+    memorySamples = memorySampler.stop();
+    memorySampler = undefined;
+    const longMemory = memorySummary(memorySamples);
     const longEvaluation = evaluateScenarioMetrics({
       firstFrameMs,
       frameTimeP95Ms: longFrame.frameTimeP95Ms,
       peakMemoryBytes: longMemory.peakMemoryBytes,
       steadyMemoryBytes: longMemory.steadyMemoryBytes,
+      memoryGrowthBytes: longMemory.memoryGrowthBytes,
       cacheGrowthBytes: cacheGrowth(longBefore, longAfter),
       qualityDegradedBeforeStall: longQuality.qualityDegradedBeforeInteractionStall,
+      frameSampleCount: longFrame.frameCount,
+      qualitySampleCount: longQuality.qualitySampleCount,
+      memorySampleCount: longMemory.sampleCount,
+      requireFrameSamples: true,
+      requireQualitySamples: true,
+      requireMemorySamples: true,
     });
     qualitySummary = longQuality;
     scenarioResults['long-reading-session'] = {
@@ -599,11 +674,9 @@ async function runPerformanceScenarios(session, fixtures) {
       failures: longEvaluation.failures,
     };
   } finally {
-    if (qualitySummary === undefined) {
-      memorySampler.stop();
-    }
+    memorySamples = memorySampler?.stop() ?? memorySamples;
   }
-  return { scenarioResults, memory: memorySummary(memorySampler.stop()), qualitySummary };
+  return { scenarioResults, memory: memorySummary(memorySamples), qualitySummary };
 }
 
 function buildReport({ runId, hardware, build, scenarios, memory, qualitySummary }) {
@@ -617,7 +690,8 @@ function buildReport({ runId, hardware, build, scenarios, memory, qualitySummary
     steadyMemoryBytes: longSession?.steadyMemoryBytes ?? memory.steadyMemoryBytes,
     derivedCacheGrowthBytes: longSession?.cacheGrowthBytes ?? 0,
     qualityDegradedBeforeInteractionStall: Boolean(qualitySummary?.qualityDegradedBeforeInteractionStall),
-    longSessionMemoryBounded: (longSession?.peakMemoryBytes ?? 0) - (longSession?.steadyMemoryBytes ?? 0) <= PERFORMANCE_THRESHOLDS.longSessionMemoryGrowthBytes,
+    longSessionMemoryBounded: (longSession?.memorySampleCount ?? 0) > 1
+      && (longSession?.memoryGrowthBytes ?? Number.POSITIVE_INFINITY) <= PERFORMANCE_THRESHOLDS.longSessionMemoryGrowthBytes,
     longSessionCacheBounded: (longSession?.cacheGrowthBytes ?? Number.POSITIVE_INFINITY) <= PERFORMANCE_THRESHOLDS.longSessionCacheGrowthBytes,
   };
   return {
@@ -649,10 +723,17 @@ async function main() {
     const built = await buildInstaller(runDirectory, runId);
     const executable = await installPackage(built.installer, join(runDirectory, 'installed'));
     session = await launchApp(executable, 'performance', evidenceDirectory);
+    const hardware = readHardwareSnapshot(await readWebglRenderer(session.page));
+    if (!hardware.gpuClassDetected) {
+      throw new Error('Could not classify the active GPU as integrated or dedicated.');
+    }
+    if (hardware.gpuClassDetected !== gpuClass) {
+      throw new Error(`Requested GPU class ${gpuClass} does not match detected class ${hardware.gpuClassDetected}.`);
+    }
     const result = await runPerformanceScenarios(session, fixtures);
     report = buildReport({
       runId,
-      hardware: readHardwareSnapshot(),
+      hardware,
       build: { commit: readBuildCommit(), version: readPackageVersion(), tauriIdentifier: built.identifier },
       ...result,
     });
@@ -667,7 +748,7 @@ async function main() {
       status: 'failed',
       runId,
       generatedAt: new Date().toISOString(),
-      hardware: { gpuClass, os: 'unknown', gpu: 'unknown', memoryBytes: 1 },
+      hardware: { gpuClass, gpuClassDetected: undefined, os: 'unknown', gpu: 'unknown', memoryBytes: 0 },
       build: { commit: process.env.GITHUB_SHA ?? 'unknown', version: 'unknown' },
       thresholds: PERFORMANCE_THRESHOLDS,
       scenarios: Object.fromEntries(PERFORMANCE_SCENARIOS.map((scenario) => [scenario, { status: 'not-run' }])),

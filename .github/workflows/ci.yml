@@ -198,6 +198,9 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install chromium
 
+      - name: Validate performance contract
+        run: npm run test:performance-contract
+
       - name: Run reference performance matrix
         env:
           PERFORMANCE_GPU_CLASS: ${{ inputs.performance_gpu_class }}
