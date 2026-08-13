@@ -1,7 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-
-export type VisualBackend = 'auto' | 'static' | 'webgl2' | 'webgpu';
+import type { VisualBackend } from '../../src/release/testModes';
 export type VisualScenarioName =
   | 'single-ltr'
   | 'spread-ltr'

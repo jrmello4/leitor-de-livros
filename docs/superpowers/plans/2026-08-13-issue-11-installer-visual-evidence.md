@@ -23,8 +23,8 @@
 ## File Map
 
 - Create src/release/testModes.ts and src/release/testModes.test.ts for pure build-flag and query parsing.
-- Create src/components/SmokeHarness.tsx and src/components/SmokeHarness.test.tsx for the guarded native path-input surface.
-- Modify src/App.tsx, src/components/LibraryView.tsx, and src/components/ReaderView.tsx to reuse production behavior and expose stable test IDs.
+- Create src/app/SmokeHarness.tsx and src/app/SmokeHarness.test.tsx for the guarded native path-input surface.
+- Modify src/app/App.tsx, src/app/LibraryView.tsx, and src/app/ReaderView.tsx to reuse production behavior and expose stable test IDs.
 - Create src/rendering/backendSelection.ts and src/rendering/backendSelection.test.ts; modify src/rendering/ReaderSurface.tsx for visual backend forcing.
 - Create tests/fixtures/smoke/cover.svg and tests/fixtures/smoke/page.svg as deterministic CBZ inputs.
 - Create tests/visual/visual-matrix.ts, playwright.config.ts, and tests/visual/reader-matrix.spec.ts for the web evidence runner.
@@ -36,11 +36,11 @@
 **Files:**
 - Create: src/release/testModes.ts
 - Test: src/release/testModes.test.ts
-- Create: src/components/SmokeHarness.tsx
-- Test: src/components/SmokeHarness.test.tsx
-- Modify: src/App.tsx
-- Modify: src/components/LibraryView.tsx
-- Modify: src/components/ReaderView.tsx
+- Create: src/app/SmokeHarness.tsx
+- Test: src/app/SmokeHarness.test.tsx
+- Modify: src/app/App.tsx
+- Modify: src/app/LibraryView.tsx
+- Modify: src/app/ReaderView.tsx
 
 **Interfaces:**
 - parseVisualBackend(search: string, enabled: boolean): 'auto' | 'static' | 'webgl2' | 'webgpu' returns auto for every query value when the visual flag is disabled and accepts only the three documented backend values when enabled.
@@ -120,7 +120,7 @@ The input must reject an empty path without calling onImportPath, set data-testi
 
 - [ ] **Step 7: Run the focused harness tests and fix only test-environment issues exposed by them.**
 
-Run: npm.cmd test -- src/components/SmokeHarness.test.tsx --reporter=dot
+Run: npm.cmd test -- src/app/SmokeHarness.test.tsx --reporter=dot
 
 Expected: all harness tests pass.
 
@@ -141,7 +141,7 @@ Expected: all existing tests pass and the TypeScript/Vite build succeeds with no
 - [ ] **Step 11: Commit the guarded harness and selectors.**
 
 ~~~powershell
-git add src/release src/components/SmokeHarness.tsx src/components/SmokeHarness.test.tsx src/App.tsx src/components/LibraryView.tsx src/components/ReaderView.tsx
+git add src/release src/app/SmokeHarness.tsx src/app/SmokeHarness.test.tsx src/app/App.tsx src/app/LibraryView.tsx src/app/ReaderView.tsx
 git commit -m "test: add guarded native smoke harness"
 ~~~
 

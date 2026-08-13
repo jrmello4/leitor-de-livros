@@ -206,6 +206,10 @@ async function waitForCardCount(page, expected) {
   await waitFor(async () => (await page.locator('[data-testid="library-publication-card"]').count()) === expected, 'Native library did not reach ' + expected + ' cards');
 }
 
+async function waitForNativeLibraryReady(page) {
+  await waitFor(async () => (await page.locator('[data-testid="library-publication-card"]').count()) === 0, 'Native library did not finish its initial load');
+}
+
 async function waitForLibrary(page) {
   await page.getByTestId('smoke-harness').waitFor({ state: 'visible' });
   await page.getByTestId('library-publication-card').first().waitFor({ state: 'visible' });
@@ -306,6 +310,7 @@ async function runMissingPdfiumScenario(installDirectory, pdfPath, runDirectory,
 
   const session = await launchApp(executable, 'missing-pdfium', join(evidenceRoot, result.runId));
   try {
+    await waitForNativeLibraryReady(session.page);
     await importMissingSource(session.page, pdfPath);
     const diagnostic = (await session.page.getByTestId('smoke-diagnostic').textContent())?.trim() ?? '';
     result.missingPdfiumDiagnostic = diagnostic;
@@ -323,6 +328,7 @@ async function runMissingPdfiumScenario(installDirectory, pdfPath, runDirectory,
 async function runIntactScenario(executable, cbzPath, pdfPath, runDirectory, result) {
   const session = await launchApp(executable, 'intact-first', join(evidenceRoot, result.runId));
   try {
+    await waitForNativeLibraryReady(session.page);
     await importSource(session.page, cbzPath);
     await waitForCardCount(session.page, 1);
     await session.page.getByTestId('reader-back').click();
