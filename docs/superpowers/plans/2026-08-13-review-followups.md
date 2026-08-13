@@ -42,7 +42,7 @@ expect(activeWorkingSetPageIds(publicationAtPageOne, singleLtrProfile, 0))
   .toEqual(['page-1', 'page-2']);
 ```
 
-The first assertion must prove that neighbors of the old `currentPage` are absent.
+The pure helper assertion proves that an explicit destination is independent of the old `currentPage`. The page-selection integration test must additionally prove that preparation passes the union of current and destination working sets, and that after commit subsequent cache protection contains only the destination set.
 
 - [ ] **Step 2: Run the focused test and verify RED**
 
@@ -56,7 +56,7 @@ In `reader.ts`, clamp `pageIndex`, combine its visible spread indexes with `page
 
 - [ ] **Step 4: Integrate the explicit index**
 
-Remove the private helper from `App.tsx`, import the domain contract, pass `publication.currentPage` for cache-limit/clear/reload paths, and pass `nextPage` inside `selectPublicationPage` before `ensureNativePage`.
+Remove the private helper from `App.tsx`, import the domain contract, and pass `publication.currentPage` for cache-limit/clear/reload paths. During `selectPublicationPage`, pass the union of the current and `nextPage` working sets to `ensureNativePage`; after commit, future operations use the newly current destination set.
 
 - [ ] **Step 5: Run focused tests and build**
 
@@ -93,7 +93,7 @@ expect(search).not.toBeNull();
 expect(sort).not.toBeNull();
 ```
 
-Then dispatch input/change events and assert rendered cards filter by title and safe filename, sort in recent/title/date-added order with deterministic ties, show the empty state, accept keyboard focus, and never render an absolute source path.
+Then use printable key interactions for title and safe-filename search and arrow-key interactions to traverse recent/title/date-added ordering. Assert deterministic ties, the empty state, visible keyboard focus, and that no absolute source path is rendered.
 
 - [ ] **Step 2: Run the focused test and verify RED**
 

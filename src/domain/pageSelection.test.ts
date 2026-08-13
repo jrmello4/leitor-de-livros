@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultProfile } from './profiles';
 import { createPageSelectionCoordinator, preparePageSelection, selectLatestPage } from './pageSelection';
+import { activeWorkingSetPageIds } from './reader';
 import type { PageDescriptor, Publication } from './types';
 
 function deferred<T>() {
@@ -38,26 +39,34 @@ describe('race-safe page selection', () => {
     const cached = new Set(['page-1', 'page-2', 'page-3', 'page-5', 'page-6', 'page-7']);
     let receivedProtectedIds: string[] = [];
 
+    const evictToLimit = (protectedPageIds: string[]) => {
+      for (const cachedPageId of [...cached]) {
+        if (cached.size <= 3) {
+          break;
+        }
+        if (!protectedPageIds.includes(cachedPageId)) {
+          cached.delete(cachedPageId);
+        }
+      }
+    };
+
     const prepared = await preparePageSelection(
       publication,
       createDefaultProfile(),
       5,
       async (_publicationId, pageId, protectedPageIds) => {
         receivedProtectedIds = protectedPageIds;
-        for (const cachedPageId of [...cached]) {
-          if (cached.size <= 3) {
-            break;
-          }
-          if (!protectedPageIds.includes(cachedPageId)) {
-            cached.delete(cachedPageId);
-          }
-        }
+        evictToLimit(protectedPageIds);
         return pages.find((page) => page.id === pageId) ?? null;
       },
     );
 
     expect(prepared?.id).toBe('page-6');
-    expect(receivedProtectedIds).toEqual(['page-5', 'page-6', 'page-7']);
+    expect(receivedProtectedIds).toEqual(['page-1', 'page-2', 'page-3', 'page-5', 'page-6', 'page-7']);
+    expect([...cached]).toEqual(['page-1', 'page-2', 'page-3', 'page-5', 'page-6', 'page-7']);
+
+    publication.currentPage = 5;
+    evictToLimit(activeWorkingSetPageIds(publication, createDefaultProfile(), publication.currentPage));
     expect([...cached]).toEqual(['page-5', 'page-6', 'page-7']);
   });
 

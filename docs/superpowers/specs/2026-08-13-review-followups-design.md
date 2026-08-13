@@ -8,19 +8,19 @@ Implement GitHub issues #14, #15, and #16 in that order. These are narrow follow
 
 ### Design
 
-The reader's protected working-set rule will accept an explicit page index instead of implicitly reading `publication.currentPage`. Existing cache-limit and clear-cache callers will pass the current page. Asynchronous page preparation will pass the clamped destination page.
+The reader's protected working-set rule accepts an explicit page index instead of implicitly reading `publication.currentPage`. Existing cache-limit and clear-cache callers pass the current page. Asynchronous page preparation protects the union of the current and clamped-destination working sets so a failed or cancelled preparation cannot evict the still-visible pages. Once the destination commits, subsequent cache operations derive protection from the new current page alone, making the old working set eligible for eviction.
 
 This keeps one domain rule for single-page, spread, LTR, RTL, and boundary behavior while making the intended page unambiguous. It avoids constructing a temporary publication with false state and avoids duplicating the rule in `App`.
 
 ### Test seam
 
-Test the pure working-set function through its exported domain interface. A regression example starts from one current page and requests a distant destination; the expected protected IDs are the destination's visible/adjacent pages and exclude unrelated neighbors of the old page. Boundary, spread, and RTL examples verify the same contract.
+Test the pure working-set function through its exported domain interface. Boundary, spread, and RTL examples verify the destination contract. A page-selection integration regression starts from one current page and requests a distant destination under a tight cache limit: both sets remain protected during preparation, then the old set becomes evictable after the destination commits.
 
 ## Issue #15: accessible library controls
 
 ### Design
 
-Exercise `LibraryView` through rendered controls rather than calling the library domain functions directly. Tests will locate the search field and sort selector by accessible name, dispatch user-equivalent input/change events, and rerender with the controlled values supplied by the callbacks.
+Exercise `LibraryView` through rendered controls rather than calling the library domain functions directly. Tests locate the search field and sort selector by accessible name, drive text entry from printable key events, advance the selector from `recent` to `title` to `added` with arrow-key interactions, and rerender with the controlled values supplied by the callbacks.
 
 The component assertions will verify title and safe-filename filtering, recent/title/date-added ordering, deterministic ties, and the empty result. They will also confirm that absolute source paths are not exposed through rendered or accessible text.
 

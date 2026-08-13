@@ -89,9 +89,10 @@ function setSelectValue(select: HTMLSelectElement, value: LibrarySort) {
   select.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
-function chooseSortWithKeyboard(select: HTMLSelectElement, value: LibrarySort) {
+function pressSortArrowDown(select: HTMLSelectElement) {
   select.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-  setSelectValue(select, value);
+  const nextIndex = Math.min(select.selectedIndex + 1, select.options.length - 1);
+  setSelectValue(select, select.options[nextIndex]?.value as LibrarySort);
   select.dispatchEvent(new KeyboardEvent('keyup', { key: 'ArrowDown', bubbles: true }));
 }
 
@@ -137,7 +138,7 @@ describe('LibraryView favorites and safe deletion', () => {
     act(() => {
       search?.focus();
       if (search) {
-        setInputValue(search, 'chapter-07');
+        typeIntoInput(search, 'chapter-07');
       }
     });
 
@@ -193,9 +194,9 @@ describe('LibraryView favorites and safe deletion', () => {
     expect(document.activeElement).toBe(sort);
     expect(renderedTitles()).toEqual(['Charlie', 'Bravo', 'Alpha']);
     expect(sort?.classList.contains('library-focus-control')).toBe(true);
-    act(() => sort && chooseSortWithKeyboard(sort, 'title'));
+    act(() => sort && pressSortArrowDown(sort));
     expect(renderedTitles()).toEqual(['Alpha', 'Bravo', 'Charlie']);
-    act(() => sort && chooseSortWithKeyboard(sort, 'added'));
+    act(() => sort && pressSortArrowDown(sort));
     expect(renderedTitles()).toEqual(['Alpha', 'Bravo', 'Charlie']);
   });
 

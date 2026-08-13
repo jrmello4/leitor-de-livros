@@ -14,7 +14,12 @@ export async function preparePageSelection(
   ensurePage: EnsurePage,
 ): Promise<PageDescriptor> {
   const page = publication.pages[pageIndex];
-  const protectedPageIds = activeWorkingSetPageIds(publication, profile, pageIndex);
+  const protectedPageIds = [
+    ...new Set([
+      ...activeWorkingSetPageIds(publication, profile, publication.currentPage),
+      ...activeWorkingSetPageIds(publication, profile, pageIndex),
+    ]),
+  ];
   const preparedPage = await ensurePage(publication.id, page?.id ?? '', protectedPageIds);
   if (!preparedPage) {
     throw new Error('page-unavailable');
