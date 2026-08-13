@@ -37,6 +37,12 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+      - name: Validate release scripts
+        run: npm run test:release-scripts
+
+      - name: Validate workflow structure
+        run: npm run test:workflow
+
   native:
     name: Rust and Tauri Windows verification
     runs-on: windows-latest

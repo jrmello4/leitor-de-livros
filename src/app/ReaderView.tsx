@@ -490,7 +490,7 @@ export function ReaderView({
     >
       <header className="reader-topbar">
         <div className="reader-topbar-start">
-          <button className="reader-back" data-testid="reader-back" onClick={onBack} aria-label={t('reader.back')}>← <span>{t('reader.library')}</span></button>
+          <button className="reader-back" data-testid="reader-back" data-reader-control onClick={onBack} aria-label={t('reader.back')}>← <span>{t('reader.library')}</span></button>
           <span className="reader-divider" aria-hidden="true" />
           <div className="reader-title">
             <span className="eyebrow">{t('reader.nowReading')}</span>
@@ -505,6 +505,7 @@ export function ReaderView({
             onClick={() => setFlowVisible((current) => !current)}
             aria-pressed={flowVisible}
             aria-label={flowVisible ? t('reader.hideGuidance') : t('reader.showGuidance')}
+            data-reader-control
           >
             <span className="reader-tool-label">{t('reader.flow')}</span>
             <span className="reader-tool-symbol" aria-hidden="true">↘</span>
@@ -532,11 +533,11 @@ export function ReaderView({
             <span className="reader-tool-label">{t('reader.bookmark')}</span>
             <span className="reader-tool-symbol" aria-hidden="true">{currentBookmarked ? '◆' : '◇'}</span>
           </button>
-          <button className="reader-tool" data-testid="reader-fullscreen" onClick={onToggleFullscreen} aria-label={t('reader.fullscreen')}>
+          <button className="reader-tool" data-testid="reader-fullscreen" data-reader-control onClick={onToggleFullscreen} aria-label={t('reader.fullscreen')}>
             <span className="reader-tool-label">{t('reader.fullscreen')}</span>
             <span className="reader-tool-symbol" aria-hidden="true">↗</span>
           </button>
-          <button ref={settingsTriggerRef} className="reader-tool" onClick={onToggleSettings} aria-label={t('reader.settings')}>
+          <button ref={settingsTriggerRef} className="reader-tool" data-reader-control onClick={onToggleSettings} aria-label={t('reader.settings')}>
             <span className="reader-tool-label">{t('reader.settings')}</span>
             <span className="reader-tool-symbol" aria-hidden="true">⌘</span>
           </button>

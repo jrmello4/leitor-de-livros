@@ -26,7 +26,7 @@
 - Create src/app/SmokeHarness.tsx and src/app/SmokeHarness.test.tsx for the guarded native path-input surface.
 - Modify src/app/App.tsx, src/app/LibraryView.tsx, and src/app/ReaderView.tsx to reuse production behavior and expose stable test IDs.
 - Create src/rendering/backendSelection.ts and src/rendering/backendSelection.test.ts; modify src/rendering/ReaderSurface.tsx for visual backend forcing.
-- Create tests/fixtures/smoke/cover.svg and tests/fixtures/smoke/page.svg as deterministic CBZ inputs.
+- Create deterministic raster CBZ inputs in scripts/release/create-fixtures.mjs; the generator writes PNG entries accepted by the native importer.
 - Create tests/visual/visual-matrix.ts, playwright.config.ts, and tests/visual/reader-matrix.spec.ts for the web evidence runner.
 - Create scripts/release/create-fixtures.mjs, scripts/release/installer-smoke.mjs, and scripts/release/verify-workflow.mjs for deterministic fixtures, isolated NSIS evidence, and workflow validation.
 - Modify package.json, package-lock.json, and .github/workflows/ci.yml for commands and separate artifact jobs.
@@ -272,7 +272,7 @@ git commit -m "test: add reader visual evidence matrix"
 
 - [ ] **Step 1: Write the deterministic fixture generator.**
 
-Use fflate.zipSync with fixed entry names and fixed UTF-8 bytes; copy the existing PDF fixture byte-for-byte. The generator must create its output directory and print absolute fixture paths as JSON. It must not modify source fixtures.
+Use fflate.zipSync with fixed PNG entry bytes and fixed entry names; copy the existing PDF fixture byte-for-byte. The generator must create its output directory and print absolute fixture paths as JSON. It must not modify source fixtures.
 
 - [ ] **Step 2: Run the generator and verify stable hashes.**
 

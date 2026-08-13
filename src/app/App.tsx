@@ -119,6 +119,7 @@ export function App() {
   const [readerStates, setReaderStates] = useState<Record<string, ReaderState>>({});
   const [cacheInfo, setCacheInfo] = useState<CacheInfo>(DEFAULT_CACHE_INFO);
   const [isImporting, setIsImporting] = useState(false);
+  const [nativeLibraryReady, setNativeLibraryReady] = useState(!nativeRuntime);
   const [diagnostic, setDiagnostic] = useState<string | undefined>();
   const [announcement, setAnnouncement] = useState(() => t('app.libraryReady'));
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
@@ -261,6 +262,7 @@ export function App() {
 
     let cancelled = false;
     const bootNativeLibrary = async () => {
+      setNativeLibraryReady(false);
       try {
         const nativeProfileStore = await loadNativeProfileStore();
         const nextProfileStore = nativeProfileStore ?? profileStoreRef.current;
@@ -277,11 +279,13 @@ export function App() {
           profileStoreRef.current = nativeProfileStore;
         }
         setLibrary(nativeLibrary);
+        setNativeLibraryReady(true);
         void hydrateMetadata(nativeLibrary);
         void refreshCacheInfo();
         setAnnouncement(nativeLibrary.length > 0 ? t('app.nativeLibraryReady') : t('app.nativeLibraryEmpty'));
       } catch {
         if (!cancelled) {
+          setNativeLibraryReady(true);
           setDiagnostic(t('app.nativeOpenError'));
           setAnnouncement(t('app.nativeUnavailable'));
         }
@@ -657,12 +661,14 @@ export function App() {
     }
   }, [hydrateMetadata, nativeRuntime, profile.direction, profile.mode, refreshCacheInfo, reloadNativeLibraryWithEssentials]);
 
-  const persistProgress = useCallback((publicationId: string, pageIndex: number) => {
+  const persistProgress = useCallback(async (publicationId: string, pageIndex: number): Promise<void> => {
     saveProgress(publicationId, pageIndex);
     if (nativeRuntime) {
-      void saveNativeProgress(publicationId, pageIndex).catch(() => {
+      try {
+        await saveNativeProgress(publicationId, pageIndex);
+      } catch {
         setDiagnostic(t('app.progressSaveError'));
-      });
+      }
     }
   }, [nativeRuntime]);
 
@@ -721,7 +727,7 @@ export function App() {
   const selectPublicationPage = useCallback(async (
     publication: Publication,
     pageIndex: number,
-    onCommit: (preparedPage: PageDescriptor | null, request: PageSelectionRequest) => void,
+    onCommit: (preparedPage: PageDescriptor | null, request: PageSelectionRequest) => void | Promise<void>,
   ): Promise<boolean> => {
     if (publication.pages.length === 0) {
       return false;
@@ -744,10 +750,10 @@ export function App() {
     );
   }, [nativeRuntime, profile]);
 
-  const commitActivePageSelection = useCallback((
+  const commitActivePageSelection = useCallback(async (
     preparedPage: PageDescriptor | null,
     request: PageSelectionRequest,
-  ) => {
+  ): Promise<void> => {
     if (activePublicationIdRef.current !== request.publicationId) {
       return;
     }
@@ -755,6 +761,7 @@ export function App() {
     if (!latest) {
       return;
     }
+    await persistProgress(request.publicationId, request.pageIndex);
     updatePublication(request.publicationId, (publication) => ({
       ...publication,
       pages: preparedPage
@@ -764,7 +771,6 @@ export function App() {
       progress: calculateProgress(request.pageIndex, publication.pages.length, profile.direction),
       updatedAt: new Date().toISOString(),
     }));
-    persistProgress(request.publicationId, request.pageIndex);
     setAnnouncement(t('app.pageReady', { page: request.pageIndex + 1, count: latest.pages.length }));
   }, [persistProgress, profile.direction, updatePublication]);
 
@@ -1004,7 +1010,7 @@ export function App() {
         }
       : publication;
 
-    await selectPublicationPage(openingPublication, openingPublication.currentPage, (preparedPage, request) => {
+    await selectPublicationPage(openingPublication, openingPublication.currentPage, async (preparedPage, request) => {
       const readyPublication = {
         ...openingPublication,
         pages: preparedPage
@@ -1020,7 +1026,7 @@ export function App() {
         return [readyPublication, ...current];
       });
       if (readyPublication.currentPage !== publication.currentPage || readyPublication !== publication) {
-        persistProgress(readyPublication.id, readyPublication.currentPage);
+        await persistProgress(readyPublication.id, readyPublication.currentPage);
       }
       setActiveId(readyPublication.id);
       setShowProfile(false);
@@ -1087,7 +1093,7 @@ export function App() {
       void hydrateMetadata(nextLibrary);
       await refreshCacheInfo();
       const openingPublication = result.publications[0];
-      void openPublication(openingPublication);
+      await openPublication(openingPublication);
       setAnnouncement(t('app.publicationImportedNative', { title: openingPublication.title }));
       return true;
     } catch {
@@ -1139,6 +1145,9 @@ export function App() {
 
   return (
     <div className="app-shell" data-contrast={profile.contrast}>
+      {isSmokeMode(import.meta.env.VITE_SMOKE_TEST === '1', nativeRuntime) && (
+        <span className="sr-only" data-testid="native-library-ready" data-ready={nativeLibraryReady ? 'true' : 'false'} />
+      )}
       <div className="ambient-mark ambient-mark--one" aria-hidden="true" />
       <div className="ambient-mark ambient-mark--two" aria-hidden="true" />
 

@@ -81,14 +81,14 @@ describe('race-safe page selection', () => {
       'publication-1',
       1,
       () => first.promise,
-      (page) => committed.push(page),
+      (page) => { committed.push(page); },
     );
     const newerSelection = selectLatestPage(
       coordinator,
       'publication-1',
       2,
       () => second.promise,
-      (page) => committed.push(page),
+      (page) => { committed.push(page); },
     );
 
     second.resolve('page-3');
@@ -108,7 +108,7 @@ describe('race-safe page selection', () => {
       'publication-1',
       4,
       () => preparation.promise,
-      (page) => committed.push(page),
+      (page) => { committed.push(page); },
     );
 
     coordinator.cancel();
@@ -116,5 +116,28 @@ describe('race-safe page selection', () => {
 
     expect(await selection).toBe(false);
     expect(committed).toEqual([]);
+  });
+
+  it('waits for an asynchronous commit before completing the selection', async () => {
+    const coordinator = createPageSelectionCoordinator();
+    const commit = deferred<void>();
+    let completed = false;
+
+    const selection = selectLatestPage(
+      coordinator,
+      'publication-1',
+      1,
+      async () => 'page-2',
+      async () => {
+        await commit.promise;
+        completed = true;
+      },
+    );
+
+    await Promise.resolve();
+    expect(completed).toBe(false);
+    commit.resolve();
+    expect(await selection).toBe(true);
+    expect(completed).toBe(true);
   });
 });
