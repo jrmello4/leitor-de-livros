@@ -117,11 +117,19 @@ describe('App native import lifecycle', () => {
     act(() => root.unmount());
     document.body.replaceChildren();
     localStorage.clear();
+    vi.unstubAllEnvs();
   });
 
   async function importFiles() {
     await act(async () => {
       host.querySelector<HTMLButtonElement>('[data-testid="native-files"]')?.click();
+      await flushReact();
+    });
+  }
+
+  async function importFolder() {
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="native-folder"]')?.click();
       await flushReact();
     });
   }
@@ -174,5 +182,47 @@ describe('App native import lifecycle', () => {
 
     expectLoadingClearedOnce();
     expect(host.querySelector('[role="status"]')?.textContent).toContain('Native book imported into the native library');
+  });
+
+  it('imports a folder selection without falling back to the file picker', async () => {
+    native.chooseFiles.mockRejectedValueOnce(new Error('the file picker must not run'));
+    native.chooseFolder.mockResolvedValueOnce(['folder/native-book.cbz']);
+    native.importPaths.mockResolvedValueOnce({ publications: [], diagnostics: [] });
+
+    await importFolder();
+
+    expect(native.chooseFolder).toHaveBeenCalledOnce();
+    expect(native.chooseFiles).not.toHaveBeenCalled();
+    expect(native.importPaths).toHaveBeenCalledWith(['folder/native-book.cbz'], 'ltr');
+  });
+
+  it('imports a smoke source directly without opening a native picker', async () => {
+    act(() => root.unmount());
+    root = createRoot(host);
+    vi.stubEnv('VITE_SMOKE_TEST', '1');
+    native.chooseFiles.mockRejectedValueOnce(new Error('the file picker must not run'));
+    native.chooseFolder.mockRejectedValueOnce(new Error('the folder picker must not run'));
+    native.importPaths.mockResolvedValueOnce({ publications: [importedPublication], diagnostics: [] });
+    native.listPublications.mockResolvedValue([importedPublication]);
+
+    await act(async () => {
+      root.render(<App />);
+      await flushReact();
+    });
+
+    const input = host.querySelector<HTMLInputElement>('[data-testid="smoke-source-path"]')!;
+    const button = host.querySelector<HTMLButtonElement>('[data-testid="smoke-import"]')!;
+    await act(async () => {
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setValue?.call(input, 'C:\\fixtures\\direct.cbz');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      button.click();
+      await flushReact();
+    });
+
+    expect(native.importPaths).toHaveBeenCalledWith(['C:\\fixtures\\direct.cbz'], 'ltr');
+    expect(native.chooseFiles).not.toHaveBeenCalled();
+    expect(native.chooseFolder).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-testid="smoke-status"]')?.textContent).toContain('Imported');
   });
 });
