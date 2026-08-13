@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createDemoPublication } from '../data/demo';
 import { canRunActionWhileSettingsOpen, InputMap } from '../domain/input';
+import { createPageSelectionCoordinator, selectLatestPage, type PageSelectionRequest } from '../domain/pageSelection';
 import { calculateProgress, movePage, clamp } from '../domain/reader';
 import { nextBookmark } from '../domain/library';
 import { defaultReaderState } from '../domain/readerState';
-import type { ActionName, Bookmark, CacheInfo, Publication, ReaderState, ReadingProfile } from '../domain/types';
+import type { ActionName, Bookmark, CacheInfo, PageDescriptor, Publication, ReaderState, ReadingProfile } from '../domain/types';
 import { importFiles } from '../services/importers';
 import {
   chooseNativeFiles,
@@ -68,11 +69,15 @@ export function App() {
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
   const metadataGenerationRef = useRef(0);
   const favoriteInFlightRef = useRef(new Set<string>());
-  const pageSelectionGenerationRef = useRef(0);
+  const pageSelectionCoordinatorRef = useRef(createPageSelectionCoordinator());
 
   const activePublication = library.find((publication) => publication.id === activeId);
   const activePublicationIdRef = useRef<string | null>(activePublication?.id ?? null);
   activePublicationIdRef.current = activePublication?.id ?? null;
+  const activeIdRef = useRef<string | null>(activeId);
+  activeIdRef.current = activeId;
+  const libraryRef = useRef(library);
+  libraryRef.current = library;
   const inputMap = useMemo(() => new InputMap(profile.bindings), [profile.bindings]);
 
   const refreshCacheInfo = useCallback(async () => {
@@ -250,6 +255,9 @@ export function App() {
 
   const removePublication = useCallback(async (publication: Publication) => {
     metadataGenerationRef.current += 1;
+    if (activeIdRef.current === publication.id) {
+      pageSelectionCoordinatorRef.current.cancel();
+    }
     try {
       await deleteNativePublication(publication.id);
       setLibrary((current) => current.filter((entry) => entry.id !== publication.id));
@@ -388,104 +396,112 @@ export function App() {
     }
   }, [bookmarks]);
 
+  const selectPublicationPage = useCallback(async (
+    publication: Publication,
+    pageIndex: number,
+    onCommit: (preparedPage: PageDescriptor | null, request: PageSelectionRequest) => void,
+  ): Promise<boolean> => {
+    if (publication.pages.length === 0) {
+      return false;
+    }
+    const nextPage = clamp(pageIndex, 0, publication.pages.length - 1);
+    return selectLatestPage(
+      pageSelectionCoordinatorRef.current,
+      publication.id,
+      nextPage,
+      async () => {
+        if (!nativeRuntime) {
+          return null;
+        }
+        const page = publication.pages[nextPage];
+        const preparedPage = await ensureNativePage(publication.id, page?.id ?? '');
+        if (!preparedPage) {
+          throw new Error('page-unavailable');
+        }
+        return preparedPage;
+      },
+      onCommit,
+      () => {
+        setDiagnostic('This page could not be rebuilt from the original. Your file was not modified.');
+      },
+    );
+  }, [nativeRuntime]);
+
   const moveActivePage = useCallback(
     async (delta: number) => {
-      if (!activePublication) {
+      const current = activeIdRef.current
+        ? libraryRef.current.find((publication) => publication.id === activeIdRef.current)
+        : undefined;
+      if (!current) {
         return;
       }
-      const selectionGeneration = ++pageSelectionGenerationRef.current;
-      const publicationId = activePublication.id;
 
-      const nextPage = movePage(
-        activePublication.currentPage,
-        activePublication.pages.length,
-        profile.direction,
-        delta,
-      );
-
-      if (nextPage === activePublication.currentPage) {
+      const nextPage = movePage(current.currentPage, current.pages.length, profile.direction, delta);
+      if (nextPage === current.currentPage) {
+        pageSelectionCoordinatorRef.current.cancel();
         setAnnouncement(delta > 0 ? 'You are at the end of this publication.' : 'You are at the beginning of this publication.');
         return;
       }
 
-      let ensuredPage: Awaited<ReturnType<typeof ensureNativePage>>;
-      if (nativeRuntime) {
-        try {
-          ensuredPage = await ensureNativePage(activePublication.id, activePublication.pages[nextPage]?.id ?? '');
-        } catch {
-          setDiagnostic('This page could not be rebuilt from the original. Your file was not modified.');
+      await selectPublicationPage(current, nextPage, (preparedPage, request) => {
+        if (activePublicationIdRef.current !== request.publicationId) {
           return;
         }
-        if (!ensuredPage) {
-          setDiagnostic('This page could not be rebuilt from the original. Your file was not modified.');
+        const latest = libraryRef.current.find((publication) => publication.id === request.publicationId);
+        if (!latest) {
           return;
         }
-      }
-      if (
-        selectionGeneration !== pageSelectionGenerationRef.current
-        || activePublicationIdRef.current !== publicationId
-      ) {
-        return;
-      }
-
-      updatePublication(activePublication.id, (publication) => ({
-        ...publication,
-        pages: ensuredPage
-          ? publication.pages.map((page) => page.id === ensuredPage.id ? ensuredPage : page)
-          : publication.pages,
-        currentPage: nextPage,
-        progress: calculateProgress(nextPage, publication.pages.length, profile.direction),
-        updatedAt: new Date().toISOString(),
-      }));
-      persistProgress(activePublication.id, nextPage);
-      setAnnouncement(`Page ${nextPage + 1} of ${activePublication.pages.length}.`);
+        updatePublication(request.publicationId, (publication) => ({
+          ...publication,
+          pages: preparedPage
+            ? publication.pages.map((page) => page.id === preparedPage.id ? preparedPage : page)
+            : publication.pages,
+          currentPage: request.pageIndex,
+          progress: calculateProgress(request.pageIndex, publication.pages.length, profile.direction),
+          updatedAt: new Date().toISOString(),
+        }));
+        persistProgress(request.publicationId, request.pageIndex);
+        setAnnouncement(`Page ${request.pageIndex + 1} of ${latest.pages.length}.`);
+      });
     },
-    [activePublication, nativeRuntime, persistProgress, profile.direction, updatePublication],
+    [profile.direction, persistProgress, selectPublicationPage, updatePublication],
   );
 
   const selectActivePage = useCallback(
     async (pageIndex: number) => {
-      if (!activePublication || activePublication.pages.length === 0) {
+      const current = activeIdRef.current
+        ? libraryRef.current.find((publication) => publication.id === activeIdRef.current)
+        : undefined;
+      if (!current || current.pages.length === 0) {
         return;
       }
-      const selectionGeneration = ++pageSelectionGenerationRef.current;
-      const publicationId = activePublication.id;
-      const nextPage = clamp(pageIndex, 0, activePublication.pages.length - 1);
-      if (nextPage === activePublication.currentPage) {
+      const nextPage = clamp(pageIndex, 0, current.pages.length - 1);
+      if (nextPage === current.currentPage) {
+        pageSelectionCoordinatorRef.current.cancel();
         return;
       }
-      let ensuredPage: Awaited<ReturnType<typeof ensureNativePage>>;
-      if (nativeRuntime) {
-        try {
-          ensuredPage = await ensureNativePage(activePublication.id, activePublication.pages[nextPage]?.id ?? '');
-        } catch {
-          setDiagnostic('This page could not be rebuilt from the original. Your file was not modified.');
+      await selectPublicationPage(current, nextPage, (preparedPage, request) => {
+        if (activePublicationIdRef.current !== request.publicationId) {
           return;
         }
-        if (!ensuredPage) {
-          setDiagnostic('This page could not be rebuilt from the original. Your file was not modified.');
+        const latest = libraryRef.current.find((publication) => publication.id === request.publicationId);
+        if (!latest) {
           return;
         }
-      }
-      if (
-        selectionGeneration !== pageSelectionGenerationRef.current
-        || activePublicationIdRef.current !== publicationId
-      ) {
-        return;
-      }
-      updatePublication(activePublication.id, (publication) => ({
-        ...publication,
-        pages: ensuredPage
-          ? publication.pages.map((page) => page.id === ensuredPage.id ? ensuredPage : page)
-          : publication.pages,
-        currentPage: nextPage,
-        progress: calculateProgress(nextPage, publication.pages.length, profile.direction),
-        updatedAt: new Date().toISOString(),
-      }));
-      persistProgress(activePublication.id, nextPage);
-      setAnnouncement(`Page ${nextPage + 1} of ${activePublication.pages.length}.`);
+        updatePublication(request.publicationId, (publication) => ({
+          ...publication,
+          pages: preparedPage
+            ? publication.pages.map((page) => page.id === preparedPage.id ? preparedPage : page)
+            : publication.pages,
+          currentPage: request.pageIndex,
+          progress: calculateProgress(request.pageIndex, publication.pages.length, profile.direction),
+          updatedAt: new Date().toISOString(),
+        }));
+        persistProgress(request.publicationId, request.pageIndex);
+        setAnnouncement(`Page ${request.pageIndex + 1} of ${latest.pages.length}.`);
+      });
     },
-    [activePublication, nativeRuntime, persistProgress, profile.direction, updatePublication],
+    [profile.direction, persistProgress, selectPublicationPage, updatePublication],
   );
 
   const saveActiveReaderState = useCallback((state: ReaderState) => {
@@ -522,6 +538,7 @@ export function App() {
           moveActivePage(-1);
           break;
         case 'toggle_library':
+          pageSelectionCoordinatorRef.current.cancel();
           setActiveId(null);
           setShowProfile(false);
           setAnnouncement('Library opened.');
@@ -537,6 +554,7 @@ export function App() {
           setAnnouncement(`Reading mode: ${profile.mode === 'single' ? 'spread' : 'single'} pages.`);
           break;
         case 'cancel':
+          pageSelectionCoordinatorRef.current.cancel();
           if (showProfile) {
             setShowProfile(false);
           } else {
@@ -606,34 +624,29 @@ export function App() {
         }
       : publication;
 
-    let readyPublication = openingPublication;
-    if (nativeRuntime) {
-      try {
-        const ensuredPage = await ensureNativePage(
-          openingPublication.id,
-          openingPublication.pages[openingPublication.currentPage]?.id ?? '',
-        );
-        if (ensuredPage) {
-          readyPublication = {
-            ...openingPublication,
-            pages: openingPublication.pages.map((page) => page.id === ensuredPage.id ? ensuredPage : page),
-          };
+    await selectPublicationPage(openingPublication, openingPublication.currentPage, (preparedPage, request) => {
+      const readyPublication = {
+        ...openingPublication,
+        pages: preparedPage
+          ? openingPublication.pages.map((page) => page.id === preparedPage.id ? preparedPage : page)
+          : openingPublication.pages,
+        currentPage: request.pageIndex,
+        progress: calculateProgress(request.pageIndex, openingPublication.pages.length, profile.direction),
+      };
+      setLibrary((current) => {
+        if (current.some((entry) => entry.id === readyPublication.id)) {
+          return current.map((entry) => entry.id === readyPublication.id ? readyPublication : entry);
         }
-      } catch {
-        setDiagnostic('This page could not be rebuilt from the original. Your file was not modified.');
-        return;
+        return [readyPublication, ...current];
+      });
+      if (readyPublication.currentPage !== publication.currentPage || readyPublication !== publication) {
+        persistProgress(readyPublication.id, readyPublication.currentPage);
       }
-    }
-
-    if (readyPublication !== publication) {
-      updatePublication(publication.id, () => readyPublication);
-      persistProgress(publication.id, readyPublication.currentPage);
-    }
-
-    setActiveId(readyPublication.id);
-    setShowProfile(false);
-    setDiagnostic(undefined);
-    setAnnouncement(`${readyPublication.title} opened. Page ${readyPublication.currentPage + 1} of ${readyPublication.pages.length}.`);
+      setActiveId(readyPublication.id);
+      setShowProfile(false);
+      setDiagnostic(undefined);
+      setAnnouncement(`${readyPublication.title} opened. Page ${readyPublication.currentPage + 1} of ${readyPublication.pages.length}.`);
+    });
   };
 
   const handleImport = async (files: File[]) => {
@@ -725,7 +738,10 @@ export function App() {
             publication={activePublication}
             profile={profile}
             announcement={announcement}
-            onBack={() => setActiveId(null)}
+            onBack={() => {
+              pageSelectionCoordinatorRef.current.cancel();
+              setActiveId(null);
+            }}
             onNext={() => moveActivePage(1)}
             onPrevious={() => moveActivePage(-1)}
             onToggleSettings={() => setShowProfile((current) => !current)}
