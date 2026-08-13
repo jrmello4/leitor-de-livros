@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SmokeHarness } from './SmokeHarness';
+import { SmokeHarness, smokeStatusText } from './SmokeHarness';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -18,6 +18,14 @@ describe('SmokeHarness', () => {
   afterEach(() => {
     act(() => root.unmount());
     document.body.replaceChildren();
+  });
+
+  it('maps each typed state to the automation status copy', () => {
+    expect(smokeStatusText({ phase: 'ready' })).toBe('Ready');
+    expect(smokeStatusText({ phase: 'importing' }, { importing: 'Loading source…' })).toBe('Loading source…');
+    expect(smokeStatusText({ phase: 'imported' })).toBe('Imported');
+    expect(smokeStatusText({ phase: 'failed', reason: 'missing-path' })).toBe('Enter a source path');
+    expect(smokeStatusText({ phase: 'failed', reason: 'import' })).toBe('Import failed');
   });
 
   it('renders the path input, status, and diagnostic hooks', () => {
@@ -61,18 +69,87 @@ describe('SmokeHarness', () => {
     expect(host.querySelector('[data-testid="smoke-status"]')?.textContent).toContain('Imported');
   });
 
-  it('reports a rejected import and ignores an empty path', async () => {
-    const onImportPath = vi.fn().mockRejectedValue(new Error('missing source'));
-    act(() => root.render(<SmokeHarness onImportPath={onImportPath} diagnostic={null} />));
+  it('stays disabled while an alternate importing copy is displayed', async () => {
+    let resolveImport: (() => void) | undefined;
+    const onImportPath = vi.fn(() => new Promise<void>((resolve) => {
+      resolveImport = resolve;
+    }));
+    const props = {
+      onImportPath,
+      diagnostic: null,
+      copy: { importing: 'Loading source…' },
+    };
+    act(() => root.render(<SmokeHarness {...props} />));
 
     const input = host.querySelector<HTMLInputElement>('[data-testid="smoke-source-path"]')!;
+    const button = host.querySelector<HTMLButtonElement>('[data-testid="smoke-import"]')!;
+    await act(async () => {
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setValue?.call(input, 'C:\\fixtures\\smoke.cbz');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      button.click();
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector('[data-testid="smoke-status"]')?.textContent).toBe('Loading source…');
+    expect(button.disabled).toBe(true);
+
+    await act(async () => {
+      resolveImport?.();
+      await Promise.resolve();
+    });
+  });
+
+  it('ignores a submit event while an import is already in flight', async () => {
+    let resolveImport: (() => void) | undefined;
+    const onImportPath = vi.fn(() => new Promise<void>((resolve) => {
+      resolveImport = resolve;
+    }));
+    act(() => root.render(<SmokeHarness onImportPath={onImportPath} diagnostic={null} />));
+
+    const form = host.querySelector('form')!;
+    const input = host.querySelector<HTMLInputElement>('[data-testid="smoke-source-path"]')!;
+    const button = host.querySelector<HTMLButtonElement>('[data-testid="smoke-import"]')!;
+    await act(async () => {
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setValue?.call(input, 'C:\\fixtures\\smoke.cbz');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      button.click();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    expect(onImportPath).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveImport?.();
+      await Promise.resolve();
+    });
+  });
+
+  it('reports missing-path without invoking import for an empty path', async () => {
+    const onImportPath = vi.fn();
+    act(() => root.render(<SmokeHarness onImportPath={onImportPath} diagnostic={null} />));
+
     const button = host.querySelector<HTMLButtonElement>('[data-testid="smoke-import"]')!;
     await act(async () => {
       button.click();
       await Promise.resolve();
     });
     expect(onImportPath).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-testid="smoke-status"]')?.textContent).toBe('Enter a source path');
+  });
 
+  it('reports import failure when the import rejects', async () => {
+    const onImportPath = vi.fn().mockRejectedValue(new Error('missing source'));
+    act(() => root.render(<SmokeHarness onImportPath={onImportPath} diagnostic={null} />));
+
+    const input = host.querySelector<HTMLInputElement>('[data-testid="smoke-source-path"]')!;
+    const button = host.querySelector<HTMLButtonElement>('[data-testid="smoke-import"]')!;
     await act(async () => {
       const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
       setValue?.call(input, 'C:\\fixtures\\missing.pdf');
@@ -81,6 +158,6 @@ describe('SmokeHarness', () => {
       await Promise.resolve();
     });
     expect(onImportPath).toHaveBeenCalledWith('C:\\fixtures\\missing.pdf');
-    expect(host.querySelector('[data-testid="smoke-status"]')?.textContent).toContain('Import failed');
+    expect(host.querySelector('[data-testid="smoke-status"]')?.textContent).toBe('Import failed');
   });
 });
