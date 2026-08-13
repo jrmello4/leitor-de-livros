@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createDemoPublication } from '../data/demo';
 import { canRunActionWhileSettingsOpen, InputMap } from '../domain/input';
 import { createPageSelectionCoordinator, selectLatestPage, type PageSelectionRequest } from '../domain/pageSelection';
-import { calculateProgress, movePage, clamp } from '../domain/reader';
+import { calculateProgress, movePage, clamp, visiblePageIndexes } from '../domain/reader';
 import { nextBookmark } from '../domain/library';
 import { defaultReaderState } from '../domain/readerState';
 import type { ActionName, Bookmark, CacheInfo, PageDescriptor, Publication, ReaderState, ReadingProfile } from '../domain/types';
@@ -42,6 +42,19 @@ function initialLibrary(direction: ReadingProfile['direction']): Publication[] {
   demo.currentPage = direction === 'rtl' && savedPage === 0 ? demo.pages.length - 1 : Math.min(savedPage, demo.pages.length - 1);
   demo.progress = calculateProgress(demo.currentPage, demo.pages.length, direction);
   return [demo];
+}
+
+function activeWorkingSetPageIds(publication: Publication, profile: ReadingProfile): string[] {
+  const indexes = new Set([
+    ...visiblePageIndexes(publication.currentPage, publication.pages, profile.mode, profile.direction),
+    publication.currentPage - 1,
+    publication.currentPage,
+    publication.currentPage + 1,
+  ]);
+  return [...indexes]
+    .filter((index) => index >= 0 && index < publication.pages.length)
+    .map((index) => publication.pages[index]?.id)
+    .filter((id): id is string => Boolean(id));
 }
 
 const DEFAULT_CACHE_INFO: CacheInfo = {
@@ -115,11 +128,18 @@ export function App() {
     const initial = await listNativePublications(direction);
     let incomplete = false;
     const activePageId = activePublication?.pages[activePublication.currentPage]?.id;
+    const activeProtectedPageIds = activePublication
+      ? activeWorkingSetPageIds(activePublication, profile)
+      : [];
     for (const publication of initial) {
       const pageIds = new Set([
         publication.pages[publication.currentPage]?.id,
         publication.pages.find((page) => page.id === publication.coverPageId)?.id,
+        ...(publication.id === activePublication?.id ? activeProtectedPageIds : []),
       ].filter((pageId): pageId is string => Boolean(pageId)));
+      const protectedPageIds = publication.id === activePublication?.id
+        ? [...new Set([...pageIds, ...activeProtectedPageIds])]
+        : [...pageIds];
       for (const pageId of pageIds) {
         // Keep the page currently shown last so an LRU eviction cannot blank
         // the reader while the cache is being rebuilt.
@@ -127,7 +147,7 @@ export function App() {
           continue;
         }
         try {
-          const ensured = await ensureNativePage(publication.id, pageId);
+          const ensured = await ensureNativePage(publication.id, pageId, protectedPageIds);
           if (!ensured) {
             incomplete = true;
           }
@@ -140,7 +160,7 @@ export function App() {
     }
     if (activePublication && activePageId) {
       try {
-        const ensured = await ensureNativePage(activePublication.id, activePageId);
+        const ensured = await ensureNativePage(activePublication.id, activePageId, activeProtectedPageIds);
         if (!ensured) {
           incomplete = true;
         }
@@ -170,7 +190,7 @@ export function App() {
       }
     }
     return { library: refreshed, incomplete };
-  }, [activePublication]);
+  }, [activePublication, profile]);
 
   useEffect(() => {
     if (!nativeRuntime) {
@@ -288,7 +308,10 @@ export function App() {
     }
     let limitApplied = false;
     try {
-      await setNativeCacheLimit(maxBytes);
+      const active = activeIdRef.current
+        ? libraryRef.current.find((publication) => publication.id === activeIdRef.current)
+        : undefined;
+      await setNativeCacheLimit(maxBytes, active ? activeWorkingSetPageIds(active, profile) : []);
       limitApplied = true;
       const { library: refreshedLibrary, incomplete } = await reloadNativeLibraryWithEssentials(profile.direction);
       setLibrary(refreshedLibrary);
@@ -312,7 +335,7 @@ export function App() {
         setDiagnostic('Cache limit could not be saved. Existing pages were kept.');
       }
     }
-  }, [hydrateMetadata, nativeRuntime, profile.direction, refreshCacheInfo, reloadNativeLibraryWithEssentials]);
+  }, [hydrateMetadata, nativeRuntime, profile.direction, profile.mode, refreshCacheInfo, reloadNativeLibraryWithEssentials]);
 
   const clearCache = useCallback(async () => {
     if (!nativeRuntime) {
@@ -320,7 +343,10 @@ export function App() {
     }
     let cacheCleared = false;
     try {
-      await clearNativeCache();
+      const active = activeIdRef.current
+        ? libraryRef.current.find((publication) => publication.id === activeIdRef.current)
+        : undefined;
+      await clearNativeCache(active ? activeWorkingSetPageIds(active, profile) : []);
       cacheCleared = true;
       const { library: readyLibrary, incomplete } = await reloadNativeLibraryWithEssentials(profile.direction);
       setLibrary(readyLibrary);
@@ -344,7 +370,7 @@ export function App() {
         setDiagnostic('Cache could not be cleared. Your original files were not modified.');
       }
     }
-  }, [hydrateMetadata, nativeRuntime, profile.direction, refreshCacheInfo, reloadNativeLibraryWithEssentials]);
+  }, [hydrateMetadata, nativeRuntime, profile.direction, profile.mode, refreshCacheInfo, reloadNativeLibraryWithEssentials]);
 
   const persistProgress = useCallback((publicationId: string, pageIndex: number) => {
     saveProgress(publicationId, pageIndex);

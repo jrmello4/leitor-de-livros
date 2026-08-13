@@ -385,7 +385,16 @@ impl LibraryDb {
         })
     }
 
+    #[allow(dead_code)]
     pub fn set_cache_limit(&self, max_bytes: i64) -> CoreResult<()> {
+        self.set_cache_limit_with_protected(max_bytes, &[])
+    }
+
+    pub fn set_cache_limit_with_protected(
+        &self,
+        max_bytes: i64,
+        protected_page_ids: &[String],
+    ) -> CoreResult<()> {
         if max_bytes <= 0 {
             return Err(CoreError::from("cache limit must be greater than zero"));
         }
@@ -402,7 +411,7 @@ impl LibraryDb {
             params![max_bytes, now()],
         )?;
         drop(connection);
-        self.enforce_cache_limit(&[])?;
+        self.enforce_cache_limit(protected_page_ids)?;
         Ok(())
     }
 
@@ -598,6 +607,15 @@ impl LibraryDb {
 
     #[allow(dead_code)]
     pub fn ensure_page_cache(&self, publication_id: &str, page_id: &str) -> CoreResult<NativePage> {
+        self.ensure_page_cache_with_protected(publication_id, page_id, &[])
+    }
+
+    pub fn ensure_page_cache_with_protected(
+        &self,
+        publication_id: &str,
+        page_id: &str,
+        additional_protected_page_ids: &[String],
+    ) -> CoreResult<NativePage> {
         let (mut page, format) = {
             let connection = self
                 .connection
@@ -630,7 +648,12 @@ impl LibraryDb {
                 .optional()?
                 .ok_or_else(|| CoreError::from("page does not belong to the publication"))?
         };
-        let protected_page_ids = self.protected_page_ids(publication_id, page.index)?;
+        let mut protected_page_ids = self.protected_page_ids(publication_id, page.index)?;
+        for protected_page_id in additional_protected_page_ids {
+            if !protected_page_ids.contains(protected_page_id) {
+                protected_page_ids.push(protected_page_id.clone());
+            }
+        }
         if let Some((_, byte_size)) =
             validated_cache_file(&self.cache_dir, Path::new(&page.cache_path))?
         {
@@ -708,19 +731,82 @@ impl LibraryDb {
         Ok(page)
     }
 
+    #[allow(dead_code)]
     pub fn clear_cache(&self) -> CoreResult<()> {
+        self.clear_cache_with_protected(&[])
+    }
+
+    pub fn clear_cache_with_protected(&self, protected_page_ids: &[String]) -> CoreResult<()> {
         let cache_root = self.cache_dir.canonicalize()?;
         let mut connection = self
             .connection
             .lock()
             .map_err(|_| CoreError::from("database lock poisoned"))?;
         let origin_paths = canonical_origin_paths(&connection)?;
-        remove_derived_files(&cache_root, &cache_root, &origin_paths)?;
+        let protected = protected_page_ids.iter().cloned().collect::<HashSet<_>>();
+        let protected_paths = {
+            let mut statement = connection.prepare(
+                "SELECT cache_path FROM cache_entries
+                  WHERE page_id = ?1",
+            )?;
+            let mut paths = HashSet::new();
+            for page_id in protected_page_ids {
+                let cache_path = statement
+                    .query_row([page_id], |row| row.get::<_, String>(0))
+                    .optional()?;
+                if let Some(cache_path) = cache_path {
+                    if let Some((path, _)) =
+                        validated_cache_file(&self.cache_dir, Path::new(&cache_path))?
+                    {
+                        paths.insert(path);
+                    }
+                }
+            }
+            paths
+        };
+        remove_derived_files_except(
+            &cache_root,
+            &cache_root,
+            &origin_paths,
+            &protected_paths,
+        )?;
+
+        let entries = {
+            let mut statement = connection.prepare(
+                "SELECT page_id, publication_id
+                   FROM cache_entries",
+            )?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+        let affected_publications = entries
+            .iter()
+            .filter(|(page_id, _)| !protected.contains(page_id))
+            .map(|(_, publication_id)| publication_id.clone())
+            .collect::<HashSet<_>>();
         let transaction = connection.transaction()?;
-        transaction.execute("DELETE FROM cache_entries", [])?;
-        transaction.execute("UPDATE pages SET cache_path = ''", [])?;
-        mark_publications_cache_missing(&transaction)?;
+        for (page_id, _) in entries {
+            if protected.contains(&page_id) {
+                continue;
+            }
+            transaction.execute(
+                "DELETE FROM cache_entries WHERE page_id = ?1",
+                [&page_id],
+            )?;
+            transaction.execute(
+                "UPDATE pages SET cache_path = '' WHERE id = ?1",
+                [&page_id],
+            )?;
+        }
+        for publication_id in affected_publications {
+            mark_publication_cache_missing(&transaction, &publication_id)?;
+        }
         transaction.commit()?;
+        remove_empty_directories(&cache_root)?;
         Ok(())
     }
 
@@ -1422,23 +1508,32 @@ fn remove_eviction_tombstones(
     }
 }
 
-fn remove_derived_files(
+fn remove_derived_files_except(
     cache_root: &Path,
     directory: &Path,
     origin_paths: &HashSet<PathBuf>,
+    protected_paths: &HashSet<PathBuf>,
 ) -> CoreResult<()> {
     for entry in std::fs::read_dir(directory)? {
         let entry = entry?;
         let path = entry.path();
         let file_type = entry.file_type()?;
         if file_type.is_dir() {
-            remove_derived_files(cache_root, &path, origin_paths)?;
+            remove_derived_files_except(
+                cache_root,
+                &path,
+                origin_paths,
+                protected_paths,
+            )?;
             if path.read_dir()?.next().is_none() {
                 std::fs::remove_dir(path)?;
             }
         } else {
             let canonical = path.canonicalize()?;
-            if canonical.starts_with(cache_root) && !origin_paths.contains(&canonical) {
+            if canonical.starts_with(cache_root)
+                && !origin_paths.contains(&canonical)
+                && !protected_paths.contains(&canonical)
+            {
                 std::fs::remove_file(path)?;
             }
         }
@@ -1526,22 +1621,6 @@ fn mark_publication_cache_missing(
             END
           WHERE id = ?2",
         params![CACHE_MISSING_DIAGNOSTIC, publication_id],
-    )?;
-    Ok(())
-}
-
-fn mark_publications_cache_missing(transaction: &rusqlite::Transaction<'_>) -> CoreResult<()> {
-    transaction.execute(
-        "UPDATE publications
-            SET diagnostic = CASE
-                WHEN diagnostic IS NULL OR diagnostic = '' THEN ?1
-                WHEN instr(diagnostic, ?1) > 0 THEN diagnostic
-                ELSE diagnostic || ' ' || ?1
-            END
-          WHERE EXISTS (
-                SELECT 1 FROM pages WHERE pages.publication_id = publications.id
-          )",
-        [CACHE_MISSING_DIAGNOSTIC],
     )?;
     Ok(())
 }
@@ -2378,6 +2457,74 @@ mod tests {
         assert!(publication_cache.join("page-protected.png").exists());
         assert!(publication_cache.join("page-new.png").exists());
         assert_eq!(database.cache_info().expect("cache info").used_bytes, 8);
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
+    fn cache_limit_and_clear_keep_the_active_working_set() {
+        let root = temporary_root("cache-working-set");
+        std::fs::create_dir_all(&root).expect("root");
+        let source_path = root.join("source.png");
+        std::fs::write(&source_path, b"source").expect("source");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        let publication_id = "publication-working-set";
+        let publication_cache = database.cache_dir().join(publication_id);
+        std::fs::create_dir_all(&publication_cache).expect("cache directory");
+        let pages = ["page-current", "page-adjacent", "page-old"]
+            .iter()
+            .enumerate()
+            .map(|(index, page_id)| {
+                let cache_path = publication_cache.join(format!("{}.png", page_id));
+                std::fs::write(&cache_path, [index as u8; 4]).expect("cache page");
+                NewPage {
+                    id: (*page_id).to_owned(),
+                    index,
+                    name: format!("{}.png", page_id),
+                    cache_path,
+                    source_ref: PageSourceRef::Image {
+                        path: source_path.to_string_lossy().into_owned(),
+                    },
+                    width: 1,
+                    height: 1,
+                }
+            })
+            .collect::<Vec<_>>();
+        database
+            .insert_publication(&NewPublication {
+                id: publication_id.to_owned(),
+                title: "Working set".to_owned(),
+                source_label: "source".to_owned(),
+                source_path: source_path.to_string_lossy().into_owned(),
+                format: "images".to_owned(),
+                pages,
+                cover_page_id: "page-current".to_owned(),
+                current_page: 0,
+                direction: "ltr".to_owned(),
+                added_at: "0".to_owned(),
+                updated_at: "0".to_owned(),
+                diagnostic: None,
+            })
+            .expect("publication");
+
+        let protected = vec!["page-current".to_owned(), "page-adjacent".to_owned()];
+        database
+            .set_cache_limit_with_protected(8, &protected)
+            .expect("protected cache limit");
+
+        assert!(publication_cache.join("page-current.png").exists());
+        assert!(publication_cache.join("page-adjacent.png").exists());
+        assert!(!publication_cache.join("page-old.png").exists());
+
+        database
+            .clear_cache_with_protected(&protected)
+            .expect("protected clear cache");
+
+        assert!(publication_cache.join("page-current.png").exists());
+        assert!(publication_cache.join("page-adjacent.png").exists());
+        assert!(!publication_cache.join("page-old.png").exists());
+        assert_eq!(database.cache_info().expect("cache info").entry_count, 2);
 
         drop(database);
         std::fs::remove_dir_all(root).expect("cleanup database");

@@ -219,28 +219,32 @@ export async function getNativeCacheInfo(): Promise<CacheInfo> {
   return normalizeCacheInfo(value);
 }
 
-export async function setNativeCacheLimit(maxBytes: number): Promise<void> {
+export async function setNativeCacheLimit(maxBytes: number, protectedPageIds: string[] = []): Promise<void> {
   if (!isNativeRuntime()) {
     return;
   }
   const normalized = typeof maxBytes === 'number' && Number.isFinite(maxBytes)
     ? Math.max(1, Math.floor(maxBytes))
     : DEFAULT_NATIVE_CACHE_LIMIT;
-  await invoke('set_cache_limit', { maxBytes: normalized });
+  await invoke('set_cache_limit', { maxBytes: normalized, protectedPageIds });
 }
 
-export async function clearNativeCache(): Promise<void> {
+export async function clearNativeCache(protectedPageIds: string[] = []): Promise<void> {
   if (!isNativeRuntime()) {
     return;
   }
-  await invoke('clear_cache');
+  await invoke('clear_cache', { protectedPageIds });
 }
 
-export async function ensureNativePage(publicationId: string, pageId: string): Promise<PageDescriptor | null> {
+export async function ensureNativePage(
+  publicationId: string,
+  pageId: string,
+  protectedPageIds: string[] = [],
+): Promise<PageDescriptor | null> {
   if (!isNativeRuntime()) {
     return null;
   }
-  const value = await invoke<unknown>('ensure_page_cache', { publicationId, pageId });
+  const value = await invoke<unknown>('ensure_page_cache', { publicationId, pageId, protectedPageIds });
   const page = normalizePage(value);
   if (!page) {
     return null;
