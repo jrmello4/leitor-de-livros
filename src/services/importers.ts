@@ -132,7 +132,7 @@ async function importCbz(file: File): Promise<ImportResult> {
       return { diagnostic: t('import.cbzEmpty') };
     }
 
-    const title = file.name.replace(/\.cbz$/i, '') || 'Imported CBZ';
+    const title = file.name.replace(/\.cbz$/i, '') || t('import.defaultCbzTitle');
     return { publication: publicationFromPages(title, file.name, 'cbz', pages, [file.name]) };
   } catch {
     return { diagnostic: t('import.cbzReadError') };
@@ -143,7 +143,7 @@ export async function importFiles(files: File[]): Promise<ImportResult> {
   const imageFiles = files.filter((file) => isImageName(file.name));
   if (imageFiles.length > 0) {
     const pages = pagesFromFiles(imageFiles);
-    const title = imageFiles[0]?.name.replace(/\.[^.]+$/, '') || 'Imported pages';
+    const title = imageFiles[0]?.name.replace(/\.[^.]+$/, '') || t('import.defaultPagesTitle');
     return {
       publication: publicationFromPages(
         title,

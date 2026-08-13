@@ -184,6 +184,7 @@ const ENGLISH_CATALOG: MessageCatalog = {
   'flow.panelSecond': ({ page }) => `Panel ${page}. Choose as the second panel to swap.`,
   'flow.panelFirst': ({ page }) => `Panel ${page}. Choose as the first panel to swap.`,
   'flow.panelRoute': ({ page }) => `Panel ${page}. Full-page reading route.`,
+  'flow.count': ({ count }) => `FLOW / ${String(count).padStart(2, '0')}`,
   'profile.close': 'Close settings',
   'profile.heading': 'PROFILE / V2',
   'profile.named': 'Named profiles',
@@ -221,6 +222,8 @@ const ENGLISH_CATALOG: MessageCatalog = {
   'profile.highContrast': 'High contrast',
   'profile.cache': 'Derived page cache',
   'profile.cacheUsed': ({ used, max }) => `${used} used of ${max}`,
+  'profile.bytesGiB': ({ value }) => `${value} GiB`,
+  'profile.bytesMiB': ({ value }) => `${value} MiB`,
   'profile.derivedPages': ({ count }) => `${count} derived pages`,
   'profile.cacheDesktop': 'Cache controls are available in the desktop app.',
   'profile.cacheLimit': 'Cache limit',
@@ -262,6 +265,8 @@ const ENGLISH_CATALOG: MessageCatalog = {
   'input.cancel': 'Back / cancel',
   'import.cbzEmpty': 'The CBZ contains no supported image pages.',
   'import.cbzReadError': 'The CBZ could not be read. The original file was not modified.',
+  'import.defaultCbzTitle': 'Imported CBZ',
+  'import.defaultPagesTitle': 'Imported pages',
   'import.nativeOnly': ({ format }) => `${format} import is reserved for the native importer slice. Try an image set or CBZ for now.`,
   'import.noSupported': 'No supported publication files were found.',
   'import.nativeUnavailable': 'Native import is not available in the browser.',
@@ -296,4 +301,8 @@ export function t(key: string, params: MessageParams = {}): string {
   }
   const message = typeof entry === 'function' ? entry(params) : entry;
   return message.replace(/\{\{(\w+)\}\}/g, (_match, name: string) => String(params[name] ?? ''));
+}
+
+export function actionLabel(action: string): string {
+  return t(`input.${action}`);
 }

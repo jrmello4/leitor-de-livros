@@ -90,6 +90,9 @@ export function ReaderView({
   const visibleIndexes = visiblePageIndexes(publication.currentPage, publication.pages, profile.mode, profile.direction);
   const visiblePages = visibleIndexes.map((index) => publication.pages[index]).filter(Boolean);
   const currentPage = publication.pages[publication.currentPage];
+  const readerCounter = publication.pages.length === 0
+    ? t('navigator.noPages')
+    : pageCounter(publication.currentPage, publication.pages.length);
   const preloadPages = [publication.currentPage - 1, publication.currentPage, publication.currentPage + 1]
     .map((index) => publication.pages[index])
     .filter((page): page is PageDescriptor => Boolean(page));
@@ -419,7 +422,7 @@ export function ReaderView({
           </div>
         </div>
         <div className="reader-topbar-end">
-          <span className="reader-counter">{pageCounter(publication.currentPage, publication.pages.length)}</span>
+          <span className="reader-counter">{readerCounter}</span>
           <button
             className={`reader-tool reader-flow-toggle ${flowVisible ? 'reader-flow-toggle--active' : ''}`}
             type="button"
@@ -508,7 +511,7 @@ export function ReaderView({
           <div className="reader-content-transform" style={contentTransformStyle} data-reader-content>
             <ReaderSurface
               frame={rendererFrame}
-              ariaLabel={t('reader.pageReady', { counter: pageCounter(publication.currentPage, publication.pages.length) })}
+              ariaLabel={t('reader.pageReady', { counter: readerCounter })}
               onStatus={setRendererStatus}
               interactionActive={turnPhase !== 'idle'}
               staticContent={(

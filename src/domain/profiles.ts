@@ -1,5 +1,4 @@
 import { cloneBindings, DEFAULT_BINDINGS } from './input';
-import { t } from '../i18n/catalog';
 import type {
   ActionName,
   BindingMap,
@@ -24,13 +23,35 @@ export interface ProfileStore {
   profiles: NamedReadingProfile[];
 }
 
+export type ProfileErrorKey =
+  | 'profile.errorStoreVersion'
+  | 'profile.errorActiveId'
+  | 'profile.errorAtLeastOne'
+  | 'profile.errorIdsUnique'
+  | 'profile.errorActiveExists'
+  | 'profile.errorObject'
+  | 'profile.errorVersion'
+  | 'profile.errorId'
+  | 'profile.errorName'
+  | 'profile.errorVisual'
+  | 'profile.errorMotion'
+  | 'profile.errorDuration'
+  | 'profile.errorZoomKeys'
+  | 'profile.errorSelectedMissing'
+  | 'profile.errorDuplicateMissing'
+  | 'profile.errorNameTaken'
+  | 'profile.errorRenameMissing'
+  | 'profile.errorLastDelete'
+  | 'profile.errorDeleteMissing'
+  | 'profile.errorUpdateMissing';
+
 export type ProfileValidation =
   | { ok: true; value: ProfileStore }
-  | { ok: false; error: string };
+  | { ok: false; error: ProfileErrorKey };
 
 export type ProfileMutation =
   | { ok: true; store: ProfileStore }
-  | { ok: false; error: string };
+  | { ok: false; error: ProfileErrorKey };
 
 const ACTION_NAMES: ActionName[] = [
   'next_page',
@@ -93,13 +114,13 @@ export function getProfile(store: ProfileStore, profileId: string): NamedReading
 
 export function validateProfileStore(value: unknown): ProfileValidation {
   if (!isRecord(value) || value.version !== PROFILE_STORE_VERSION) {
-    return { ok: false, error: t('profile.errorStoreVersion') };
+    return { ok: false, error: 'profile.errorStoreVersion' };
   }
   if (typeof value.activeProfileId !== 'string' || value.activeProfileId.length === 0) {
-    return { ok: false, error: t('profile.errorActiveId') };
+    return { ok: false, error: 'profile.errorActiveId' };
   }
   if (!Array.isArray(value.profiles) || value.profiles.length === 0) {
-    return { ok: false, error: t('profile.errorAtLeastOne') };
+    return { ok: false, error: 'profile.errorAtLeastOne' };
   }
 
   const profiles: NamedReadingProfile[] = [];
@@ -110,13 +131,13 @@ export function validateProfileStore(value: unknown): ProfileValidation {
       return validated;
     }
     if (ids.has(validated.value.id)) {
-      return { ok: false, error: t('profile.errorIdsUnique') };
+      return { ok: false, error: 'profile.errorIdsUnique' };
     }
     ids.add(validated.value.id);
     profiles.push(validated.value);
   }
   if (!ids.has(value.activeProfileId)) {
-    return { ok: false, error: t('profile.errorActiveExists') };
+    return { ok: false, error: 'profile.errorActiveExists' };
   }
 
   return {
@@ -125,34 +146,34 @@ export function validateProfileStore(value: unknown): ProfileValidation {
   };
 }
 
-export function validateProfile(value: unknown): { ok: true; value: NamedReadingProfile } | { ok: false; error: string } {
+export function validateProfile(value: unknown): { ok: true; value: NamedReadingProfile } | { ok: false; error: ProfileErrorKey } {
   if (!isRecord(value)) {
-    return { ok: false, error: t('profile.errorObject') };
+    return { ok: false, error: 'profile.errorObject' };
   }
   if (value.version !== 1) {
-    return { ok: false, error: t('profile.errorVersion') };
+    return { ok: false, error: 'profile.errorVersion' };
   }
   if (typeof value.id !== 'string' || !isValidId(value.id)) {
-    return { ok: false, error: t('profile.errorId') };
+    return { ok: false, error: 'profile.errorId' };
   }
   if (!isValidProfileName(value.name)) {
-    return { ok: false, error: t('profile.errorName') };
+    return { ok: false, error: 'profile.errorName' };
   }
   if (!isOneOf(value.mode, ['single', 'spread'])
     || !isOneOf(value.direction, ['ltr', 'rtl'])
     || !isOneOf(value.contrast, ['standard', 'high'])
     || !isOneOf(value.layoutZone, ['top', 'bottom', 'left', 'right'])
     || !isOneOf(value.zoomMode, ['page', 'width', 'manual'])) {
-    return { ok: false, error: t('profile.errorVisual') };
+    return { ok: false, error: 'profile.errorVisual' };
   }
   if (typeof value.reducedMotion !== 'boolean') {
-    return { ok: false, error: t('profile.errorMotion') };
+    return { ok: false, error: 'profile.errorMotion' };
   }
   if (!isValidTurnDuration(value.pageTurnDuration)) {
-    return { ok: false, error: t('profile.errorDuration') };
+    return { ok: false, error: 'profile.errorDuration' };
   }
   if (!isValidZoomScale(value.zoomScale) || !isValidBindings(value.bindings)) {
-    return { ok: false, error: t('profile.errorZoomKeys') };
+    return { ok: false, error: 'profile.errorZoomKeys' };
   }
 
   return {
@@ -175,6 +196,15 @@ export function validateProfile(value: unknown): { ok: true; value: NamedReading
 }
 
 export function migrateProfileStore(value: unknown): ProfileStore {
+  return tryMigrateProfileStore(value) ?? createDefaultProfileStore();
+}
+
+/**
+ * Migrates a persisted payload without silently replacing an invalid native
+ * store. Callers can then choose a valid fallback from another persistence
+ * layer (for example browser storage) before writing anything back.
+ */
+export function tryMigrateProfileStore(value: unknown): ProfileStore | null {
   const current = validateProfileStore(value);
   if (current.ok) {
     return current.value;
@@ -189,14 +219,14 @@ export function migrateProfileStore(value: unknown): ProfileStore {
     };
   }
 
-  return createDefaultProfileStore();
+  return null;
 }
 
 export function selectProfile(store: ProfileStore, profileId: string): ProfileMutation {
   const valid = validateProfileStore(store);
   if (!valid.ok) return valid;
   if (!valid.value.profiles.some((profile) => profile.id === profileId)) {
-    return { ok: false, error: t('profile.errorSelectedMissing') };
+    return { ok: false, error: 'profile.errorSelectedMissing' };
   }
   return { ok: true, store: { ...valid.value, activeProfileId: profileId } };
 }
@@ -205,8 +235,8 @@ export function createProfile(store: ProfileStore, name: string): ProfileMutatio
   const valid = validateProfileStore(store);
   if (!valid.ok) return valid;
   const normalizedName = normalizeProfileName(name);
-  if (!normalizedName) return { ok: false, error: t('profile.errorName') };
-  if (hasProfileName(valid.value, normalizedName)) return { ok: false, error: t('profile.errorNameTaken') };
+  if (!normalizedName) return { ok: false, error: 'profile.errorName' };
+  if (hasProfileName(valid.value, normalizedName)) return { ok: false, error: 'profile.errorNameTaken' };
 
   const profile: NamedReadingProfile = {
     ...createDefaultProfile(),
@@ -227,10 +257,10 @@ export function duplicateProfile(store: ProfileStore, profileId: string, name?: 
   const valid = validateProfileStore(store);
   if (!valid.ok) return valid;
   const source = valid.value.profiles.find((profile) => profile.id === profileId);
-  if (!source) return { ok: false, error: t('profile.errorDuplicateMissing') };
+  if (!source) return { ok: false, error: 'profile.errorDuplicateMissing' };
   const normalizedName = normalizeProfileName(name ?? `${source.name} copy`);
-  if (!normalizedName) return { ok: false, error: t('profile.errorName') };
-  if (hasProfileName(valid.value, normalizedName)) return { ok: false, error: t('profile.errorNameTaken') };
+  if (!normalizedName) return { ok: false, error: 'profile.errorName' };
+  if (hasProfileName(valid.value, normalizedName)) return { ok: false, error: 'profile.errorNameTaken' };
 
   const profile = { ...cloneProfile(source), id: createProfileId(), name: normalizedName };
   return {
@@ -247,12 +277,12 @@ export function renameProfile(store: ProfileStore, profileId: string, name: stri
   const valid = validateProfileStore(store);
   if (!valid.ok) return valid;
   const normalizedName = normalizeProfileName(name);
-  if (!normalizedName) return { ok: false, error: t('profile.errorName') };
+  if (!normalizedName) return { ok: false, error: 'profile.errorName' };
   if (valid.value.profiles.some((profile) => profile.id !== profileId && profile.name.toLocaleLowerCase() === normalizedName.toLocaleLowerCase())) {
-    return { ok: false, error: t('profile.errorNameTaken') };
+    return { ok: false, error: 'profile.errorNameTaken' };
   }
   if (!valid.value.profiles.some((profile) => profile.id === profileId)) {
-    return { ok: false, error: t('profile.errorRenameMissing') };
+    return { ok: false, error: 'profile.errorRenameMissing' };
   }
   return {
     ok: true,
@@ -266,9 +296,9 @@ export function renameProfile(store: ProfileStore, profileId: string, name: stri
 export function deleteProfile(store: ProfileStore, profileId: string): ProfileMutation {
   const valid = validateProfileStore(store);
   if (!valid.ok) return valid;
-  if (valid.value.profiles.length === 1) return { ok: false, error: t('profile.errorLastDelete') };
+  if (valid.value.profiles.length === 1) return { ok: false, error: 'profile.errorLastDelete' };
   if (!valid.value.profiles.some((profile) => profile.id === profileId)) {
-    return { ok: false, error: t('profile.errorDeleteMissing') };
+    return { ok: false, error: 'profile.errorDeleteMissing' };
   }
   const profiles = valid.value.profiles.filter((profile) => profile.id !== profileId);
   const activeProfileId = valid.value.activeProfileId === profileId
@@ -281,7 +311,7 @@ export function updateProfile(store: ProfileStore, profileId: string, patch: Par
   const valid = validateProfileStore(store);
   if (!valid.ok) return valid;
   const current = valid.value.profiles.find((profile) => profile.id === profileId);
-  if (!current) return { ok: false, error: t('profile.errorUpdateMissing') };
+  if (!current) return { ok: false, error: 'profile.errorUpdateMissing' };
   const candidate = { ...current, ...patch, id: current.id, version: 1 };
   const validated = validateProfile(candidate);
   if (!validated.ok) return validated;

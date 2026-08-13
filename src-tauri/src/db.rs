@@ -42,6 +42,7 @@ impl LibraryDb {
              PRAGMA synchronous = NORMAL;",
         )?;
         migrate(&mut connection)?;
+        retry_delete_tombstones(&cache_dir);
         retry_eviction_tombstones(&connection, &cache_dir);
         reconcile_cache_entries(&mut connection, &cache_dir)?;
 
@@ -841,7 +842,11 @@ impl LibraryDb {
                 return Err(error);
             }
 
-            if let Err(error) = std::fs::remove_dir_all(&staging_root) {
+            // Remove only the now-empty derived directories before opening the
+            // metadata transaction. The staged bytes must remain available
+            // until the transaction commits so a database failure can restore
+            // the complete cache state.
+            if let Err(error) = remove_empty_directories(&cache_publication_dir) {
                 let restore_error = restore_staged_files(&staged_files).err();
                 let _ = std::fs::remove_dir_all(&staging_root);
                 if let Some(restore_error) = restore_error {
@@ -849,7 +854,7 @@ impl LibraryDb {
                         "cache cleanup failed: {error}; cache rollback failed: {restore_error}"
                     )));
                 }
-                return Err(error.into());
+                return Err(error);
             }
         }
 
@@ -876,18 +881,28 @@ impl LibraryDb {
             transaction.commit()?;
             Ok(())
         })();
-        drop(connection);
         if let Err(error) = transaction_result {
-            // The derived bytes have already been removed, but the metadata is
-            // still present and can be rebuilt on the next open.
+            let restore_error = restore_staged_files(&staged_files).err();
+            let _ = std::fs::remove_dir_all(&staging_root);
+            drop(connection);
+            if let Some(restore_error) = restore_error {
+                return Err(CoreError::from(format!(
+                    "publication removal failed: {error}; cache rollback failed: {restore_error}"
+                )));
+            }
             return Err(error);
         }
-
-        if cache_publication_dir.exists() {
-            remove_empty_directories(&cache_publication_dir)?;
-            if cache_publication_dir.read_dir()?.next().is_none() {
-                std::fs::remove_dir(cache_publication_dir)?;
-            }
+        drop(connection);
+        // The database commit is the point of no return. A leftover empty
+        // tombstone is harmless and can be retried later, so cleanup failure
+        // here must not report a failed deletion after metadata is gone.
+        let _ = std::fs::remove_dir_all(&staging_root);
+        let cache_publication_is_empty = cache_publication_dir
+            .read_dir()
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(false);
+        if cache_publication_is_empty {
+            let _ = std::fs::remove_dir(&cache_publication_dir);
         }
         Ok(())
     }
@@ -1072,11 +1087,17 @@ impl LibraryDb {
             .unwrap_or(0)
             .max(0) as usize;
         let progress = calculate_progress(current_page, pages.len(), &row.direction);
+        let source_names = if row.format == "images" {
+            pages.iter().map(|page| page.name.clone()).collect()
+        } else {
+            vec![row.source_label.clone()]
+        };
 
         Ok(NativePublication {
             id: row.id,
             title: row.title,
             source_label: row.source_label,
+            source_names,
             format: row.format,
             cover_page_id: row.cover_page_id,
             current_page: current_page.min(pages.len().saturating_sub(1)),
@@ -1456,6 +1477,42 @@ fn retry_eviction_tombstones(connection: &Connection, cache_dir: &Path) {
         return;
     };
     remove_eviction_tombstones(&cache_root, &cache_root, &origin_paths);
+}
+
+fn retry_delete_tombstones(cache_dir: &Path) {
+    let Ok(cache_root) = cache_dir.canonicalize() else {
+        return;
+    };
+    remove_delete_tombstones(&cache_root, &cache_root);
+}
+
+fn remove_delete_tombstones(cache_root: &Path, directory: &Path) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        let is_delete_tombstone = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with('.') && name.ends_with(".delete"));
+        if is_delete_tombstone {
+            if path
+                .canonicalize()
+                .is_ok_and(|canonical| canonical.starts_with(cache_root))
+            {
+                let _ = std::fs::remove_dir_all(path);
+            }
+            continue;
+        }
+        remove_delete_tombstones(cache_root, &path);
+    }
 }
 
 fn remove_eviction_tombstones(
@@ -1912,6 +1969,111 @@ mod tests {
             Some(valid)
         );
         drop(database);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_profile_payload_survives_native_restart_for_frontend_migration() {
+        let root = temporary_root("profile-restart");
+        let legacy = serde_json::json!({
+            "version": 1,
+            "name": "Archive mode",
+            "mode": "spread",
+            "direction": "rtl",
+            "contrast": "high",
+            "reducedMotion": true,
+            "pageTurnDuration": 720,
+            "layoutZone": "bottom",
+            "bindings": {
+                "next_page": ["KeyN"],
+                "previous_page": ["KeyP"],
+                "toggle_library": ["KeyL"],
+                "toggle_fullscreen": ["KeyF"],
+                "toggle_settings": ["KeyS"],
+                "toggle_spread": ["KeyM"],
+                "cancel": ["Escape"]
+            }
+        });
+        let database = LibraryDb::open(root.clone()).expect("database");
+        database.save_profile(&legacy).expect("legacy profile");
+        assert_eq!(
+            database.load_profile().expect("load legacy"),
+            Some(legacy.clone())
+        );
+        drop(database);
+
+        let reopened = LibraryDb::open(root.clone()).expect("reopen database");
+        assert_eq!(
+            reopened.load_profile().expect("load after restart"),
+            Some(legacy)
+        );
+        drop(reopened);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn named_profile_store_round_trips_across_native_restart() {
+        let root = temporary_root("named-profile-restart");
+        let store = serde_json::json!({
+            "version": 2,
+            "activeProfileId": "night-study",
+            "profiles": [
+                {
+                    "id": "paper-atelier",
+                    "version": 1,
+                    "name": "Paper Atelier",
+                    "mode": "single",
+                    "direction": "ltr",
+                    "contrast": "standard",
+                    "reducedMotion": false,
+                    "pageTurnDuration": 420,
+                    "layoutZone": "top",
+                    "zoomMode": "page",
+                    "zoomScale": 1.0,
+                    "bindings": {
+                        "next_page": ["ArrowRight"],
+                        "previous_page": ["ArrowLeft"],
+                        "toggle_library": ["KeyL"],
+                        "toggle_fullscreen": ["KeyF"],
+                        "toggle_settings": ["KeyS"],
+                        "toggle_spread": ["KeyM"],
+                        "cancel": ["Escape"]
+                    }
+                },
+                {
+                    "id": "night-study",
+                    "version": 1,
+                    "name": "Night Study",
+                    "mode": "spread",
+                    "direction": "rtl",
+                    "contrast": "high",
+                    "reducedMotion": true,
+                    "pageTurnDuration": 720,
+                    "layoutZone": "bottom",
+                    "zoomMode": "manual",
+                    "zoomScale": 1.5,
+                    "bindings": {
+                        "next_page": ["KeyN"],
+                        "previous_page": ["KeyP"],
+                        "toggle_library": ["KeyL"],
+                        "toggle_fullscreen": ["KeyF"],
+                        "toggle_settings": ["KeyS"],
+                        "toggle_spread": ["KeyM"],
+                        "cancel": ["Escape"]
+                    }
+                }
+            ]
+        });
+        let database = LibraryDb::open(root.clone()).expect("database");
+        database.save_profile(&store).expect("named profile store");
+        drop(database);
+
+        let reopened = LibraryDb::open(root.clone()).expect("reopen database");
+        assert_eq!(
+            reopened.load_profile().expect("load named profiles"),
+            Some(store)
+        );
+        drop(reopened);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -2472,6 +2634,47 @@ mod tests {
     }
 
     #[test]
+    fn failed_metadata_transaction_restores_staged_cache_and_metadata() {
+        let root = temporary_root("delete-db-failure");
+        let source_path = root.join("external-source.cbz");
+        let source_bytes = b"source must survive a failed transaction";
+        std::fs::create_dir_all(&root).expect("root");
+        std::fs::write(&source_path, source_bytes).expect("source");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        insert_test_publication(&database, &source_path.to_string_lossy());
+        let cache_path = database
+            .cache_dir()
+            .join("publication-1")
+            .join("page-1.png");
+        let cache_bytes = std::fs::read(&cache_path).expect("cache bytes");
+        let connection = database.connection.lock().expect("database lock");
+        connection
+            .execute_batch(
+                "CREATE TRIGGER block_publication_delete
+                 BEFORE DELETE ON publications
+                 BEGIN SELECT RAISE(ABORT, 'blocked by test'); END;",
+            )
+            .expect("delete trigger");
+        drop(connection);
+
+        let result = database.delete_publication("publication-1");
+
+        assert!(result.is_err());
+        assert_eq!(database.list_publications().expect("publications").len(), 1);
+        assert_eq!(
+            std::fs::read(&cache_path).expect("restored cache"),
+            cache_bytes
+        );
+        assert_eq!(
+            std::fs::read(&source_path).expect("source remains"),
+            source_bytes
+        );
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
     fn deleting_publication_preserves_another_publications_origin_inside_its_cache_tree() {
         let root = temporary_root("delete-cross-publication-origin");
         let database = LibraryDb::open(root.clone()).expect("database");
@@ -2799,6 +3002,23 @@ mod tests {
         std::fs::create_dir_all(&publication_cache).expect("publication cache");
         let tombstone = publication_cache.join(".page-1.123.evict");
         std::fs::write(&tombstone, b"evicted derived bytes").expect("tombstone");
+        drop(database);
+
+        let reopened = LibraryDb::open(root.clone()).expect("reopen database");
+
+        assert!(!tombstone.exists());
+        drop(reopened);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
+    fn opening_database_retries_removal_of_publication_delete_tombstones() {
+        let root = temporary_root("cache-delete-retry");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        let tombstone = database.cache_dir().join(".publication-1.123.delete");
+        std::fs::create_dir_all(&tombstone).expect("delete tombstone");
+        std::fs::write(tombstone.join("page-1.png"), b"staged derived bytes")
+            .expect("staged bytes");
         drop(database);
 
         let reopened = LibraryDb::open(root.clone()).expect("reopen database");

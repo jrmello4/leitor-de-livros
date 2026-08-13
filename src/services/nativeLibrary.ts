@@ -2,7 +2,7 @@ import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { calculateProgress } from '../domain/reader';
 import { defaultReaderState, normalizeReaderState } from '../domain/readerState';
-import { getActiveProfile, migrateProfileStore, type ProfileStore } from '../domain/profiles';
+import { getActiveProfile, tryMigrateProfileStore, type ProfileStore } from '../domain/profiles';
 import type {
   Bookmark,
   CacheInfo,
@@ -39,6 +39,7 @@ interface NativePublicationDto {
   id: string;
   title: string;
   sourceLabel: string;
+  sourceNames?: unknown;
   format: Publication['format'];
   pages: NativePageDto[];
   coverPageId: string;
@@ -54,6 +55,13 @@ interface NativePublicationDto {
 function safeSourceName(value: unknown): string {
   const source = normalizeString(value);
   return source.split(/[\\/]/).pop() ?? source;
+}
+
+function safeSourceNames(value: unknown, fallback: string): string[] {
+  const names = Array.isArray(value)
+    ? value.map(safeSourceName).filter(Boolean)
+    : [];
+  return names.length > 0 ? [...new Set(names)] : (fallback ? [fallback] : []);
 }
 
 interface NativeImportResultDto {
@@ -320,7 +328,7 @@ function mapPublication(value: unknown, direction: ReadingDirection): Publicatio
     addedAt: normalizeString(publication.addedAt),
     updatedAt: normalizeString(publication.updatedAt),
     isFavorite: publication.isFavorite === true,
-    sourceNames: sourceLabel ? [sourceLabel] : [],
+    sourceNames: safeSourceNames(publication.sourceNames, sourceLabel),
     diagnostic: typeof publication.diagnostic === 'string' ? publication.diagnostic : undefined,
   };
 }
@@ -447,5 +455,5 @@ function hydrateProfileStore(value: unknown): ProfileStore | null {
   if (value === null || value === undefined) {
     return null;
   }
-  return migrateProfileStore(value);
+  return tryMigrateProfileStore(value);
 }

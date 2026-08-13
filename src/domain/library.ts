@@ -2,6 +2,17 @@ import type { Bookmark, PageDescriptor, Publication } from './types';
 
 export type LibrarySort = 'recent' | 'title' | 'added';
 
+export function safeSourceName(value: string): string {
+  return value.split(/[\\/]/).pop() ?? value;
+}
+
+function safeSourceNames(publication: Publication): string[] {
+  return [
+    safeSourceName(publication.sourceLabel),
+    ...(publication.sourceNames ?? []).map(safeSourceName),
+  ].filter(Boolean);
+}
+
 export function mostRecentPublication(publications: Publication[]): Publication | undefined {
   return publications.reduce<Publication | undefined>((latest, publication) => (
     !latest || publication.updatedAt > latest.updatedAt ? publication : latest
@@ -18,8 +29,7 @@ export function visiblePublications(
     .filter((publication) => {
       const searchable = [
         publication.title,
-        publication.sourceLabel,
-        ...(publication.sourceNames ?? []),
+        ...safeSourceNames(publication),
       ].join('\n').toLowerCase();
       return searchable.includes(normalizedQuery);
     })

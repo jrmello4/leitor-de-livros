@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createDemoPublication } from '../data/demo';
-import { actionLabel, canRunActionWhileSettingsOpen, InputMap } from '../domain/input';
+import { canRunActionWhileSettingsOpen, InputMap } from '../domain/input';
 import { createPageSelectionCoordinator, selectLatestPage, type PageSelectionRequest } from '../domain/pageSelection';
 import { calculateProgress, movePage, clamp, visiblePageIndexes } from '../domain/reader';
 import { nextBookmark, type LibrarySort } from '../domain/library';
@@ -18,7 +18,7 @@ import {
 } from '../domain/profiles';
 import { defaultReaderState } from '../domain/readerState';
 import type { ActionName, Bookmark, CacheInfo, PageDescriptor, Publication, ReaderState, ReadingProfile } from '../domain/types';
-import { t } from '../i18n/catalog';
+import { actionLabel, t } from '../i18n/catalog';
 import { importFiles } from '../services/importers';
 import {
   chooseNativeFiles,
@@ -293,8 +293,9 @@ export function App() {
 
   const commitProfileMutation = useCallback((mutation: ProfileMutation, message: string): string | undefined => {
     if (!mutation.ok) {
-      setDiagnostic(mutation.error);
-      return mutation.error;
+      const errorMessage = t(mutation.error);
+      setDiagnostic(errorMessage);
+      return errorMessage;
     }
     setProfileStore(mutation.store);
     profileStoreRef.current = mutation.store;
@@ -553,6 +554,30 @@ export function App() {
     );
   }, [nativeRuntime, profile]);
 
+  const commitActivePageSelection = useCallback((
+    preparedPage: PageDescriptor | null,
+    request: PageSelectionRequest,
+  ) => {
+    if (activePublicationIdRef.current !== request.publicationId) {
+      return;
+    }
+    const latest = libraryRef.current.find((publication) => publication.id === request.publicationId);
+    if (!latest) {
+      return;
+    }
+    updatePublication(request.publicationId, (publication) => ({
+      ...publication,
+      pages: preparedPage
+        ? publication.pages.map((page) => page.id === preparedPage.id ? preparedPage : page)
+        : publication.pages,
+      currentPage: request.pageIndex,
+      progress: calculateProgress(request.pageIndex, publication.pages.length, profile.direction),
+      updatedAt: new Date().toISOString(),
+    }));
+    persistProgress(request.publicationId, request.pageIndex);
+    setAnnouncement(t('app.pageReady', { page: request.pageIndex + 1, count: latest.pages.length }));
+  }, [persistProgress, profile.direction, updatePublication]);
+
   const moveActivePage = useCallback(
     async (delta: number) => {
       const current = activeIdRef.current
@@ -569,28 +594,9 @@ export function App() {
         return;
       }
 
-      await selectPublicationPage(current, nextPage, (preparedPage, request) => {
-        if (activePublicationIdRef.current !== request.publicationId) {
-          return;
-        }
-        const latest = libraryRef.current.find((publication) => publication.id === request.publicationId);
-        if (!latest) {
-          return;
-        }
-        updatePublication(request.publicationId, (publication) => ({
-          ...publication,
-          pages: preparedPage
-            ? publication.pages.map((page) => page.id === preparedPage.id ? preparedPage : page)
-            : publication.pages,
-          currentPage: request.pageIndex,
-          progress: calculateProgress(request.pageIndex, publication.pages.length, profile.direction),
-          updatedAt: new Date().toISOString(),
-        }));
-        persistProgress(request.publicationId, request.pageIndex);
-        setAnnouncement(t('app.pageReady', { page: request.pageIndex + 1, count: latest.pages.length }));
-      });
+      await selectPublicationPage(current, nextPage, commitActivePageSelection);
     },
-    [profile.direction, persistProgress, selectPublicationPage, updatePublication],
+    [commitActivePageSelection, profile.direction, selectPublicationPage],
   );
 
   const selectActivePage = useCallback(
@@ -606,28 +612,9 @@ export function App() {
         pageSelectionCoordinatorRef.current.cancel();
         return;
       }
-      await selectPublicationPage(current, nextPage, (preparedPage, request) => {
-        if (activePublicationIdRef.current !== request.publicationId) {
-          return;
-        }
-        const latest = libraryRef.current.find((publication) => publication.id === request.publicationId);
-        if (!latest) {
-          return;
-        }
-        updatePublication(request.publicationId, (publication) => ({
-          ...publication,
-          pages: preparedPage
-            ? publication.pages.map((page) => page.id === preparedPage.id ? preparedPage : page)
-            : publication.pages,
-          currentPage: request.pageIndex,
-          progress: calculateProgress(request.pageIndex, publication.pages.length, profile.direction),
-          updatedAt: new Date().toISOString(),
-        }));
-        persistProgress(request.publicationId, request.pageIndex);
-        setAnnouncement(t('app.pageReady', { page: request.pageIndex + 1, count: latest.pages.length }));
-      });
+      await selectPublicationPage(current, nextPage, commitActivePageSelection);
     },
-    [profile.direction, persistProgress, selectPublicationPage, updatePublication],
+    [commitActivePageSelection, selectPublicationPage],
   );
 
   const saveActiveReaderState = useCallback((state: ReaderState) => {
@@ -818,7 +805,7 @@ export function App() {
       const diagnosticMessage = result.diagnostics.length > 0 ? result.diagnostics.join(' ') : undefined;
       setDiagnostic(diagnosticMessage);
       if (result.publications.length === 0) {
-        setAnnouncement(diagnosticMessage ?? t('app.nativeNoPublication'));
+        setAnnouncement(t('app.nativeNoPublication'));
         return;
       }
 
@@ -856,7 +843,7 @@ export function App() {
         zoomScale: defaults.zoomScale,
         bindings: defaults.bindings,
       }),
-      'Current reading profile reset.',
+      t('app.profileReset'),
     );
     setCapturingAction(null);
   };

@@ -262,6 +262,7 @@ mod tests {
             id: "publication-1".to_owned(),
             title: "Test".to_owned(),
             source_label: "Source".to_owned(),
+            source_names: vec!["Source".to_owned()],
             format: "images".to_owned(),
             pages: Vec::new(),
             cover_page_id: "page-1".to_owned(),

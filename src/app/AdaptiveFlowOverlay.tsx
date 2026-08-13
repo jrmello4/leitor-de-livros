@@ -90,7 +90,7 @@ export function AdaptiveFlowOverlay({
   return (
     <div className="flow-overlay" aria-label={t('flow.label')}>
       <section className="flow-overlay-legend" data-flow-control aria-labelledby="flow-overlay-title">
-        <span id="flow-overlay-title">FLOW / {String(panels.length).padStart(2, '0')}</span>
+        <span id="flow-overlay-title">{t('flow.count', { count: panels.length })}</span>
         <strong>{statusLabel(graph)}</strong>
         <p>{guidanceLabel(graph, canCorrectOrder, Boolean(firstSelection))}</p>
         {canUseManualRoute && (

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import type { ActionName, CacheInfo, ReadingProfile } from '../domain/types';
-import { actionLabel, bindingLabel } from '../domain/input';
-import { t } from '../i18n/catalog';
+import { bindingLabel } from '../domain/input';
+import { actionLabel, t } from '../i18n/catalog';
 import type { NamedReadingProfile } from '../domain/profiles';
 
 interface ProfilePanelProps {
@@ -26,17 +26,19 @@ interface ProfilePanelProps {
 }
 
 const CACHE_LIMITS = [
-  { value: 512 * 1024 * 1024, label: '512 MiB' },
-  { value: 1 * 1024 * 1024 * 1024, label: '1 GiB' },
-  { value: 2 * 1024 * 1024 * 1024, label: '2 GiB' },
-  { value: 5 * 1024 * 1024 * 1024, label: '5 GiB' },
+  { value: 512 * 1024 * 1024 },
+  { value: 1 * 1024 * 1024 * 1024 },
+  { value: 2 * 1024 * 1024 * 1024 },
+  { value: 5 * 1024 * 1024 * 1024 },
 ] as const;
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024 * 1024) {
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(bytes % (1024 * 1024 * 1024) === 0 ? 0 : 1)} GiB`;
+    return t('profile.bytesGiB', {
+      value: (bytes / (1024 * 1024 * 1024)).toFixed(bytes % (1024 * 1024 * 1024) === 0 ? 0 : 1),
+    });
   }
-  return `${Math.round(bytes / (1024 * 1024))} MiB`;
+  return t('profile.bytesMiB', { value: Math.round(bytes / (1024 * 1024)) });
 }
 
 function defaultCacheInfo(): CacheInfo {
@@ -300,7 +302,7 @@ export function ProfilePanel({
               onChange={(event) => void onSetCacheLimit(Number(event.target.value))}
             >
               {CACHE_LIMITS.map((limit) => (
-                <option key={limit.value} value={limit.value}>{limit.label}</option>
+                <option key={limit.value} value={limit.value}>{formatBytes(limit.value)}</option>
               ))}
             </select>
           </label>

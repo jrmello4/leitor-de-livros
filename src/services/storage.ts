@@ -1,7 +1,7 @@
 import {
   createDefaultProfileStore,
   getActiveProfile,
-  migrateProfileStore,
+  tryMigrateProfileStore,
   type ProfileStore,
   validateProfileStore,
 } from '../domain/profiles';
@@ -33,9 +33,12 @@ export function loadProfileStore(): ProfileStore {
   try {
     const currentJson = storage.getItem(PROFILE_STORE_KEY);
     const legacyJson = storage.getItem(PROFILE_KEY);
-    const stored = JSON.parse(currentJson ?? legacyJson ?? 'null') as unknown;
-    const migrated = migrateProfileStore(stored);
-    if (currentJson === null || (isLegacyProfile(stored) && validateProfileStore(stored).ok === false)) {
+    const current = parseStoredProfile(currentJson);
+    const legacy = parseStoredProfile(legacyJson);
+    const migrated = tryMigrateProfileStore(current)
+      ?? tryMigrateProfileStore(legacy)
+      ?? createDefaultProfileStore();
+    if (currentJson === null || !validateProfileStore(current).ok) {
       writeProfileStore(storage, migrated);
     }
     return migrated;
@@ -127,9 +130,15 @@ function writeProfileStore(storage: Storage, store: ProfileStore): void {
   storage.removeItem(PROFILE_KEY);
 }
 
-function isLegacyProfile(value: unknown): value is { version: 1 } {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    && (value as { version?: unknown }).version === 1;
+function parseStoredProfile(json: string | null): unknown {
+  if (json === null) {
+    return null;
+  }
+  try {
+    return JSON.parse(json) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 export function loadFavorites(): string[] {

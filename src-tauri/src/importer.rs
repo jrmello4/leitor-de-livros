@@ -771,6 +771,10 @@ mod tests {
         assert_eq!(first_publication.pages[0].name, "page2.png");
         assert_eq!(first_publication.pages[1].name, "page10.png");
         assert_eq!(
+            first_publication.source_names,
+            vec!["page2.png".to_owned(), "page10.png".to_owned()]
+        );
+        assert_eq!(
             first_publication.pages[0].source_ref,
             Some(crate::models::PageSourceRef::Image {
                 path: second_path
@@ -804,6 +808,10 @@ mod tests {
         );
         let after_restart = import_paths(&reopened, &selected).expect("reopened deduplication");
         assert_eq!(after_restart.publications[0].id, first_publication.id);
+        assert_eq!(
+            after_restart.publications[0].source_names,
+            vec!["page2.png".to_owned(), "page10.png".to_owned()]
+        );
         drop(reopened);
         fs::remove_dir_all(root).expect("cleanup test directory");
     }

@@ -71,4 +71,28 @@ describe('browser fallback storage', () => {
     expect(loadProfileStore()).toEqual(store);
     expect(saveProfileStore({ ...store, activeProfileId: 'missing' })).toBe(false);
   });
+
+  it('uses a valid legacy profile instead of discarding it when the v2 store is corrupt', () => {
+    window.localStorage.setItem('tactile-reader/profiles/v2', JSON.stringify({
+      version: 2,
+      activeProfileId: 'missing',
+      profiles: [],
+    }));
+    window.localStorage.setItem('tactile-reader/profile/v1', JSON.stringify({
+      version: 1,
+      name: 'Recovered profile',
+      direction: 'rtl',
+      mode: 'single',
+      contrast: 'standard',
+      reducedMotion: false,
+      pageTurnDuration: 420,
+      layoutZone: 'top',
+      bindings: {},
+    }));
+
+    const store = loadProfileStore();
+
+    expect(store.profiles[0]).toMatchObject({ name: 'Recovered profile', direction: 'rtl' });
+    expect(JSON.parse(window.localStorage.getItem('tactile-reader/profiles/v2') ?? '{}').version).toBe(2);
+  });
 });
