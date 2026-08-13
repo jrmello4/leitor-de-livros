@@ -243,6 +243,7 @@ async function runIntactScenario(executable, cbzPath, pdfPath, runDirectory, res
 async function main() {
   const runId = Date.now() + '-' + process.pid + '-' + randomUUID().replaceAll('-', '');
   const runDirectory = await mkdtemp(join(tmpdir(), 'tactile-reader-smoke-'));
+  installedAppHarness.registerRunRoot(runDirectory);
   const evidenceDirectory = join(evidenceRoot, runId);
   await mkdir(evidenceDirectory, { recursive: true });
   const result = {

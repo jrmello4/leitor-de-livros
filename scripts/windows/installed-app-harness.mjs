@@ -3,8 +3,12 @@ import { once } from 'node:events';
 import { createWriteStream } from 'node:fs';
 import { mkdir, readdir, rm as remove, stat } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { dirname, extname, join, relative, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
+
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 const defaultDependencies = {
   chromium,
@@ -39,6 +43,30 @@ function lifecycleError(stage, message, cause) {
     return cause;
   }
   return new InstalledAppLifecycleError(stage, message + (cause ? ': ' + errorMessage(cause) : ''), { cause });
+}
+
+function isContainedBy(root, target) {
+  const pathFromRoot = relative(root, target);
+  return pathFromRoot === '' || (!isAbsolute(pathFromRoot)
+    && pathFromRoot !== '..'
+    && !pathFromRoot.startsWith('..' + '\\')
+    && !pathFromRoot.startsWith('..' + '/'));
+}
+
+function isUnsafeRunRoot(runRoot) {
+  const userDirectory = resolve(homedir());
+  return isContainedBy(runRoot, repositoryRoot)
+    || isContainedBy(repositoryRoot, runRoot)
+    || isContainedBy(runRoot, userDirectory);
+}
+
+function registerRunRoot(runRoot, ownedRunRoots) {
+  const resolvedRunRoot = resolve(runRoot);
+  if (isUnsafeRunRoot(resolvedRunRoot)) {
+    throw new InstalledAppLifecycleError('cleanup', 'Refusing unsafe run root: ' + resolvedRunRoot);
+  }
+  ownedRunRoots.add(resolvedRunRoot);
+  return resolvedRunRoot;
 }
 
 async function recursiveFiles(directory, dependencies) {
@@ -236,15 +264,16 @@ async function launchApp(options, dependencies) {
   }
 }
 
-async function removeOwnedPath(runRoot, target, dependencies) {
+async function removeOwnedPath(runRoot, target, dependencies, ownedRunRoots) {
   const resolvedRunRoot = resolve(runRoot);
   const resolvedTarget = resolve(target);
-  const pathFromRunRoot = relative(resolvedRunRoot, resolvedTarget);
-  const outsideRunRoot = pathFromRunRoot === '..'
-    || pathFromRunRoot.startsWith('..' + '\\')
-    || pathFromRunRoot.startsWith('..' + '/')
-    || pathFromRunRoot === '';
-  if (outsideRunRoot) {
+  if (isUnsafeRunRoot(resolvedRunRoot)) {
+    throw new InstalledAppLifecycleError('cleanup', 'Refusing unsafe run root: ' + resolvedRunRoot);
+  }
+  if (!ownedRunRoots.has(resolvedRunRoot)) {
+    throw new InstalledAppLifecycleError('cleanup', 'Refusing cleanup from an unregistered run root: ' + resolvedRunRoot);
+  }
+  if (!isContainedBy(resolvedRunRoot, resolvedTarget) || resolvedRunRoot === resolvedTarget) {
     throw new InstalledAppLifecycleError('cleanup', 'Refusing to remove a path outside the owned run root: ' + resolvedTarget);
   }
   try {
@@ -256,12 +285,14 @@ async function removeOwnedPath(runRoot, target, dependencies) {
 
 export function createInstalledAppHarness(overrides = {}) {
   const dependencies = { ...defaultDependencies, ...overrides };
+  const ownedRunRoots = new Set();
   return {
     allocatePort: () => allocatePort(dependencies),
     findNewestExecutable: (root, options) => findNewestExecutable(root, options, dependencies),
     waitFor: (predicate, description, options) => waitFor(predicate, description, options, dependencies),
     installPackage: (installer, root) => installPackage(installer, root, dependencies),
     launchApp: (options) => launchApp(options, dependencies),
-    removeOwnedPath: (runRoot, target) => removeOwnedPath(runRoot, target, dependencies),
+    registerRunRoot: (runRoot) => registerRunRoot(runRoot, ownedRunRoots),
+    removeOwnedPath: (runRoot, target) => removeOwnedPath(runRoot, target, dependencies, ownedRunRoots),
   };
 }

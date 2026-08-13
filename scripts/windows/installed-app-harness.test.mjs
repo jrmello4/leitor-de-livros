@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { createInstalledAppHarness, InstalledAppLifecycleError } from './installed-app-harness.mjs';
+
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 test('finds the newest installed application executable', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'installed-app-harness-'));
@@ -52,8 +55,25 @@ test('reports the installation stage and underlying cause', async () => {
 
 test('rejects cleanup outside the owned run root', async () => {
   const harness = createInstalledAppHarness({ remove: async () => assert.fail('must not remove') });
+  harness.registerRunRoot('C:\\runs\\one');
   await assert.rejects(
     harness.removeOwnedPath('C:\\runs\\one', 'C:\\fixtures\\source.cbz'),
     (error) => error.stage === 'cleanup' && /outside/i.test(error.message),
   );
+});
+
+test('rejects repository and user directories as cleanup run roots', async () => {
+  let removeCalls = 0;
+  const harness = createInstalledAppHarness({
+    remove: async () => { removeCalls += 1; },
+  });
+
+  for (const runRoot of [repositoryRoot, homedir()]) {
+    await assert.rejects(
+      harness.removeOwnedPath(runRoot, join(runRoot, 'would-be-deleted')),
+      (error) => error.stage === 'cleanup' && /unsafe run root/i.test(error.message),
+    );
+  }
+
+  assert.equal(removeCalls, 0);
 });

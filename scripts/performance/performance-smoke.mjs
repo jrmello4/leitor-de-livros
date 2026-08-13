@@ -567,6 +567,7 @@ async function main() {
   }
   const runId = Date.now() + '-' + process.pid + '-' + randomUUID().replaceAll('-', '');
   const runDirectory = await mkdtemp(join(tmpdir(), 'tactile-reader-performance-'));
+  installedAppHarness.registerRunRoot(runDirectory);
   const evidenceDirectory = join(reportRoot, runId);
   await mkdir(evidenceDirectory, { recursive: true });
   let session;
