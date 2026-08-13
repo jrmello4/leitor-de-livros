@@ -118,4 +118,39 @@ describe('ProfilePanel focus management', () => {
     expect(host.querySelector<HTMLSelectElement>('#cache-limit')?.disabled).toBe(true);
     expect(host.querySelector<HTMLButtonElement>('[aria-label="Clear derived cache"]')?.disabled).toBe(true);
   });
+
+  it('exposes explicit save and undo controls for a profile preview', () => {
+    const onSavePreview = vi.fn();
+    const onUndoPreview = vi.fn();
+    const onExportProfiles = vi.fn();
+
+    act(() => {
+      root.render(
+        <ProfilePanel
+          profile={loadProfile()}
+          capturingAction={null}
+          onChange={vi.fn()}
+          onStartCapture={vi.fn()}
+          onReset={vi.fn()}
+          onClose={vi.fn()}
+          triggerRef={{ current: null }}
+          isPreviewing
+          onSavePreview={onSavePreview}
+          onUndoPreview={onUndoPreview}
+          onExportProfiles={onExportProfiles}
+        />,
+      );
+    });
+
+    const button = (label: string) => Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
+      .find((candidate) => candidate.textContent === label);
+    act(() => button('Save preview')?.click());
+    act(() => button('Undo preview')?.click());
+    act(() => button('Export profiles')?.click());
+
+    expect(onSavePreview).toHaveBeenCalledTimes(1);
+    expect(onUndoPreview).toHaveBeenCalledTimes(1);
+    expect(onExportProfiles).toHaveBeenCalledTimes(1);
+    expect(host.textContent).toContain('Previewing unsaved changes');
+  });
 });

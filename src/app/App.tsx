@@ -10,11 +10,15 @@ import {
   deleteProfile,
   duplicateProfile,
   getActiveProfile,
+  mergeProfileStore,
+  parseProfileTransfer,
   renameProfile,
+  serializeProfileTransfer,
   selectProfile,
   updateProfile as updateNamedProfile,
   type ProfileMutation,
   type ProfileStore,
+  type NamedReadingProfile,
 } from '../domain/profiles';
 import { defaultReaderState } from '../domain/readerState';
 import type { ActionName, Bookmark, CacheInfo, PageDescriptor, Publication, ReaderState, ReadingProfile } from '../domain/types';
@@ -79,7 +83,11 @@ const DEFAULT_CACHE_INFO: CacheInfo = {
 export function App() {
   const nativeRuntime = isNativeRuntime();
   const [profileStore, setProfileStore] = useState<ProfileStore>(() => loadProfileStore());
-  const profile = useMemo(() => getActiveProfile(profileStore), [profileStore]);
+  const [profilePreview, setProfilePreview] = useState<NamedReadingProfile | null>(null);
+  const profile = useMemo(() => {
+    const saved = getActiveProfile(profileStore);
+    return profilePreview?.id === saved.id ? profilePreview : saved;
+  }, [profilePreview, profileStore]);
   const [library, setLibrary] = useState<Publication[]>(() => initialLibrary(profile.direction));
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showProfile, setShowProfile] = useState(false);
@@ -293,6 +301,7 @@ export function App() {
       return errorMessage;
     }
     setProfileStore(mutation.store);
+    setProfilePreview(null);
     profileStoreRef.current = mutation.store;
     persistProfileStore(mutation.store);
     applyProfileZoom(getActiveProfile(mutation.store));
@@ -309,6 +318,75 @@ export function App() {
     );
     commitProfileMutation(mutation, t('app.profileUpdated'));
   }, [commitProfileMutation]);
+
+  const previewProfile = useCallback((patch: Partial<ReadingProfile>) => {
+    const savedStore = profileStoreRef.current;
+    const activeId = savedStore.activeProfileId;
+    const baseStore: ProfileStore = profilePreview?.id === activeId
+      ? {
+          ...savedStore,
+          profiles: savedStore.profiles.map((candidate) => candidate.id === activeId ? profilePreview : candidate),
+        }
+      : savedStore;
+    const mutation = updateNamedProfile(baseStore, activeId, patch);
+    if (!mutation.ok) {
+      const errorMessage = t(mutation.error);
+      setDiagnostic(errorMessage);
+      return errorMessage;
+    }
+    const nextPreview = getActiveProfile(mutation.store);
+    setProfilePreview(nextPreview);
+    applyProfileZoom(nextPreview);
+    setDiagnostic(undefined);
+    return undefined;
+  }, [applyProfileZoom, profilePreview]);
+
+  const saveProfilePreview = useCallback(() => {
+    if (!profilePreview || profilePreview.id !== profileStoreRef.current.activeProfileId) {
+      return;
+    }
+    commitProfileMutation(
+      updateNamedProfile(profileStoreRef.current, profilePreview.id, profilePreview),
+      t('app.profilePreviewSaved'),
+    );
+  }, [commitProfileMutation, profilePreview]);
+
+  const undoProfilePreview = useCallback(() => {
+    if (!profilePreview) {
+      return;
+    }
+    setProfilePreview(null);
+    applyProfileZoom(getActiveProfile(profileStoreRef.current));
+    setAnnouncement(t('app.profilePreviewUndone'));
+  }, [applyProfileZoom, profilePreview]);
+
+  const importProfiles = useCallback((text: string) => {
+    const parsed = parseProfileTransfer(text);
+    if (!parsed.ok) {
+      const errorMessage = t(parsed.error);
+      setDiagnostic(errorMessage);
+      return errorMessage;
+    }
+    return commitProfileMutation(
+      mergeProfileStore(profileStoreRef.current, parsed.value),
+      t('app.profileImported'),
+    );
+  }, [commitProfileMutation]);
+
+  const exportProfiles = useCallback(() => {
+    try {
+      const blob = new Blob([serializeProfileTransfer(profileStoreRef.current)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'tactile-reading-profiles.json';
+      link.click();
+      URL.revokeObjectURL(url);
+      setAnnouncement(t('app.profileExported'));
+    } catch {
+      setDiagnostic(t('app.profileTransferError'));
+    }
+  }, []);
 
   const selectReadingProfile = useCallback((profileId: string) => (
     commitProfileMutation(
@@ -974,7 +1052,7 @@ export function App() {
             profiles={profileStore.profiles}
             activeProfileId={profileStore.activeProfileId}
             capturingAction={capturingAction}
-            onChange={updateProfile}
+            onChange={previewProfile}
             onSelectProfile={selectReadingProfile}
             onCreateProfile={createReadingProfile}
             onDuplicateProfile={duplicateReadingProfile}
@@ -986,6 +1064,11 @@ export function App() {
             onSetCacheLimit={updateCacheLimit}
             onClearCache={clearCache}
             cacheAvailable={nativeRuntime}
+            isPreviewing={profilePreview?.id === profileStore.activeProfileId}
+            onSavePreview={saveProfilePreview}
+            onUndoPreview={undoProfilePreview}
+            onImportProfiles={importProfiles}
+            onExportProfiles={exportProfiles}
             triggerRef={settingsTriggerRef}
             onClose={() => {
               setCapturingAction(null);
