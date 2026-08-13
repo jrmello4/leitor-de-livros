@@ -18,6 +18,7 @@ export default defineConfig({
       'tests/visual/**/*.spec.ts',
       'scripts/release/**',
       'scripts/performance/**',
+      'scripts/windows/**',
     ],
   },
 });
