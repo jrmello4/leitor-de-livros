@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { mostRecentPublication, visiblePublications as getVisiblePublications, type LibrarySort } from '../domain/library';
+import { mostRecentPublication, safeSourceName, visiblePublications as getVisiblePublications, type LibrarySort } from '../domain/library';
 import type { Publication } from '../domain/types';
 import { t } from '../i18n/catalog';
 
@@ -273,7 +273,7 @@ export function LibraryView({
               </button>
               <div className="publication-meta">
                 <div>
-                  <p className="eyebrow">{publication.sourceLabel}</p>
+                  <p className="eyebrow">{safeSourceName(publication.sourceLabel)}</p>
                   <h2>{publication.title}</h2>
                 </div>
                 <div className="publication-actions">
