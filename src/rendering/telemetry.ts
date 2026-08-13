@@ -1,3 +1,4 @@
+import { t } from '../i18n/catalog';
 import type { RenderQuality, RendererStatus } from './contracts';
 
 export type RendererStatusPhase = 'ready' | 'fallback' | 'recovering';
@@ -71,11 +72,12 @@ export function rendererStatusMessage(status: RendererStatus): RendererStatusMes
     : status.fallbackReason ? 'fallback' : 'ready';
 
   const message = phase === 'ready'
-    ? 'Leitura pronta.'
+    ? t('render.ready')
     : phase === 'fallback'
-      ? 'O modo compatível está ativo. A leitura continua disponível.'
-      : 'Preparando a leitura. O conteúdo continua disponível.';
+      ? t('render.fallback')
+      : t('render.recovering');
 
+  // Keep backend/quality/fallback data untranslated and copyable for support.
   const diagnosticParts = [
     `backend=${status.backend}`,
     `quality=${status.quality}`,

@@ -1,15 +1,5 @@
 import type { ActionName, BindingMap } from './types';
 
-export const ACTION_LABELS: Record<ActionName, string> = {
-  next_page: 'Next page',
-  previous_page: 'Previous page',
-  toggle_library: 'Open library',
-  toggle_fullscreen: 'Fullscreen',
-  toggle_settings: 'Reader settings',
-  toggle_spread: 'Toggle spread',
-  cancel: 'Back / cancel',
-};
-
 export const DEFAULT_BINDINGS: BindingMap = {
   next_page: ['ArrowRight', 'PageDown'],
   previous_page: ['ArrowLeft', 'PageUp'],

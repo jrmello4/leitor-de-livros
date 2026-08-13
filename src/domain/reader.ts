@@ -101,7 +101,7 @@ export function visiblePageIndexes(
 
 export function pageCounter(currentPage: number, pageCount: number): string {
   if (pageCount === 0) {
-    return 'No pages';
+    return '00 / 00';
   }
 
   return `${Math.min(currentPage + 1, pageCount).toString().padStart(2, '0')} / ${pageCount

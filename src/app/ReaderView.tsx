@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent, RefObject, WheelEvent } from 'react';
+import { t } from '../i18n/catalog';
 import { clamp, clampPan, clampZoomScale, navigationAvailability, pageCounter, visiblePageIndexes } from '../domain/reader';
 import { defaultReaderState, normalizeReaderState } from '../domain/readerState';
 import type { Bookmark, PageDescriptor, Publication, ReaderState, ReadingProfile, ZoomMode } from '../domain/types';
@@ -45,8 +46,8 @@ function pageAspect(page?: PageDescriptor): number {
 function PageSheet({ page, className = '' }: { page: PageDescriptor; className?: string }) {
   const aspectRatio = page.width > 0 && page.height > 0 ? `${page.width} / ${page.height}` : undefined;
   return (
-    <article className={`page-sheet ${className}`} aria-label={`Page ${page.index + 1}`} style={{ aspectRatio }}>
-      <img src={page.src} alt={`${page.name}, page ${page.index + 1}`} draggable={false} />
+    <article className={`page-sheet ${className}`} aria-label={t('reader.page', { page: page.index + 1 })} style={{ aspectRatio }}>
+      <img src={page.src} alt={t('navigator.pageAlt', { name: page.name, page: page.index + 1 })} draggable={false} />
       <span className="page-folio">{String(page.index + 1).padStart(2, '0')}</span>
     </article>
   );
@@ -89,6 +90,9 @@ export function ReaderView({
   const visibleIndexes = visiblePageIndexes(publication.currentPage, publication.pages, profile.mode, profile.direction);
   const visiblePages = visibleIndexes.map((index) => publication.pages[index]).filter(Boolean);
   const currentPage = publication.pages[publication.currentPage];
+  const readerCounter = publication.pages.length === 0
+    ? t('navigator.noPages')
+    : pageCounter(publication.currentPage, publication.pages.length);
   const preloadPages = [publication.currentPage - 1, publication.currentPage, publication.currentPage + 1]
     .map((index) => publication.pages[index])
     .filter((page): page is PageDescriptor => Boolean(page));
@@ -406,26 +410,27 @@ export function ReaderView({
   return (
     <main
       className={`reader-view reader-view--${profile.direction} ${profile.reducedMotion ? 'reader-view--reduced-motion' : ''}`}
+      data-layout-zone={profile.layoutZone}
     >
       <header className="reader-topbar">
         <div className="reader-topbar-start">
-          <button className="reader-back" onClick={onBack} aria-label="Back to library">← <span>Library</span></button>
+          <button className="reader-back" onClick={onBack} aria-label={t('reader.back')}>← <span>{t('reader.library')}</span></button>
           <span className="reader-divider" aria-hidden="true" />
           <div className="reader-title">
-            <span className="eyebrow">NOW READING</span>
+            <span className="eyebrow">{t('reader.nowReading')}</span>
             <strong>{publication.title}</strong>
           </div>
         </div>
         <div className="reader-topbar-end">
-          <span className="reader-counter">{pageCounter(publication.currentPage, publication.pages.length)}</span>
+          <span className="reader-counter">{readerCounter}</span>
           <button
             className={`reader-tool reader-flow-toggle ${flowVisible ? 'reader-flow-toggle--active' : ''}`}
             type="button"
             onClick={() => setFlowVisible((current) => !current)}
             aria-pressed={flowVisible}
-            aria-label={flowVisible ? 'Hide panel guidance' : 'Show panel guidance'}
+            aria-label={flowVisible ? t('reader.hideGuidance') : t('reader.showGuidance')}
           >
-            <span className="reader-tool-label">Flow</span>
+            <span className="reader-tool-label">{t('reader.flow')}</span>
             <span className="reader-tool-symbol" aria-hidden="true">↘</span>
           </button>
           <button
@@ -433,10 +438,10 @@ export function ReaderView({
             type="button"
             onClick={() => setNavigatorVisible((current) => !current)}
             aria-pressed={navigatorVisible}
-            aria-label={navigatorVisible ? 'Hide page navigator' : 'Show page navigator'}
+            aria-label={navigatorVisible ? t('reader.hideNavigator') : t('reader.showNavigator')}
             data-reader-control
           >
-            <span className="reader-tool-label">Pages</span>
+            <span className="reader-tool-label">{t('reader.pages')}</span>
             <span className="reader-tool-symbol" aria-hidden="true">▦</span>
           </button>
           <button
@@ -444,18 +449,18 @@ export function ReaderView({
             type="button"
             onClick={() => currentPage && onToggleBookmark(currentPage.id)}
             aria-pressed={currentBookmarked}
-            aria-label={currentBookmarked ? 'Remove bookmark from current page' : 'Bookmark current page'}
+            aria-label={currentBookmarked ? t('reader.removeCurrentBookmark') : t('reader.bookmarkCurrent')}
             data-reader-control
           >
-            <span className="reader-tool-label">Bookmark</span>
+            <span className="reader-tool-label">{t('reader.bookmark')}</span>
             <span className="reader-tool-symbol" aria-hidden="true">{currentBookmarked ? '◆' : '◇'}</span>
           </button>
-          <button className="reader-tool" onClick={onToggleFullscreen} aria-label="Fullscreen">
-            <span className="reader-tool-label">Fullscreen</span>
+          <button className="reader-tool" onClick={onToggleFullscreen} aria-label={t('reader.fullscreen')}>
+            <span className="reader-tool-label">{t('reader.fullscreen')}</span>
             <span className="reader-tool-symbol" aria-hidden="true">↗</span>
           </button>
-          <button ref={settingsTriggerRef} className="reader-tool" onClick={onToggleSettings} aria-label="Settings">
-            <span className="reader-tool-label">Settings</span>
+          <button ref={settingsTriggerRef} className="reader-tool" onClick={onToggleSettings} aria-label={t('reader.settings')}>
+            <span className="reader-tool-label">{t('reader.settings')}</span>
             <span className="reader-tool-symbol" aria-hidden="true">⌘</span>
           </button>
         </div>
@@ -485,10 +490,10 @@ export function ReaderView({
           }
         }}
         onWheel={onWheel}
-        aria-label="Reading canvas. Drag the lower corner to turn the page."
+        aria-label={t('reader.canvas')}
       >
-        <div className="stage-caption stage-caption--left">{profile.direction === 'rtl' ? 'RIGHT TO LEFT' : 'LEFT TO RIGHT'}</div>
-        <div className="stage-caption stage-caption--right">{profile.mode === 'spread' ? 'SPREAD VIEW' : 'SINGLE PAGE'}</div>
+        <div className="stage-caption stage-caption--left">{profile.direction === 'rtl' ? t('reader.rightToLeft') : t('reader.leftToRight')}</div>
+        <div className="stage-caption stage-caption--right">{profile.mode === 'spread' ? t('reader.spreadView') : t('reader.singlePage')}</div>
 
         <ZoomControls
           mode={safeReaderState.zoomMode}
@@ -506,7 +511,7 @@ export function ReaderView({
           <div className="reader-content-transform" style={contentTransformStyle} data-reader-content>
             <ReaderSurface
               frame={rendererFrame}
-              ariaLabel={`${pageCounter(publication.currentPage, publication.pages.length)} page ready for reading`}
+              ariaLabel={t('reader.pageReady', { counter: readerCounter })}
               onStatus={setRendererStatus}
               interactionActive={turnPhase !== 'idle'}
               staticContent={(
@@ -537,12 +542,12 @@ export function ReaderView({
           </div>
           <div className="corner-hint" style={turnHintStyle} aria-hidden="true">
             <span className="corner-line" />
-            <span>DRAG A CORNER</span>
+          <span>{t('reader.dragCorner')}</span>
           </div>
         </div>
         <p className="stage-note">
           {profile.reducedMotion
-            ? 'Reduced motion is on · use the controls below'
+            ? t('reader.reducedMotion')
             : rendererAnnouncement.message}
         </p>
         <p
@@ -558,18 +563,18 @@ export function ReaderView({
           {rendererAnnouncement.diagnostic}
         </p>
         <details className="renderer-diagnostic-panel">
-          <summary>Renderer diagnostics</summary>
+          <summary>{t('reader.rendererDiagnostics')}</summary>
           <code>{rendererAnnouncement.diagnostic}</code>
         </details>
       </section>
 
       <footer className="reader-controls">
-        <button className="nav-button" onClick={onPrevious} disabled={!canPrevious} aria-label="Previous page">← <span>Previous</span></button>
-        <div className="reader-progress" aria-label={`${Math.round(publication.progress * 100)} percent read`}>
+        <button className="nav-button" onClick={onPrevious} disabled={!canPrevious} aria-label={t('reader.previousAria')}>← <span>{t('reader.previous')}</span></button>
+        <div className="reader-progress" aria-label={t('reader.percentRead', { percent: Math.round(publication.progress * 100) })}>
           <div className="progress-track"><span style={{ width: `${publication.progress * 100}%` }} /></div>
-          <span>{Math.round(publication.progress * 100)}% complete</span>
+          <span>{t('reader.percentComplete', { percent: Math.round(publication.progress * 100) })}</span>
         </div>
-        <button className="nav-button nav-button--forward" onClick={onNext} disabled={!canNext} aria-label="Next page"><span>Next</span> →</button>
+        <button className="nav-button nav-button--forward" onClick={onNext} disabled={!canNext} aria-label={t('reader.nextAria')}><span>{t('reader.next')}</span> →</button>
       </footer>
 
       <p className="reader-announcement" aria-hidden="true">{announcement}</p>

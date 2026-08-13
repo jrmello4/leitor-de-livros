@@ -1,15 +1,16 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { mostRecentPublication, visiblePublications as getVisiblePublications } from '../domain/library';
+import { mostRecentPublication, visiblePublications as getVisiblePublications, type LibrarySort } from '../domain/library';
 import type { Publication } from '../domain/types';
+import { t } from '../i18n/catalog';
 
 interface LibraryViewProps {
   publications: Publication[];
   query: string;
-  sort: 'recent' | 'title';
+  sort: LibrarySort;
   diagnostic?: string;
   isImporting: boolean;
   onQueryChange: (query: string) => void;
-  onSortChange: (sort: 'recent' | 'title') => void;
+  onSortChange: (sort: LibrarySort) => void;
   onOpen: (publication: Publication) => void;
   onImport: (files: File[]) => void;
   isNativeRuntime: boolean;
@@ -24,7 +25,7 @@ interface LibraryViewProps {
 }
 
 function formatProgress(progress: number): string {
-  return `${Math.round(progress * 100)}% read`;
+  return t('library.progress', { percent: Math.round(progress * 100) });
 }
 
 export function LibraryView({
@@ -149,10 +150,10 @@ export function LibraryView({
           libraryMainRef.current?.focus();
           setPendingDelete(null);
         })
-        .catch(() => setDeleteError('The publication could not be removed. Nothing was changed.'))
+        .catch(() => setDeleteError(t('library.deleteError')))
         .finally(() => setIsDeleting(false));
     } catch {
-      setDeleteError('The publication could not be removed. Nothing was changed.');
+      setDeleteError(t('library.deleteError'));
       setIsDeleting(false);
     }
   };
@@ -160,53 +161,52 @@ export function LibraryView({
   return (
     <main ref={libraryMainRef} className="library-view" tabIndex={-1} onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
       <header className="library-header">
-        <div className="brand-lockup" aria-label="Tactile Reader home">
+        <div className="brand-lockup" aria-label={t('library.brand')}>
           <span className="brand-glyph" aria-hidden="true">T</span>
           <span>
-            <strong>TACTILE</strong>
-            <small>local reader / edition 01</small>
+            <strong>{t('library.tactile')}</strong>
+            <small>{t('library.localEdition')}</small>
           </span>
         </div>
         <div className="header-actions">
-          <span className="privacy-chip"><span className="status-dot" /> device only</span>
-          <button ref={settingsTriggerRef} className="quiet-button" onClick={onOpenSettings}>Reader settings</button>
+          <span className="privacy-chip"><span className="status-dot" /> {t('library.deviceOnly')}</span>
+          <button ref={settingsTriggerRef} className="quiet-button" onClick={onOpenSettings}>{t('library.settings')}</button>
         </div>
       </header>
 
       {continuePublication && (
-        <section className="continue-card" aria-label="Continue reading">
+        <section className="continue-card" aria-label={t('library.continueReading')}>
           <div>
-            <span className="eyebrow">PICK UP WHERE YOU LEFT OFF</span>
+            <span className="eyebrow">{t('library.pickUp')}</span>
             <strong className="continue-title">{continuePublication.title}</strong>
-            <p>{formatProgress(continuePublication.progress)} · {continuePublication.pages.length} pages</p>
+            <p>{formatProgress(continuePublication.progress)} · {t('library.pages', { count: continuePublication.pages.length })}</p>
           </div>
           <button className="continue-button" type="button" onClick={() => onOpen(continuePublication)}>
-            Continue <span aria-hidden="true">↗</span>
+            {t('library.continue')} <span aria-hidden="true">↗</span>
           </button>
         </section>
       )}
 
       <section className="library-intro">
         <div className="intro-copy">
-          <p className="eyebrow">PAPER ATELIER / YOUR LIBRARY</p>
-          <h1>Keep the page<br /><em>in your hands.</em></h1>
+          <p className="eyebrow">{t('library.paperAtelier')}</p>
+          <h1>{t('library.heading')}<br /><em>{t('library.headingEmphasis')}</em></h1>
           <p className="intro-description">
-            A quiet local shelf for comics and illustrated publications. Import a file, choose your rhythm, and let
-            the interface recede when the reading begins.
+            {t('library.description')}
           </p>
           <div className="intro-actions">
             {isNativeRuntime ? (
               <>
                 <button className="primary-button" disabled={isImporting} onClick={onImportNative}>
-                  {isImporting ? 'Reading files...' : 'Import publication'}
+                  {isImporting ? t('library.readingFiles') : t('library.importPublication')}
                 </button>
                 <button className="secondary-button" disabled={isImporting} onClick={onImportFolder}>
-                  Import folder
+                  {t('library.importFolder')}
                 </button>
               </>
             ) : (
               <label className="primary-button">
-                {isImporting ? 'Reading file...' : 'Import publication'}
+                {isImporting ? t('library.readingFile') : t('library.importPublication')}
                 <input
                   type="file"
                   accept=".cbz,.cbr,.pdf,image/*"
@@ -217,34 +217,35 @@ export function LibraryView({
               </label>
             )}
             <span className="shortcut-note">
-              {isNativeRuntime ? 'Choose files or a folder; originals remain read-only' : 'Drop images or a CBZ anywhere on this shelf'}
+              {isNativeRuntime ? t('library.nativeShortcut') : t('library.browserShortcut')}
             </span>
           </div>
         </div>
 
-        <aside className="intro-aside" aria-label="Reader principles">
+        <aside className="intro-aside" aria-label={t('library.principles')}>
           <span className="aside-index">01—03</span>
-          <p>Every source stays read-only. Derived pages and preferences live beside the reader, never in your files.</p>
+          <p>{t('library.principleCopy')}</p>
           <div className="aside-rule" />
-          <span className="aside-caption">BUILT FOR THE READING MOMENT</span>
+          <span className="aside-caption">{t('library.builtForMoment')}</span>
         </aside>
       </section>
 
-      <section className="library-toolbar" aria-label="Library tools">
+      <section className="library-toolbar" aria-label={t('library.tools')}>
         <div className="section-heading">
-          <span className="eyebrow">THE SHELF</span>
-          <strong>{visiblePublications.length.toString().padStart(2, '0')} publications</strong>
+          <span className="eyebrow">{t('library.shelf')}</span>
+          <strong>{t('library.publications', { count: visiblePublications.length })}</strong>
         </div>
         <div className="toolbar-controls">
           <label className="search-field">
             <span aria-hidden="true">⌕</span>
-            <input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Search your shelf" />
+            <input aria-label={t('library.searchAria')} value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder={t('library.search')} />
           </label>
           <label className="sort-field">
-            <span>Sort</span>
-            <select value={sort} onChange={(event) => onSortChange(event.target.value as 'recent' | 'title')}>
-              <option value="recent">Recent</option>
-              <option value="title">Title</option>
+            <span>{t('library.sort')}</span>
+            <select aria-label={t('library.sortAria')} value={sort} onChange={(event) => onSortChange(event.target.value as LibrarySort)}>
+              <option value="recent">{t('library.sortRecent')}</option>
+              <option value="title">{t('library.sortTitle')}</option>
+              <option value="added">{t('library.sortAdded')}</option>
             </select>
           </label>
           <label className="favorite-filter" htmlFor="favorite-only">
@@ -254,7 +255,7 @@ export function LibraryView({
               checked={favoriteOnly}
               onChange={(event) => onFavoriteOnlyChange(event.target.checked)}
             />
-            <span>Favorites only</span>
+            <span>{t('library.favoriteOnly')}</span>
           </label>
         </div>
       </section>
@@ -262,13 +263,13 @@ export function LibraryView({
       {diagnostic && <div className="diagnostic-banner" role="alert">{diagnostic}</div>}
 
       {visiblePublications.length > 0 ? (
-        <section className="publication-grid" aria-label="Publications">
+        <section className="publication-grid" aria-label={t('library.publicationsAria')}>
           {visiblePublications.map((publication) => (
             <article className="publication-card" key={publication.id}>
-              <button className="cover-button" type="button" onClick={() => onOpen(publication)} aria-label={`Open ${publication.title}`}>
+              <button className="cover-button" type="button" onClick={() => onOpen(publication)} aria-label={t('library.open', { title: publication.title })}>
                 <img src={publication.pages[0]?.src} alt="" />
                 <span className="cover-edge" aria-hidden="true" />
-                <span className="cover-stamp">{publication.format === 'demo' ? 'STUDY' : publication.format.toUpperCase()}</span>
+                <span className="cover-stamp">{publication.format === 'demo' ? t('library.study') : publication.format.toUpperCase()}</span>
               </button>
               <div className="publication-meta">
                 <div>
@@ -280,30 +281,30 @@ export function LibraryView({
                     className={publication.isFavorite ? 'favorite-button favorite-button--active' : 'favorite-button'}
                     type="button"
                     aria-pressed={publication.isFavorite}
-                    aria-label={`${publication.isFavorite ? 'Remove' : 'Add'} ${publication.title} to favorites`}
+                    aria-label={publication.isFavorite ? t('library.removeFavorite', { title: publication.title }) : t('library.addFavorite', { title: publication.title })}
                     onClick={() => void onToggleFavorite(publication)}
                   >
                     <span aria-hidden="true">{publication.isFavorite ? '★' : '☆'}</span>
                   </button>
-                  <button className="open-link" type="button" onClick={() => onOpen(publication)}>Open <span aria-hidden="true">↗</span></button>
+                  <button className="open-link" type="button" onClick={() => onOpen(publication)}>{t('library.openLabel')} <span aria-hidden="true">↗</span></button>
                 </div>
               </div>
               <div className="progress-line" aria-label={formatProgress(publication.progress)}>
                 <span style={{ width: `${publication.progress * 100}%` }} />
               </div>
               <div className="card-footer">
-                <span>{publication.pages.length} pages</span>
+                <span>{t('library.pages', { count: publication.pages.length })}</span>
                 <span>{formatProgress(publication.progress)}</span>
                 <button
                   className="delete-link"
                   type="button"
-                  aria-label={`Remove ${publication.title} from library`}
+                  aria-label={t('library.removeAria', { title: publication.title })}
                   onClick={(event) => {
                     deleteTriggerRef.current = event.currentTarget;
                     setPendingDelete(publication);
                   }}
                 >
-                  Remove
+                  {t('library.remove')}
                 </button>
               </div>
             </article>
@@ -312,16 +313,16 @@ export function LibraryView({
       ) : (
         <section className="empty-shelf">
           <span className="empty-mark" aria-hidden="true">∅</span>
-          <h2>No publication matches that search.</h2>
+          <h2>{t('library.emptyTitle')}</h2>
           <p>{isNativeRuntime
-            ? 'Clear the search or use Import publication to choose a supported file.'
-            : 'Clear the search or drop a supported image set/CBZ onto the shelf.'}</p>
+            ? t('library.emptyNative')
+            : t('library.emptyBrowser')}</p>
         </section>
       )}
 
       <footer className="library-footer">
-        <span>TACTILE READER / LOCAL-FIRST WINDOWS EDITION</span>
-        <span>60 FPS TARGET · LTR / RTL · REDUCED MOTION</span>
+        <span>{t('library.footerEdition')}</span>
+        <span>{t('library.footerFeatures')}</span>
       </footer>
 
       {pendingDelete && (
@@ -333,10 +334,10 @@ export function LibraryView({
             aria-labelledby="remove-publication-title"
             aria-describedby="remove-publication-copy"
           >
-            <span className="eyebrow">LOCAL READER DATA</span>
-            <h2 id="remove-publication-title">Remove {pendingDelete.title}?</h2>
+            <span className="eyebrow">{t('library.localData')}</span>
+            <h2 id="remove-publication-title">{t('library.removeQuestion', { title: pendingDelete.title })}</h2>
             <p id="remove-publication-copy">
-              This removes the reader copy, progress, bookmarks, and derived pages only. Your original file will be preserved.
+              {t('library.removeCopy')}
             </p>
             {deleteError && <p className="dialog-error" role="alert">{deleteError}</p>}
             <div className="dialog-actions">
@@ -345,23 +346,23 @@ export function LibraryView({
                 className="secondary-button"
                 type="button"
                 disabled={isDeleting}
-                aria-label="Keep publication"
+                aria-label={t('library.keepPublication')}
                 onClick={(event) => {
                   event.currentTarget.blur();
                   restoreTriggerOnCloseRef.current = true;
                   setPendingDelete(null);
                 }}
               >
-                Keep publication
+                {t('library.keepPublication')}
               </button>
               <button
                 className="primary-button"
                 type="button"
                 disabled={isDeleting}
-                aria-label={`Confirm remove ${pendingDelete.title}`}
+                aria-label={t('library.removeConfirm', { title: pendingDelete.title })}
                 onClick={confirmDelete}
               >
-                {isDeleting ? 'Removing...' : 'Remove from library'}
+                {isDeleting ? t('library.removing') : t('library.removeFromLibrary')}
               </button>
             </div>
           </section>

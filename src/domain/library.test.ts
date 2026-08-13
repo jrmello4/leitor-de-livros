@@ -71,6 +71,57 @@ describe('library view contracts', () => {
     expect(mostRecentPublication(titleSorted)?.id).toBe('newer');
     expect(mostRecentPublication([])).toBeUndefined();
   });
+
+  it('matches safe source filenames without matching an absolute local path', () => {
+    const filenameOnly = {
+      ...publications[0],
+      id: 'filename-only',
+      title: 'Untitled',
+      sourceLabel: 'chapter-07.cbz',
+      sourceNames: ['chapter-07.cbz'],
+    };
+
+    expect(visiblePublications([filenameOnly], 'chapter-07', 'recent').map((publication) => publication.id))
+      .toEqual(['filename-only']);
+    expect(visiblePublications([filenameOnly], 'C:\\private\\chapter-07.cbz', 'recent')).toEqual([]);
+    expect(visiblePublications([filenameOnly], 'missing', 'recent')).toEqual([]);
+  });
+
+  it('sorts by recent, title, and added date with deterministic tie breakers', () => {
+    const tied = [
+      {
+        ...publications[0],
+        id: 'b',
+        title: 'Same title',
+        sourceLabel: 'same.cbz',
+        addedAt: '2026-08-12T08:00:00.000Z',
+        updatedAt: '2026-08-12T08:00:00.000Z',
+      },
+      {
+        ...publications[1],
+        id: 'a',
+        title: 'Same title',
+        sourceLabel: 'same.cbz',
+        addedAt: '2026-08-12T08:00:00.000Z',
+        updatedAt: '2026-08-12T08:00:00.000Z',
+      },
+      {
+        ...publications[0],
+        id: 'older-added',
+        title: 'Earlier',
+        sourceLabel: 'earlier.cbz',
+        addedAt: '2026-08-10T08:00:00.000Z',
+        updatedAt: '2026-08-13T08:00:00.000Z',
+      },
+    ];
+
+    expect(visiblePublications(tied, '', 'recent').map((publication) => publication.id))
+      .toEqual(['older-added', 'a', 'b']);
+    expect(visiblePublications(tied, '', 'title').map((publication) => publication.id))
+      .toEqual(['older-added', 'a', 'b']);
+    expect(visiblePublications(tied, '', 'added').map((publication) => publication.id))
+      .toEqual(['a', 'b', 'older-added']);
+  });
 });
 
 const pagesForBookmarks = [

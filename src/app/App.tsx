@@ -1,10 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createDemoPublication } from '../data/demo';
 import { canRunActionWhileSettingsOpen, InputMap } from '../domain/input';
-import { calculateProgress, movePage, clamp } from '../domain/reader';
-import { nextBookmark } from '../domain/library';
+import { createPageSelectionCoordinator, selectLatestPage, type PageSelectionRequest } from '../domain/pageSelection';
+import { calculateProgress, movePage, clamp, visiblePageIndexes } from '../domain/reader';
+import { nextBookmark, type LibrarySort } from '../domain/library';
+import {
+  createDefaultProfile,
+  createProfile,
+  deleteProfile,
+  duplicateProfile,
+  getActiveProfile,
+  renameProfile,
+  selectProfile,
+  updateProfile as updateNamedProfile,
+  type ProfileMutation,
+  type ProfileStore,
+} from '../domain/profiles';
 import { defaultReaderState } from '../domain/readerState';
-import type { ActionName, Bookmark, CacheInfo, Publication, ReaderState, ReadingProfile } from '../domain/types';
+import type { ActionName, Bookmark, CacheInfo, PageDescriptor, Publication, ReaderState, ReadingProfile } from '../domain/types';
+import { actionLabel, t } from '../i18n/catalog';
 import { importFiles } from '../services/importers';
 import {
   chooseNativeFiles,
@@ -12,8 +26,8 @@ import {
   importNativePaths,
   isNativeRuntime,
   listNativePublications,
-  loadNativeProfile,
-  saveNativeProfile,
+  loadNativeProfileStore,
+  saveNativeProfileStore,
   saveNativeProgress,
   clearNativeCache,
   deleteNativePublication,
@@ -29,7 +43,13 @@ import {
   saveReaderStateForPublication,
   toggleFavoriteForPublication,
 } from '../services/readerState';
-import { hasStoredProfile, loadFavorites, loadProfile, loadProgress, resetProfile, saveProfile, saveProgress } from '../services/storage';
+import {
+  loadFavorites,
+  loadProfileStore,
+  loadProgress,
+  saveProfileStore,
+  saveProgress,
+} from '../services/storage';
 import { LibraryView } from './LibraryView';
 import { ProfilePanel } from './ProfilePanel';
 import { ReaderView } from './ReaderView';
@@ -43,6 +63,19 @@ function initialLibrary(direction: ReadingProfile['direction']): Publication[] {
   return [demo];
 }
 
+function activeWorkingSetPageIds(publication: Publication, profile: ReadingProfile): string[] {
+  const indexes = new Set([
+    ...visiblePageIndexes(publication.currentPage, publication.pages, profile.mode, profile.direction),
+    publication.currentPage - 1,
+    publication.currentPage,
+    publication.currentPage + 1,
+  ]);
+  return [...indexes]
+    .filter((index) => index >= 0 && index < publication.pages.length)
+    .map((index) => publication.pages[index]?.id)
+    .filter((id): id is string => Boolean(id));
+}
+
 const DEFAULT_CACHE_INFO: CacheInfo = {
   usedBytes: 0,
   maxBytes: 2 * 1024 * 1024 * 1024,
@@ -51,35 +84,42 @@ const DEFAULT_CACHE_INFO: CacheInfo = {
 
 export function App() {
   const nativeRuntime = isNativeRuntime();
-  const [profile, setProfile] = useState<ReadingProfile>(() => loadProfile());
+  const [profileStore, setProfileStore] = useState<ProfileStore>(() => loadProfileStore());
+  const profile = useMemo(() => getActiveProfile(profileStore), [profileStore]);
   const [library, setLibrary] = useState<Publication[]>(() => initialLibrary(profile.direction));
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showProfile, setShowProfile] = useState(false);
   const [capturingAction, setCapturingAction] = useState<ActionName | null>(null);
   const [query, setQuery] = useState('');
-  const [sort, setSort] = useState<'recent' | 'title'>('recent');
+  const [sort, setSort] = useState<LibrarySort>('recent');
   const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [bookmarks, setBookmarks] = useState<Record<string, Bookmark[]>>({});
   const [readerStates, setReaderStates] = useState<Record<string, ReaderState>>({});
   const [cacheInfo, setCacheInfo] = useState<CacheInfo>(DEFAULT_CACHE_INFO);
   const [isImporting, setIsImporting] = useState(false);
   const [diagnostic, setDiagnostic] = useState<string | undefined>();
-  const [announcement, setAnnouncement] = useState('Library ready.');
+  const [announcement, setAnnouncement] = useState(() => t('app.libraryReady'));
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
   const metadataGenerationRef = useRef(0);
   const favoriteInFlightRef = useRef(new Set<string>());
-  const pageSelectionGenerationRef = useRef(0);
+  const pageSelectionCoordinatorRef = useRef(createPageSelectionCoordinator());
+  const profileStoreRef = useRef(profileStore);
+  profileStoreRef.current = profileStore;
 
   const activePublication = library.find((publication) => publication.id === activeId);
   const activePublicationIdRef = useRef<string | null>(activePublication?.id ?? null);
   activePublicationIdRef.current = activePublication?.id ?? null;
+  const activeIdRef = useRef<string | null>(activeId);
+  activeIdRef.current = activeId;
+  const libraryRef = useRef(library);
+  libraryRef.current = library;
   const inputMap = useMemo(() => new InputMap(profile.bindings), [profile.bindings]);
 
   const refreshCacheInfo = useCallback(async () => {
     try {
       setCacheInfo(await getNativeCacheInfo());
     } catch {
-      setDiagnostic('Cache usage could not be read. Your original files were not modified.');
+      setDiagnostic(t('app.cacheUsageError'));
     }
   }, []);
 
@@ -101,7 +141,7 @@ export function App() {
       setReaderStates(Object.fromEntries(metadata.filter((entry) => publicationIds.has(entry.id)).map((entry) => [entry.id, entry.readerState])));
     } catch {
       if (generation === metadataGenerationRef.current) {
-        setDiagnostic('Reader metadata could not be restored. Reading can continue in memory.');
+        setDiagnostic(t('app.metadataError'));
       }
     }
   }, []);
@@ -110,11 +150,18 @@ export function App() {
     const initial = await listNativePublications(direction);
     let incomplete = false;
     const activePageId = activePublication?.pages[activePublication.currentPage]?.id;
+    const activeProtectedPageIds = activePublication
+      ? activeWorkingSetPageIds(activePublication, profile)
+      : [];
     for (const publication of initial) {
       const pageIds = new Set([
         publication.pages[publication.currentPage]?.id,
         publication.pages.find((page) => page.id === publication.coverPageId)?.id,
+        ...(publication.id === activePublication?.id ? activeProtectedPageIds : []),
       ].filter((pageId): pageId is string => Boolean(pageId)));
+      const protectedPageIds = publication.id === activePublication?.id
+        ? [...new Set([...pageIds, ...activeProtectedPageIds])]
+        : [...pageIds];
       for (const pageId of pageIds) {
         // Keep the page currently shown last so an LRU eviction cannot blank
         // the reader while the cache is being rebuilt.
@@ -122,7 +169,7 @@ export function App() {
           continue;
         }
         try {
-          const ensured = await ensureNativePage(publication.id, pageId);
+          const ensured = await ensureNativePage(publication.id, pageId, protectedPageIds);
           if (!ensured) {
             incomplete = true;
           }
@@ -135,7 +182,7 @@ export function App() {
     }
     if (activePublication && activePageId) {
       try {
-        const ensured = await ensureNativePage(activePublication.id, activePageId);
+        const ensured = await ensureNativePage(activePublication.id, activePageId, activeProtectedPageIds);
         if (!ensured) {
           incomplete = true;
         }
@@ -165,7 +212,7 @@ export function App() {
       }
     }
     return { library: refreshed, incomplete };
-  }, [activePublication]);
+  }, [activePublication, profile]);
 
   useEffect(() => {
     if (!nativeRuntime) {
@@ -175,26 +222,28 @@ export function App() {
     let cancelled = false;
     const bootNativeLibrary = async () => {
       try {
-        const nativeProfile = await loadNativeProfile();
-        const nextProfile = nativeProfile ?? profile;
-        if (!nativeProfile) {
-          await saveNativeProfile(hasStoredProfile() ? profile : nextProfile);
-        }
+        const nativeProfileStore = await loadNativeProfileStore();
+        const nextProfileStore = nativeProfileStore ?? profileStoreRef.current;
+        const nextProfile = getActiveProfile(nextProfileStore);
+        // Saving the normalized store also upgrades a legacy flat native row
+        // after it has been migrated in memory.
+        await saveNativeProfileStore(nextProfileStore);
         const nativeLibrary = await listNativePublications(nextProfile.direction);
         if (cancelled) {
           return;
         }
-        if (nativeProfile) {
-          setProfile(nativeProfile);
+        if (nativeProfileStore) {
+          setProfileStore(nativeProfileStore);
+          profileStoreRef.current = nativeProfileStore;
         }
         setLibrary(nativeLibrary);
         void hydrateMetadata(nativeLibrary);
         void refreshCacheInfo();
-        setAnnouncement(nativeLibrary.length > 0 ? 'Native library ready.' : 'Native library is empty.');
+        setAnnouncement(nativeLibrary.length > 0 ? t('app.nativeLibraryReady') : t('app.nativeLibraryEmpty'));
       } catch {
         if (!cancelled) {
-          setDiagnostic('The native library could not be opened. Your original files were not modified.');
-          setAnnouncement('Native library unavailable.');
+          setDiagnostic(t('app.nativeOpenError'));
+          setAnnouncement(t('app.nativeUnavailable'));
         }
       }
     };
@@ -214,18 +263,92 @@ export function App() {
     void refreshCacheInfo();
   }, [hydrateMetadata, library, nativeRuntime, refreshCacheInfo]);
 
-  const updateProfile = useCallback((patch: Partial<ReadingProfile>) => {
-    setProfile((current) => {
-      const next = { ...current, ...patch };
-      saveProfile(next);
-      if (nativeRuntime) {
-        void saveNativeProfile(next).catch(() => {
-          setDiagnostic('Reader preferences could not be saved to the native library.');
-        });
-      }
-      return next;
-    });
+  const persistProfileStore = useCallback((store: ProfileStore) => {
+    if (!saveProfileStore(store)) {
+      setDiagnostic(t('app.profileSaveError'));
+    }
+    if (nativeRuntime) {
+      void saveNativeProfileStore(store).catch(() => {
+        setDiagnostic(t('app.nativeProfileSaveError'));
+      });
+    }
   }, [nativeRuntime]);
+
+  const applyProfileZoom = useCallback((nextProfile: ReadingProfile) => {
+    const currentId = activeIdRef.current;
+    if (!currentId) {
+      return;
+    }
+    setReaderStates((current) => ({
+      ...current,
+      [currentId]: {
+        ...(current[currentId] ?? defaultReaderState),
+        zoomMode: nextProfile.zoomMode,
+        zoomScale: nextProfile.zoomScale,
+        panX: 0,
+        panY: 0,
+      },
+    }));
+  }, []);
+
+  const commitProfileMutation = useCallback((mutation: ProfileMutation, message: string): string | undefined => {
+    if (!mutation.ok) {
+      const errorMessage = t(mutation.error);
+      setDiagnostic(errorMessage);
+      return errorMessage;
+    }
+    setProfileStore(mutation.store);
+    profileStoreRef.current = mutation.store;
+    persistProfileStore(mutation.store);
+    applyProfileZoom(getActiveProfile(mutation.store));
+    setCapturingAction(null);
+    setAnnouncement(message);
+    return undefined;
+  }, [applyProfileZoom, persistProfileStore]);
+
+  const updateProfile = useCallback((patch: Partial<ReadingProfile>) => {
+    const mutation = updateNamedProfile(
+      profileStoreRef.current,
+      profileStoreRef.current.activeProfileId,
+      patch,
+    );
+    commitProfileMutation(mutation, t('app.profileUpdated'));
+  }, [commitProfileMutation]);
+
+  const selectReadingProfile = useCallback((profileId: string) => (
+    commitProfileMutation(
+      selectProfile(profileStoreRef.current, profileId),
+      t('app.profileSelected'),
+    )
+  ), [commitProfileMutation]);
+
+  const createReadingProfile = useCallback((name: string) => (
+    commitProfileMutation(
+      createProfile(profileStoreRef.current, name),
+      t('app.profileCreated'),
+    )
+  ), [commitProfileMutation]);
+
+  const duplicateReadingProfile = useCallback(() => (
+    commitProfileMutation(
+      duplicateProfile(profileStoreRef.current, profileStoreRef.current.activeProfileId),
+      t('app.profileDuplicated'),
+    )
+  ), [commitProfileMutation]);
+
+  const renameReadingProfile = useCallback((name: string) => (
+    commitProfileMutation(
+      renameProfile(profileStoreRef.current, profileStoreRef.current.activeProfileId, name),
+      t('app.profileRenamed'),
+    )
+  ), [commitProfileMutation]);
+
+  const deleteReadingProfile = useCallback(() => (
+    commitProfileMutation(
+      deleteProfile(profileStoreRef.current, profileStoreRef.current.activeProfileId),
+      t('app.profileDeleted'),
+    )
+  ), [commitProfileMutation]);
 
   const updatePublication = useCallback((id: string, updater: (publication: Publication) => Publication) => {
     setLibrary((current) => current.map((publication) => (publication.id === id ? updater(publication) : publication)));
@@ -240,9 +363,9 @@ export function App() {
     try {
       await toggleFavoriteForPublication(publication.id, nextFavorite);
       updatePublication(publication.id, (current) => ({ ...current, isFavorite: nextFavorite }));
-      setAnnouncement(nextFavorite ? `${publication.title} added to favorites.` : `${publication.title} removed from favorites.`);
+      setAnnouncement(nextFavorite ? t('app.favoriteAdded', { title: publication.title }) : t('app.favoriteRemoved', { title: publication.title }));
     } catch {
-      setDiagnostic('Favorite could not be saved. Your reading data was not changed.');
+      setDiagnostic(t('app.favoriteSaveError'));
     } finally {
       favoriteInFlightRef.current.delete(publication.id);
     }
@@ -250,6 +373,9 @@ export function App() {
 
   const removePublication = useCallback(async (publication: Publication) => {
     metadataGenerationRef.current += 1;
+    if (activeIdRef.current === publication.id) {
+      pageSelectionCoordinatorRef.current.cancel();
+    }
     try {
       await deleteNativePublication(publication.id);
       setLibrary((current) => current.filter((entry) => entry.id !== publication.id));
@@ -267,9 +393,9 @@ export function App() {
         setActiveId(null);
       }
       await refreshCacheInfo();
-      setAnnouncement(`${publication.title} removed. Original files were preserved.`);
+      setAnnouncement(t('app.publicationRemoved', { title: publication.title }));
     } catch {
-      setDiagnostic('The publication could not be removed. Your original files were not modified.');
+      setDiagnostic(t('app.publicationRemoveError'));
       throw new Error('delete-publication-failed');
     }
   }, [activeId, refreshCacheInfo]);
@@ -280,17 +406,20 @@ export function App() {
     }
     let limitApplied = false;
     try {
-      await setNativeCacheLimit(maxBytes);
+      const active = activeIdRef.current
+        ? libraryRef.current.find((publication) => publication.id === activeIdRef.current)
+        : undefined;
+      await setNativeCacheLimit(maxBytes, active ? activeWorkingSetPageIds(active, profile) : []);
       limitApplied = true;
       const { library: refreshedLibrary, incomplete } = await reloadNativeLibraryWithEssentials(profile.direction);
       setLibrary(refreshedLibrary);
       void hydrateMetadata(refreshedLibrary);
       await refreshCacheInfo();
       if (incomplete) {
-        setDiagnostic('Some pages could not be rebuilt yet; the original files were preserved. They will retry when opened.');
-        setAnnouncement('Cache limit saved with some pages unavailable until opened.');
+        setDiagnostic(t('app.cacheRebuildIncomplete'));
+        setAnnouncement(t('app.cacheLimitSavedIncomplete'));
       } else {
-        setAnnouncement('Cache limit saved.');
+        setAnnouncement(t('app.cacheLimitSaved'));
       }
     } catch {
       if (limitApplied) {
@@ -299,12 +428,12 @@ export function App() {
         setLibrary([]);
         setBookmarks({});
         setReaderStates({});
-        setDiagnostic('Cache limit was saved, but the library could not be refreshed. Reopen the app to reload it; original files were preserved.');
+        setDiagnostic(t('app.cacheRefreshError'));
       } else {
-        setDiagnostic('Cache limit could not be saved. Existing pages were kept.');
+        setDiagnostic(t('app.cacheLimitError'));
       }
     }
-  }, [hydrateMetadata, nativeRuntime, profile.direction, refreshCacheInfo, reloadNativeLibraryWithEssentials]);
+  }, [hydrateMetadata, nativeRuntime, profile.direction, profile.mode, refreshCacheInfo, reloadNativeLibraryWithEssentials]);
 
   const clearCache = useCallback(async () => {
     if (!nativeRuntime) {
@@ -312,17 +441,20 @@ export function App() {
     }
     let cacheCleared = false;
     try {
-      await clearNativeCache();
+      const active = activeIdRef.current
+        ? libraryRef.current.find((publication) => publication.id === activeIdRef.current)
+        : undefined;
+      await clearNativeCache(active ? activeWorkingSetPageIds(active, profile) : []);
       cacheCleared = true;
       const { library: readyLibrary, incomplete } = await reloadNativeLibraryWithEssentials(profile.direction);
       setLibrary(readyLibrary);
       void hydrateMetadata(readyLibrary);
       await refreshCacheInfo();
       if (incomplete) {
-        setDiagnostic('Some pages could not be rebuilt yet; the original files were preserved. They will retry when opened.');
-        setAnnouncement('Derived page cache cleared with some pages unavailable until opened.');
+        setDiagnostic(t('app.cacheRebuildIncomplete'));
+        setAnnouncement(t('app.cacheClearedIncomplete'));
       } else {
-        setAnnouncement('Derived page cache cleared. Original files were preserved.');
+        setAnnouncement(t('app.cacheCleared'));
       }
     } catch {
       if (cacheCleared) {
@@ -331,18 +463,18 @@ export function App() {
         setLibrary([]);
         setBookmarks({});
         setReaderStates({});
-        setDiagnostic('Cache was cleared, but the library could not be refreshed. Reopen the app to reload it; original files were preserved.');
+        setDiagnostic(t('app.cacheClearRefreshError'));
       } else {
-        setDiagnostic('Cache could not be cleared. Your original files were not modified.');
+        setDiagnostic(t('app.cacheClearError'));
       }
     }
-  }, [hydrateMetadata, nativeRuntime, profile.direction, refreshCacheInfo, reloadNativeLibraryWithEssentials]);
+  }, [hydrateMetadata, nativeRuntime, profile.direction, profile.mode, refreshCacheInfo, reloadNativeLibraryWithEssentials]);
 
   const persistProgress = useCallback((publicationId: string, pageIndex: number) => {
     saveProgress(publicationId, pageIndex);
     if (nativeRuntime) {
       void saveNativeProgress(publicationId, pageIndex).catch(() => {
-        setDiagnostic('Reading progress could not be saved to the native library.');
+        setDiagnostic(t('app.progressSaveError'));
       });
     }
   }, [nativeRuntime]);
@@ -364,7 +496,7 @@ export function App() {
     try {
       await saveReaderStateForPublication(publicationId, state);
     } catch {
-      setDiagnostic('Zoom and pan could not be saved. Reading can continue, but this change may not survive closing.');
+      setDiagnostic(t('app.readerStateSaveError'));
     }
   }, []);
 
@@ -384,108 +516,105 @@ export function App() {
       }
     } catch {
       setBookmarks((all) => ({ ...all, [publicationId]: current }));
-      setDiagnostic('Page bookmark could not be saved. Your other reading data was not changed.');
+      setDiagnostic(t('app.bookmarkSaveError'));
     }
   }, [bookmarks]);
 
+  const selectPublicationPage = useCallback(async (
+    publication: Publication,
+    pageIndex: number,
+    onCommit: (preparedPage: PageDescriptor | null, request: PageSelectionRequest) => void,
+  ): Promise<boolean> => {
+    if (publication.pages.length === 0) {
+      return false;
+    }
+    const nextPage = clamp(pageIndex, 0, publication.pages.length - 1);
+    return selectLatestPage(
+      pageSelectionCoordinatorRef.current,
+      publication.id,
+      nextPage,
+      async () => {
+        if (!nativeRuntime) {
+          return null;
+        }
+        const page = publication.pages[nextPage];
+        const protectedPageIds = page
+          ? [...new Set([...activeWorkingSetPageIds(publication, profile), page.id])]
+          : activeWorkingSetPageIds(publication, profile);
+        const preparedPage = await ensureNativePage(publication.id, page?.id ?? '', protectedPageIds);
+        if (!preparedPage) {
+          throw new Error('page-unavailable');
+        }
+        return preparedPage;
+      },
+      onCommit,
+      () => {
+        setDiagnostic(t('app.pageRebuildError'));
+      },
+    );
+  }, [nativeRuntime, profile]);
+
+  const commitActivePageSelection = useCallback((
+    preparedPage: PageDescriptor | null,
+    request: PageSelectionRequest,
+  ) => {
+    if (activePublicationIdRef.current !== request.publicationId) {
+      return;
+    }
+    const latest = libraryRef.current.find((publication) => publication.id === request.publicationId);
+    if (!latest) {
+      return;
+    }
+    updatePublication(request.publicationId, (publication) => ({
+      ...publication,
+      pages: preparedPage
+        ? publication.pages.map((page) => page.id === preparedPage.id ? preparedPage : page)
+        : publication.pages,
+      currentPage: request.pageIndex,
+      progress: calculateProgress(request.pageIndex, publication.pages.length, profile.direction),
+      updatedAt: new Date().toISOString(),
+    }));
+    persistProgress(request.publicationId, request.pageIndex);
+    setAnnouncement(t('app.pageReady', { page: request.pageIndex + 1, count: latest.pages.length }));
+  }, [persistProgress, profile.direction, updatePublication]);
+
   const moveActivePage = useCallback(
     async (delta: number) => {
-      if (!activePublication) {
-        return;
-      }
-      const selectionGeneration = ++pageSelectionGenerationRef.current;
-      const publicationId = activePublication.id;
-
-      const nextPage = movePage(
-        activePublication.currentPage,
-        activePublication.pages.length,
-        profile.direction,
-        delta,
-      );
-
-      if (nextPage === activePublication.currentPage) {
-        setAnnouncement(delta > 0 ? 'You are at the end of this publication.' : 'You are at the beginning of this publication.');
+      const current = activeIdRef.current
+        ? libraryRef.current.find((publication) => publication.id === activeIdRef.current)
+        : undefined;
+      if (!current) {
         return;
       }
 
-      let ensuredPage: Awaited<ReturnType<typeof ensureNativePage>>;
-      if (nativeRuntime) {
-        try {
-          ensuredPage = await ensureNativePage(activePublication.id, activePublication.pages[nextPage]?.id ?? '');
-        } catch {
-          setDiagnostic('This page could not be rebuilt from the original. Your file was not modified.');
-          return;
-        }
-        if (!ensuredPage) {
-          setDiagnostic('This page could not be rebuilt from the original. Your file was not modified.');
-          return;
-        }
-      }
-      if (
-        selectionGeneration !== pageSelectionGenerationRef.current
-        || activePublicationIdRef.current !== publicationId
-      ) {
+      const nextPage = movePage(current.currentPage, current.pages.length, profile.direction, delta);
+      if (nextPage === current.currentPage) {
+        pageSelectionCoordinatorRef.current.cancel();
+        setAnnouncement(delta > 0 ? t('app.endOfPublication') : t('app.beginningOfPublication'));
         return;
       }
 
-      updatePublication(activePublication.id, (publication) => ({
-        ...publication,
-        pages: ensuredPage
-          ? publication.pages.map((page) => page.id === ensuredPage.id ? ensuredPage : page)
-          : publication.pages,
-        currentPage: nextPage,
-        progress: calculateProgress(nextPage, publication.pages.length, profile.direction),
-        updatedAt: new Date().toISOString(),
-      }));
-      persistProgress(activePublication.id, nextPage);
-      setAnnouncement(`Page ${nextPage + 1} of ${activePublication.pages.length}.`);
+      await selectPublicationPage(current, nextPage, commitActivePageSelection);
     },
-    [activePublication, nativeRuntime, persistProgress, profile.direction, updatePublication],
+    [commitActivePageSelection, profile.direction, selectPublicationPage],
   );
 
   const selectActivePage = useCallback(
     async (pageIndex: number) => {
-      if (!activePublication || activePublication.pages.length === 0) {
+      const current = activeIdRef.current
+        ? libraryRef.current.find((publication) => publication.id === activeIdRef.current)
+        : undefined;
+      if (!current || current.pages.length === 0) {
         return;
       }
-      const selectionGeneration = ++pageSelectionGenerationRef.current;
-      const publicationId = activePublication.id;
-      const nextPage = clamp(pageIndex, 0, activePublication.pages.length - 1);
-      if (nextPage === activePublication.currentPage) {
+      const nextPage = clamp(pageIndex, 0, current.pages.length - 1);
+      if (nextPage === current.currentPage) {
+        pageSelectionCoordinatorRef.current.cancel();
         return;
       }
-      let ensuredPage: Awaited<ReturnType<typeof ensureNativePage>>;
-      if (nativeRuntime) {
-        try {
-          ensuredPage = await ensureNativePage(activePublication.id, activePublication.pages[nextPage]?.id ?? '');
-        } catch {
-          setDiagnostic('This page could not be rebuilt from the original. Your file was not modified.');
-          return;
-        }
-        if (!ensuredPage) {
-          setDiagnostic('This page could not be rebuilt from the original. Your file was not modified.');
-          return;
-        }
-      }
-      if (
-        selectionGeneration !== pageSelectionGenerationRef.current
-        || activePublicationIdRef.current !== publicationId
-      ) {
-        return;
-      }
-      updatePublication(activePublication.id, (publication) => ({
-        ...publication,
-        pages: ensuredPage
-          ? publication.pages.map((page) => page.id === ensuredPage.id ? ensuredPage : page)
-          : publication.pages,
-        currentPage: nextPage,
-        progress: calculateProgress(nextPage, publication.pages.length, profile.direction),
-        updatedAt: new Date().toISOString(),
-      }));
-      persistProgress(activePublication.id, nextPage);
-      setAnnouncement(`Page ${nextPage + 1} of ${activePublication.pages.length}.`);
+      await selectPublicationPage(current, nextPage, commitActivePageSelection);
     },
-    [activePublication, nativeRuntime, persistProgress, profile.direction, updatePublication],
+    [commitActivePageSelection, selectPublicationPage],
   );
 
   const saveActiveReaderState = useCallback((state: ReaderState) => {
@@ -508,7 +637,7 @@ export function App() {
         await document.documentElement.requestFullscreen();
       }
     } catch {
-      setAnnouncement('Fullscreen is not available in this environment.');
+      setAnnouncement(t('app.fullscreenUnavailable'));
     }
   }, []);
 
@@ -522,9 +651,10 @@ export function App() {
           moveActivePage(-1);
           break;
         case 'toggle_library':
+          pageSelectionCoordinatorRef.current.cancel();
           setActiveId(null);
           setShowProfile(false);
-          setAnnouncement('Library opened.');
+          setAnnouncement(t('app.libraryOpened'));
           break;
         case 'toggle_fullscreen':
           void toggleFullscreen();
@@ -534,9 +664,10 @@ export function App() {
           break;
         case 'toggle_spread':
           updateProfile({ mode: profile.mode === 'single' ? 'spread' : 'single' });
-          setAnnouncement(`Reading mode: ${profile.mode === 'single' ? 'spread' : 'single'} pages.`);
+          setAnnouncement(t('app.readingMode', { mode: profile.mode === 'single' ? t('profile.spread').toLowerCase() : t('profile.single').toLowerCase() }));
           break;
         case 'cancel':
+          pageSelectionCoordinatorRef.current.cancel();
           if (showProfile) {
             setShowProfile(false);
           } else {
@@ -555,19 +686,19 @@ export function App() {
         event.preventDefault();
         if (event.code === 'Escape') {
           setCapturingAction(null);
-          setAnnouncement('Key capture cancelled.');
+          setAnnouncement(t('app.keyCaptureCancelled'));
           return;
         }
 
         const result = inputMap.bind(capturingAction, event.code);
         if (!result.ok) {
-          setAnnouncement(`${event.code} is already assigned to ${result.conflict.replace('_', ' ')}.`);
+          setAnnouncement(t('app.keyConflict', { code: event.code, action: actionLabel(result.conflict) }));
           return;
         }
 
         updateProfile({ bindings: inputMap.getBindings() });
         setCapturingAction(null);
-        setAnnouncement(`${event.code} assigned to ${capturingAction.replace('_', ' ')}.`);
+        setAnnouncement(t('app.keyAssigned', { code: event.code, action: actionLabel(capturingAction) }));
         return;
       }
 
@@ -606,34 +737,29 @@ export function App() {
         }
       : publication;
 
-    let readyPublication = openingPublication;
-    if (nativeRuntime) {
-      try {
-        const ensuredPage = await ensureNativePage(
-          openingPublication.id,
-          openingPublication.pages[openingPublication.currentPage]?.id ?? '',
-        );
-        if (ensuredPage) {
-          readyPublication = {
-            ...openingPublication,
-            pages: openingPublication.pages.map((page) => page.id === ensuredPage.id ? ensuredPage : page),
-          };
+    await selectPublicationPage(openingPublication, openingPublication.currentPage, (preparedPage, request) => {
+      const readyPublication = {
+        ...openingPublication,
+        pages: preparedPage
+          ? openingPublication.pages.map((page) => page.id === preparedPage.id ? preparedPage : page)
+          : openingPublication.pages,
+        currentPage: request.pageIndex,
+        progress: calculateProgress(request.pageIndex, openingPublication.pages.length, profile.direction),
+      };
+      setLibrary((current) => {
+        if (current.some((entry) => entry.id === readyPublication.id)) {
+          return current.map((entry) => entry.id === readyPublication.id ? readyPublication : entry);
         }
-      } catch {
-        setDiagnostic('This page could not be rebuilt from the original. Your file was not modified.');
-        return;
+        return [readyPublication, ...current];
+      });
+      if (readyPublication.currentPage !== publication.currentPage || readyPublication !== publication) {
+        persistProgress(readyPublication.id, readyPublication.currentPage);
       }
-    }
-
-    if (readyPublication !== publication) {
-      updatePublication(publication.id, () => readyPublication);
-      persistProgress(publication.id, readyPublication.currentPage);
-    }
-
-    setActiveId(readyPublication.id);
-    setShowProfile(false);
-    setDiagnostic(undefined);
-    setAnnouncement(`${readyPublication.title} opened. Page ${readyPublication.currentPage + 1} of ${readyPublication.pages.length}.`);
+      setActiveId(readyPublication.id);
+      setShowProfile(false);
+      setDiagnostic(undefined);
+      setAnnouncement(t('app.publicationOpened', { title: readyPublication.title, page: readyPublication.currentPage + 1, count: readyPublication.pages.length }));
+    });
   };
 
   const handleImport = async (files: File[]) => {
@@ -647,8 +773,8 @@ export function App() {
     setIsImporting(false);
 
     if (!result.publication) {
-      setDiagnostic(result.diagnostic ?? 'The publication could not be imported.');
-      setAnnouncement(result.diagnostic ?? 'Import failed.');
+      setDiagnostic(result.diagnostic ?? t('app.importError'));
+      setAnnouncement(result.diagnostic ?? t('app.importFailed'));
       return;
     }
 
@@ -662,7 +788,7 @@ export function App() {
       : importedPublication;
     setLibrary((current) => [openingPublication, ...current]);
     void openPublication(openingPublication);
-    setAnnouncement(`${openingPublication.title} imported locally.`);
+    setAnnouncement(t('app.publicationImportedBrowser', { title: openingPublication.title }));
   };
 
   const handleNativeImport = async (selectFolder: boolean) => {
@@ -671,7 +797,7 @@ export function App() {
     try {
       const paths = selectFolder ? await chooseNativeFolder() : await chooseNativeFiles();
       if (paths.length === 0) {
-        setAnnouncement('Import cancelled.');
+        setAnnouncement(t('app.importCancelled'));
         return;
       }
 
@@ -679,7 +805,7 @@ export function App() {
       const diagnosticMessage = result.diagnostics.length > 0 ? result.diagnostics.join(' ') : undefined;
       setDiagnostic(diagnosticMessage);
       if (result.publications.length === 0) {
-        setAnnouncement(diagnosticMessage ?? 'No supported native publication was found.');
+        setAnnouncement(t('app.nativeNoPublication'));
         return;
       }
 
@@ -693,25 +819,33 @@ export function App() {
       await refreshCacheInfo();
       const openingPublication = result.publications[0];
       void openPublication(openingPublication);
-      setAnnouncement(`${openingPublication.title} imported into the native library.`);
+      setAnnouncement(t('app.publicationImportedNative', { title: openingPublication.title }));
     } catch {
-      setDiagnostic('The native import failed. The original files were not modified.');
-      setAnnouncement('Native import failed.');
+      setDiagnostic(t('app.nativeImportError'));
+      setAnnouncement(t('app.nativeImportFailed'));
     } finally {
       setIsImporting(false);
     }
   };
 
   const handleProfileReset = () => {
-    const fresh = resetProfile();
-    setProfile(fresh);
-    if (nativeRuntime) {
-      void saveNativeProfile(fresh).catch(() => {
-        setDiagnostic('Reader preferences could not be reset in the native library.');
-      });
-    }
+    const current = profileStoreRef.current;
+    const defaults = createDefaultProfile();
+    commitProfileMutation(
+      updateNamedProfile(current, current.activeProfileId, {
+        mode: defaults.mode,
+        direction: defaults.direction,
+        contrast: defaults.contrast,
+        reducedMotion: defaults.reducedMotion,
+        pageTurnDuration: defaults.pageTurnDuration,
+        layoutZone: defaults.layoutZone,
+        zoomMode: defaults.zoomMode,
+        zoomScale: defaults.zoomScale,
+        bindings: defaults.bindings,
+      }),
+      t('app.profileReset'),
+    );
     setCapturingAction(null);
-    setAnnouncement('Reader preferences reset.');
   };
 
   return (
@@ -725,17 +859,24 @@ export function App() {
             publication={activePublication}
             profile={profile}
             announcement={announcement}
-            onBack={() => setActiveId(null)}
+            onBack={() => {
+              pageSelectionCoordinatorRef.current.cancel();
+              setActiveId(null);
+            }}
             onNext={() => moveActivePage(1)}
             onPrevious={() => moveActivePage(-1)}
             onToggleSettings={() => setShowProfile((current) => !current)}
             onToggleFullscreen={() => void toggleFullscreen()}
-            onFlowCorrected={() => setAnnouncement('Panel order corrected and saved for this publication.')}
-            onFlowManualRoute={() => setAnnouncement('Full-page reading enabled for this page.')}
+            onFlowCorrected={() => setAnnouncement(t('app.panelOrderCorrected'))}
+            onFlowManualRoute={() => setAnnouncement(t('app.fullPageReadingEnabled'))}
             nativeRuntime={nativeRuntime}
             settingsTriggerRef={settingsTriggerRef}
             bookmarks={bookmarks[activePublication.id] ?? []}
-            readerState={readerStates[activePublication.id] ?? defaultReaderState}
+            readerState={readerStates[activePublication.id] ?? {
+              ...defaultReaderState,
+              zoomMode: profile.zoomMode,
+              zoomScale: profile.zoomScale,
+            }}
             onSaveReaderState={saveActiveReaderState}
             onSelectPage={selectActivePage}
             onToggleBookmark={toggleActiveBookmark}
@@ -772,8 +913,15 @@ export function App() {
           <div className="profile-backdrop" aria-hidden="true" />
           <ProfilePanel
             profile={profile}
+            profiles={profileStore.profiles}
+            activeProfileId={profileStore.activeProfileId}
             capturingAction={capturingAction}
             onChange={updateProfile}
+            onSelectProfile={selectReadingProfile}
+            onCreateProfile={createReadingProfile}
+            onDuplicateProfile={duplicateReadingProfile}
+            onRenameProfile={renameReadingProfile}
+            onDeleteProfile={deleteReadingProfile}
             onStartCapture={setCapturingAction}
             onReset={handleProfileReset}
             cacheInfo={cacheInfo}

@@ -38,6 +38,8 @@ export interface Publication {
   addedAt: string;
   updatedAt: string;
   isFavorite: boolean;
+  /** Safe basenames used for discovery; never contains an absolute source path. */
+  sourceNames?: string[];
   diagnostic?: string;
 }
 
@@ -62,6 +64,7 @@ export interface CacheInfo {
 }
 
 export interface ReadingProfile {
+  id?: string;
   version: 1;
   name: string;
   mode: ReadingMode;
@@ -70,6 +73,8 @@ export interface ReadingProfile {
   reducedMotion: boolean;
   pageTurnDuration: number;
   layoutZone: LayoutZone;
+  zoomMode: ZoomMode;
+  zoomScale: number;
   bindings: BindingMap;
 }
 

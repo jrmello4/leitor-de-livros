@@ -29,6 +29,7 @@ pub struct NativePublication {
     pub id: String,
     pub title: String,
     pub source_label: String,
+    pub source_names: Vec<String>,
     pub format: String,
     pub pages: Vec<NativePage>,
     pub cover_page_id: String,
