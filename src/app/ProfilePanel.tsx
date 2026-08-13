@@ -23,6 +23,11 @@ interface ProfilePanelProps {
   onDuplicateProfile?: () => string | undefined;
   onRenameProfile?: (name: string) => string | undefined;
   onDeleteProfile?: () => string | undefined;
+  isPreviewing?: boolean;
+  onSavePreview?: () => void;
+  onUndoPreview?: () => void;
+  onImportProfiles?: (text: string) => string | undefined | Promise<string | undefined>;
+  onExportProfiles?: () => void;
 }
 
 const CACHE_LIMITS = [
@@ -74,6 +79,11 @@ export function ProfilePanel({
   onDuplicateProfile = () => undefined,
   onRenameProfile = () => undefined,
   onDeleteProfile = () => undefined,
+  isPreviewing = false,
+  onSavePreview = () => undefined,
+  onUndoPreview = () => undefined,
+  onImportProfiles = () => undefined,
+  onExportProfiles = () => undefined,
 }: ProfilePanelProps) {
   const selectedCacheLimit = CACHE_LIMITS.some((limit) => limit.value === cacheInfo.maxBytes)
     ? cacheInfo.maxBytes
@@ -95,6 +105,20 @@ export function ProfilePanel({
     setProfileError(error);
     if (!error) {
       setNameDraft('');
+    }
+  };
+
+  const onImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) {
+      return;
+    }
+    try {
+      const error = await onImportProfiles(await file.text());
+      setProfileError(error);
+    } catch {
+      setProfileError(t('profile.transferError'));
     }
   };
 
@@ -199,6 +223,13 @@ export function ProfilePanel({
           </div>
           {profileError && <p className="settings-help profile-error" role="alert">{profileError}</p>}
           <p className="settings-help">{t('profile.copy')}</p>
+          <div className="profile-transfer-actions">
+            <button type="button" className="secondary-button" onClick={onExportProfiles}>{t('profile.export')}</button>
+            <label className="secondary-button profile-import-button">
+              {t('profile.import')}
+              <input type="file" accept="application/json,.json" onChange={(event) => void onImportFile(event)} />
+            </label>
+          </div>
         </section>
 
         <section className="settings-section">
@@ -329,8 +360,14 @@ export function ProfilePanel({
       </div>
 
       <div className="panel-footer">
+        {isPreviewing && (
+          <>
+            <button className="secondary-button" type="button" onClick={onUndoPreview}>{t('profile.undoPreview')}</button>
+            <button className="primary-button" type="button" onClick={onSavePreview}>{t('profile.savePreview')}</button>
+          </>
+        )}
         <button className="quiet-button" onClick={onReset}>{t('profile.reset')}</button>
-        <span>{t('profile.saved')}</span>
+        <span>{isPreviewing ? t('profile.previewing') : t('profile.saved')}</span>
       </div>
     </aside>
   );

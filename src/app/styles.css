@@ -1784,6 +1784,27 @@ html:fullscreen .reader-controls:focus-within {
   margin-top: 14px;
 }
 
+.profile-transfer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.profile-import-button {
+  position: relative;
+  cursor: pointer;
+}
+
+.profile-import-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+}
+
 .profile-actions button {
   min-height: 32px;
   padding: 0 8px;
