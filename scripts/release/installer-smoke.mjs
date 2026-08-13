@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import {
   cp,
@@ -207,7 +207,12 @@ async function waitForCardCount(page, expected) {
 }
 
 async function waitForNativeLibraryReady(page) {
-  await waitFor(async () => (await page.locator('[data-testid="library-publication-card"]').count()) === 0, 'Native library did not finish its initial load');
+  await page.locator('[data-testid="native-library-ready"][data-ready="true"]').waitFor({ state: 'attached' });
+}
+
+async function waitForReader(page) {
+  await page.getByTestId('reader-stage').waitFor({ state: 'visible' });
+  await page.getByTestId('reader-current-page').waitFor({ state: 'visible' });
 }
 
 async function waitForLibrary(page) {
@@ -243,11 +248,11 @@ async function createRunFixtures(runDirectory) {
   };
 }
 
-async function buildInstaller(runDirectory) {
+async function buildInstaller(runDirectory, runId) {
   const configPath = join(runDirectory, 'tauri.smoke.json');
   const bundleDirectory = resolve(repositoryRoot, 'src-tauri/target/release/bundle/nsis');
   const config = {
-    identifier: 'com.jrmello4.tactilereader.smoke.' + process.pid,
+    identifier: 'com.jrmello4.tactilereader.smoke.' + runId.replaceAll('-', ''),
     productName: 'Tactile Reader Smoke',
     version: '0.1.0',
     bundle: { targets: ['nsis'] },
@@ -330,26 +335,30 @@ async function runIntactScenario(executable, cbzPath, pdfPath, runDirectory, res
   try {
     await waitForNativeLibraryReady(session.page);
     await importSource(session.page, cbzPath);
-    await waitForCardCount(session.page, 1);
+    await waitForReader(session.page);
     await session.page.getByTestId('reader-back').click();
     await waitForLibrary(session.page);
+    await waitForCardCount(session.page, 1);
 
     await importSource(session.page, pdfPath);
-    await waitForCardCount(session.page, 2);
+    await waitForReader(session.page);
     await session.page.getByTestId('reader-back').click();
     await waitForLibrary(session.page);
+    await waitForCardCount(session.page, 2);
 
     const cbzCard = session.page.locator('[data-testid="library-publication-card"][data-publication-format="cbz"]');
     await cbzCard.locator('.cover-button').click();
     await session.page.getByTestId('reader-stage').waitFor({ state: 'visible' });
     await session.page.getByTestId('reader-next').click();
     await waitFor(async () => (await session.page.getByTestId('reader-current-page').getAttribute('data-page-index')) === '1', 'CBZ page did not advance');
+    await waitFor(async () => (await session.page.getByTestId('reader-announcement').textContent())?.includes('Page 2 of') === true, 'CBZ progress save was not acknowledged');
   } finally {
     await session.close();
   }
 
   const resumed = await launchApp(executable, 'intact-resumed', join(evidenceRoot, result.runId));
   try {
+    await waitForNativeLibraryReady(resumed.page);
     await waitForCardCount(resumed.page, 2);
     const cbzCard = resumed.page.locator('[data-testid="library-publication-card"][data-publication-format="cbz"]');
     await cbzCard.locator('.cover-button').click();
@@ -375,7 +384,7 @@ async function runIntactScenario(executable, cbzPath, pdfPath, runDirectory, res
 }
 
 async function main() {
-  const runId = Date.now() + '-' + process.pid;
+  const runId = Date.now() + '-' + process.pid + '-' + randomUUID().replaceAll('-', '');
   const runDirectory = await mkdtemp(join(tmpdir(), 'tactile-reader-smoke-'));
   const evidenceDirectory = join(evidenceRoot, runId);
   await mkdir(evidenceDirectory, { recursive: true });
@@ -398,7 +407,7 @@ async function main() {
       cbz: await sha256(fixtures.cbz),
       pdf: await sha256(fixtures.pdf),
     };
-    result.installer = await buildInstaller(runDirectory);
+    result.installer = await buildInstaller(runDirectory, runId);
     const executable = await installPackage(result.installer, result.installDirectory);
     await runMissingPdfiumScenario(result.installDirectory, fixtures.pdf, runDirectory, result);
     await runIntactScenario(executable, fixtures.cbz, fixtures.pdf, runDirectory, result);

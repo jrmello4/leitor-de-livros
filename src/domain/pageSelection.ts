@@ -32,7 +32,7 @@ export async function selectLatestPage<T>(
   publicationId: string,
   pageIndex: number,
   prepare: () => Promise<T>,
-  commit: (prepared: T, request: PageSelectionRequest) => void,
+  commit: (prepared: T, request: PageSelectionRequest) => void | Promise<void>,
   onPrepareError?: (error: unknown, request: PageSelectionRequest) => void,
 ): Promise<boolean> {
   const request = coordinator.begin(publicationId, pageIndex);
@@ -48,6 +48,6 @@ export async function selectLatestPage<T>(
   if (!coordinator.isCurrent(request)) {
     return false;
   }
-  commit(prepared, request);
+  await commit(prepared, request);
   return true;
 }

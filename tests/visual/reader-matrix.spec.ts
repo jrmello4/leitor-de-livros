@@ -99,6 +99,17 @@ async function assertReaderGeometry(page: Page): Promise<void> {
       expect(overlap(controls[index], controls[next]), 'primary reader controls overlap').toBe(false);
     }
   }
+
+  const allReaderControls = await page.locator('[data-reader-control]:visible').evaluateAll((elements) => elements.map((element) => {
+    const box = element.getBoundingClientRect();
+    return { x: box.x, y: box.y, right: box.right, bottom: box.bottom };
+  }));
+  for (const control of allReaderControls) {
+    expect(control.x, 'reader control is clipped on the left').toBeGreaterThanOrEqual(0);
+    expect(control.y, 'reader control is clipped at the top').toBeGreaterThanOrEqual(0);
+    expect(control.right, 'reader control is clipped on the right').toBeLessThanOrEqual(viewport.width + 1);
+    expect(control.bottom, 'reader control is clipped at the bottom').toBeLessThanOrEqual(viewport.height + 1);
+  }
 }
 
 async function advanceToLastPage(page: Page): Promise<void> {
@@ -111,6 +122,8 @@ async function advanceToLastPage(page: Page): Promise<void> {
 async function runScenarioSetup(page: Page, scenario: VisualScenario): Promise<string | undefined> {
   switch (scenario.name) {
     case 'boundary':
+      await page.getByTestId('reader-previous').dispatchEvent('click');
+      await expect(page.getByTestId('reader-announcement')).toContainText('beginning of this publication');
       await advanceToLastPage(page);
       await page.getByTestId('reader-next').dispatchEvent('click');
       await expect(page.getByTestId('reader-announcement')).toContainText('end of this publication');
