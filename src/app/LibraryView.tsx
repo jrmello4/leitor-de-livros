@@ -19,6 +19,9 @@ interface LibraryViewProps {
   onOpenSettings: () => void;
   onToggleFavorite: (publication: Publication) => void | Promise<void>;
   onDelete: (publication: Publication) => void | Promise<void>;
+  onReplaceCover: (publication: Publication, file: File) => void | Promise<void>;
+  onChooseNativeCover: (publication: Publication) => void | Promise<void>;
+  onResetCover: (publication: Publication) => void | Promise<void>;
   favoriteOnly: boolean;
   onFavoriteOnlyChange: (favoriteOnly: boolean) => void;
   settingsTriggerRef: RefObject<HTMLButtonElement | null>;
@@ -44,6 +47,9 @@ export function LibraryView({
   onOpenSettings,
   onToggleFavorite,
   onDelete,
+  onReplaceCover,
+  onChooseNativeCover,
+  onResetCover,
   favoriteOnly,
   onFavoriteOnlyChange,
   settingsTriggerRef,
@@ -126,6 +132,14 @@ export function LibraryView({
   const onFileInput = (event: React.ChangeEvent<HTMLInputElement>) => {
     onImport(Array.from(event.target.files ?? []));
     event.target.value = '';
+  };
+
+  const onCoverFile = (publication: Publication, event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (file) {
+      void onReplaceCover(publication, file);
+    }
   };
 
   const onDrop = (event: React.DragEvent<HTMLElement>) => {
@@ -267,7 +281,7 @@ export function LibraryView({
           {visiblePublications.map((publication) => (
             <article className="publication-card" key={publication.id}>
               <button className="cover-button" type="button" onClick={() => onOpen(publication)} aria-label={t('library.open', { title: publication.title })}>
-                <img src={publication.pages[0]?.src} alt="" />
+                <img src={publication.customCover?.src ?? publication.pages[0]?.src} alt="" />
                 <span className="cover-edge" aria-hidden="true" />
                 <span className="cover-stamp">{publication.format === 'demo' ? t('library.study') : publication.format.toUpperCase()}</span>
               </button>
@@ -288,6 +302,23 @@ export function LibraryView({
                   </button>
                   <button className="open-link" type="button" onClick={() => onOpen(publication)}>{t('library.openLabel')} <span aria-hidden="true">↗</span></button>
                 </div>
+              </div>
+              <div className="cover-actions">
+                {isNativeRuntime ? (
+                  <button className="quiet-button" type="button" onClick={() => void onChooseNativeCover(publication)}>
+                    {publication.customCover ? t('library.replaceCover') : t('library.chooseCover')}
+                  </button>
+                ) : (
+                  <label className="quiet-button cover-file-button">
+                    {publication.customCover ? t('library.replaceCover') : t('library.chooseCover')}
+                    <input type="file" accept="image/avif,image/gif,image/jpeg,image/png,image/webp" onChange={(event) => onCoverFile(publication, event)} />
+                  </label>
+                )}
+                {publication.customCover && (
+                  <button className="quiet-button" type="button" aria-label={t('library.resetCover')} onClick={() => void onResetCover(publication)}>
+                    {t('library.resetCover')}
+                  </button>
+                )}
               </div>
               <div className="progress-line" aria-label={formatProgress(publication.progress)}>
                 <span style={{ width: `${publication.progress * 100}%` }} />

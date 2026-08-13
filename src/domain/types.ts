@@ -25,6 +25,11 @@ export interface PageDescriptor {
   height: number;
 }
 
+export interface CustomCover {
+  src: string;
+  sourceName: string;
+}
+
 export interface Publication {
   id: string;
   title: string;
@@ -40,6 +45,7 @@ export interface Publication {
   isFavorite: boolean;
   /** Safe basenames used for discovery; never contains an absolute source path. */
   sourceNames?: string[];
+  customCover?: CustomCover;
   diagnostic?: string;
 }
 

@@ -50,6 +50,8 @@ interface NativePublicationDto {
   updatedAt: string;
   isFavorite?: unknown;
   diagnostic?: string;
+  customCoverPath?: unknown;
+  customCoverName?: unknown;
 }
 
 function safeSourceName(value: unknown): string {
@@ -130,6 +132,32 @@ export async function saveNativeProgress(publicationId: string, currentPage: num
 export async function loadNativeProfile(): Promise<ReadingProfile | null> {
   const store = await loadNativeProfileStore();
   return store ? getActiveProfile(store) : null;
+}
+
+export async function chooseNativeCover(): Promise<string | null> {
+  if (!isNativeRuntime()) {
+    return null;
+  }
+  const selection = await open({
+    multiple: false,
+    directory: false,
+    filters: [{ name: 'Cover image', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif'] }],
+  });
+  return normalizeSelection(selection)[0] ?? null;
+}
+
+export async function setNativeCover(publicationId: string, sourcePath: string): Promise<void> {
+  if (!isNativeRuntime()) {
+    return;
+  }
+  await invoke('set_custom_cover', { publicationId, sourcePath });
+}
+
+export async function clearNativeCover(publicationId: string): Promise<void> {
+  if (!isNativeRuntime()) {
+    return;
+  }
+  await invoke('clear_custom_cover', { publicationId });
 }
 
 export async function loadNativeProfileStore(): Promise<ProfileStore | null> {
@@ -330,6 +358,12 @@ function mapPublication(value: unknown, direction: ReadingDirection): Publicatio
     isFavorite: publication.isFavorite === true,
     sourceNames: safeSourceNames(publication.sourceNames, sourceLabel),
     diagnostic: typeof publication.diagnostic === 'string' ? publication.diagnostic : undefined,
+    customCover: publication.customCoverPath && publication.customCoverName
+      ? {
+          src: convertFileSrc(normalizeString(publication.customCoverPath)),
+          sourceName: safeSourceName(publication.customCoverName),
+        }
+      : undefined,
   };
 }
 
