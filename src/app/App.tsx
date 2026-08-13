@@ -51,6 +51,7 @@ import {
   saveProgress,
 } from '../services/storage';
 import { LibraryView } from './LibraryView';
+import { LiveAnnouncement } from './LiveAnnouncement';
 import { ProfilePanel } from './ProfilePanel';
 import { ReaderView } from './ReaderView';
 
@@ -922,9 +923,7 @@ export function App() {
         </>
       )}
 
-      <div className="sr-only" aria-live="polite" aria-atomic="true">
-        {announcement}
-      </div>
+      <LiveAnnouncement message={announcement} />
     </div>
   );
 }
