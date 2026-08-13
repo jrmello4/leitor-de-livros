@@ -4,6 +4,7 @@ const isCi = Boolean(process.env.CI);
 
 export default defineConfig({
   testDir: './tests/visual',
+  testMatch: '**/*.spec.ts',
   outputDir: 'test-results/visual',
   workers: 1,
   retries: 0,

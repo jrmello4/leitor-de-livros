@@ -9,6 +9,7 @@ import {
   visualViewports,
   visualProfileStore,
   writeVisualEvidence,
+  expectedRtlMotion,
   type VisualEvidence,
   type VisualScenario,
 } from './visual-matrix';
@@ -29,7 +30,13 @@ async function openDemo(page: Page, scenario: VisualScenario): Promise<void> {
   await expect(demoCard).toHaveCount(1);
   await demoCard.locator('.cover-button').click();
   await expect(page.getByTestId('reader-stage')).toBeVisible();
-  await expect(page.getByTestId('reader-current-page')).toBeVisible();
+  const currentPage = page.getByTestId('reader-current-page');
+  await expect(currentPage).toBeVisible();
+  await expect(currentPage).toHaveText(/\S+/);
+  const pageIndex = await currentPage.getAttribute('data-page-index');
+  expect(pageIndex, 'reader current-page must expose a finite committed page index').not.toBeNull();
+  expect(pageIndex?.trim(), 'reader current-page must not expose an empty page index').not.toBe('');
+  expect(Number.isFinite(Number(pageIndex)), 'reader current-page exposes an invalid page index').toBe(true);
   await expect(page.locator('.render-surface .page-sheet').first()).toHaveCount(1);
 }
 
@@ -121,6 +128,24 @@ async function advanceToLastPage(page: Page): Promise<void> {
 
 async function runScenarioSetup(page: Page, scenario: VisualScenario): Promise<string | undefined> {
   switch (scenario.name) {
+    case 'single-rtl': {
+      const stage = page.getByTestId('reader-stage');
+      const currentPage = page.getByTestId('reader-current-page');
+      await expect(currentPage).toHaveAttribute('data-page-index', '3');
+      for (const pageIndex of ['2', '1', '0']) {
+        await page.getByTestId('reader-next').click();
+        await expect(currentPage).toHaveAttribute('data-page-index', pageIndex);
+      }
+      await page.getByTestId('reader-previous').click();
+      await expect(stage).toHaveAttribute('data-turn-phase', 'committing');
+      await expect(stage).toHaveAttribute('data-turn-direction', 'rtl');
+      const progress = await stage.getAttribute('data-turn-progress');
+      expect(Number(progress), 'RTL turn progress must be positive while committing').toBeGreaterThan(0);
+      const direction = await stage.getAttribute('data-turn-direction');
+      expect(expectedRtlMotion(direction, Number(progress)), 'RTL turn must move backward with positive progress').toBe(true);
+      await expect(currentPage).toHaveAttribute('data-page-index', '1');
+      return undefined;
+    }
     case 'boundary':
       await page.getByTestId('reader-previous').dispatchEvent('click');
       await expect(page.getByTestId('reader-announcement')).toContainText('beginning of this publication');

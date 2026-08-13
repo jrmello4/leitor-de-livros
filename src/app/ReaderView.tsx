@@ -571,6 +571,9 @@ export function ReaderView({
         }}
         onWheel={onWheel}
         data-testid="reader-stage"
+        data-turn-phase={turnPhase}
+        data-turn-direction={profile.direction}
+        data-turn-progress={dragProgress}
         aria-label={t('reader.canvas')}
       >
         <div className="stage-caption stage-caption--left">{profile.direction === 'rtl' ? t('reader.rightToLeft') : t('reader.leftToRight')}</div>

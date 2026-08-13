@@ -15,7 +15,7 @@ export default defineConfig({
     exclude: [
       '**/node_modules/**',
       '**/dist/**',
-      'tests/visual/**',
+      'tests/visual/**/*.spec.ts',
       'scripts/release/**',
       'scripts/performance/**',
     ],

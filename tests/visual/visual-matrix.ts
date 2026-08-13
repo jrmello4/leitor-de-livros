@@ -67,6 +67,10 @@ export const visualViewports = [
   { name: 'narrow', width: 1000, height: 720 },
 ] as const;
 
+export function expectedRtlMotion(direction: string | null, delta: number): boolean {
+  return direction === 'rtl' && Number.isFinite(delta) && delta > 0;
+}
+
 interface VisualSummary {
   version: 1;
   records: VisualEvidence[];
