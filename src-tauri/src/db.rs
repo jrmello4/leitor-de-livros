@@ -731,27 +731,91 @@ impl LibraryDb {
             .connection
             .lock()
             .map_err(|_| CoreError::from("database lock poisoned"))?;
+        let exists: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM publications WHERE id = ?1)",
+            [publication_id],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Err(CoreError::from("publication does not exist"));
+        }
         let origin_paths = canonical_origin_paths(&connection)?;
-        let transaction = connection.transaction()?;
-        for table in [
-            "bookmarks",
-            "reader_states",
-            "cache_entries",
-            "panel_graphs",
-            "progress",
-            "pages",
-        ] {
-            transaction.execute(
-                &format!("DELETE FROM {table} WHERE publication_id = ?1"),
+
+        // Stage derived files before changing SQLite. If any filesystem step
+        // fails, the publication row and all dependent metadata remain intact.
+        // Origins are deliberately skipped, including origins that happen to
+        // be located inside the derived-cache tree.
+        let staging_root = cache_root.join(format!(
+            ".{}.{}.delete",
+            publication_id,
+            now()
+        ));
+        let mut staged_files = Vec::new();
+        if cache_publication_dir.exists() {
+            std::fs::create_dir_all(&staging_root)?;
+            if let Err(error) = stage_derived_files(
+                &cache_root,
+                &cache_publication_dir,
+                &origin_paths,
+                &staging_root,
+                &mut staged_files,
+            ) {
+                let restore_error = restore_staged_files(&staged_files).err();
+                let _ = std::fs::remove_dir_all(&staging_root);
+                if let Some(restore_error) = restore_error {
+                    return Err(CoreError::from(format!(
+                        "cache cleanup failed: {error}; cache rollback failed: {restore_error}"
+                    )));
+                }
+                return Err(error);
+            }
+
+            if let Err(error) = std::fs::remove_dir_all(&staging_root) {
+                let restore_error = restore_staged_files(&staged_files).err();
+                let _ = std::fs::remove_dir_all(&staging_root);
+                if let Some(restore_error) = restore_error {
+                    return Err(CoreError::from(format!(
+                        "cache cleanup failed: {error}; cache rollback failed: {restore_error}"
+                    )));
+                }
+                return Err(error.into());
+            }
+        }
+
+        let transaction_result = (|| -> CoreResult<()> {
+            let transaction = connection.transaction()?;
+            for table in [
+                "bookmarks",
+                "reader_states",
+                "cache_entries",
+                "panel_graphs",
+                "progress",
+                "pages",
+            ] {
+                transaction.execute(
+                    &format!("DELETE FROM {table} WHERE publication_id = ?1"),
+                    [publication_id],
+                )?;
+            }
+            let deleted = transaction.execute(
+                "DELETE FROM publications WHERE id = ?1",
                 [publication_id],
             )?;
-        }
-        transaction.execute("DELETE FROM publications WHERE id = ?1", [publication_id])?;
-        transaction.commit()?;
+            if deleted != 1 {
+                return Err(CoreError::from("publication disappeared during removal"));
+            }
+            transaction.commit()?;
+            Ok(())
+        })();
         drop(connection);
+        if let Err(error) = transaction_result {
+            // The derived bytes have already been removed, but the metadata is
+            // still present and can be rebuilt on the next open.
+            return Err(error);
+        }
 
         if cache_publication_dir.exists() {
-            remove_derived_files(&cache_root, &cache_publication_dir, &origin_paths)?;
+            remove_empty_directories(&cache_publication_dir)?;
             if cache_publication_dir.read_dir()?.next().is_none() {
                 std::fs::remove_dir(cache_publication_dir)?;
             }
@@ -1376,6 +1440,73 @@ fn remove_derived_files(
             let canonical = path.canonicalize()?;
             if canonical.starts_with(cache_root) && !origin_paths.contains(&canonical) {
                 std::fs::remove_file(path)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn stage_derived_files(
+    cache_root: &Path,
+    directory: &Path,
+    origin_paths: &HashSet<PathBuf>,
+    staging_root: &Path,
+    staged_files: &mut Vec<(PathBuf, PathBuf)>,
+) -> CoreResult<()> {
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            stage_derived_files(
+                cache_root,
+                &path,
+                origin_paths,
+                staging_root,
+                staged_files,
+            )?;
+            continue;
+        }
+
+        let canonical = path.canonicalize()?;
+        if !canonical.starts_with(cache_root) || origin_paths.contains(&canonical) {
+            continue;
+        }
+
+        let relative = canonical
+            .strip_prefix(cache_root)
+            .map_err(|_| CoreError::from("derived cache path escaped its root"))?;
+        let staged_path = staging_root.join(relative);
+        if let Some(parent) = staged_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(&path, &staged_path)?;
+        staged_files.push((path, staged_path));
+    }
+    Ok(())
+}
+
+fn restore_staged_files(staged_files: &[(PathBuf, PathBuf)]) -> CoreResult<()> {
+    for (original, staged) in staged_files.iter().rev() {
+        if !staged.exists() {
+            continue;
+        }
+        if let Some(parent) = original.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(staged, original)?;
+    }
+    Ok(())
+}
+
+fn remove_empty_directories(directory: &Path) -> CoreResult<()> {
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            remove_empty_directories(&path)?;
+            if path.read_dir()?.next().is_none() {
+                std::fs::remove_dir(path)?;
             }
         }
     }
@@ -2041,6 +2172,31 @@ mod tests {
             std::fs::read(&source_path).expect("legacy origin remains"),
             source_bytes
         );
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
+    fn failed_cache_cleanup_keeps_publication_metadata_and_source_intact() {
+        let root = temporary_root("delete-cache-failure");
+        let source_path = root.join("external-source.cbz");
+        let source_bytes = b"source must survive a failed removal";
+        std::fs::create_dir_all(&root).expect("root");
+        std::fs::write(&source_path, source_bytes).expect("source");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        insert_test_publication(&database, &source_path.to_string_lossy());
+
+        let cache_path = database.cache_dir().join("publication-1");
+        std::fs::remove_dir_all(&cache_path).expect("remove cache directory");
+        std::fs::write(&cache_path, b"cache path is not a directory").expect("blocking cache path");
+
+        let result = database.delete_publication("publication-1");
+
+        assert!(result.is_err(), "invalid cache path must fail removal");
+        assert_eq!(database.list_publications().expect("publications").len(), 1);
+        assert_eq!(std::fs::read(&source_path).expect("source remains"), source_bytes);
+        assert!(cache_path.is_file(), "failed cleanup must leave the cache path intact");
 
         drop(database);
         std::fs::remove_dir_all(root).expect("cleanup database");
