@@ -79,3 +79,78 @@ jobs:
           path: src-tauri/target/release/bundle/**
           if-no-files-found: error
           retention-days: 14
+
+  visual:
+    name: Reader visual matrix evidence
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium
+
+      - name: Run visual matrix
+        run: npm run test:visual
+
+      - name: Upload visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tactile-reader-visual-evidence
+          path: |
+            artifacts/visual/**
+            test-results/visual/**
+          if-no-files-found: warn
+          retention-days: 14
+
+  installer-smoke:
+    name: Windows installer smoke evidence
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium
+
+      - name: Run installer smoke
+        env:
+          SMOKE_EVIDENCE_DIR: ${{ github.workspace }}/artifacts/installer-smoke
+        run: npm run test:installer-smoke
+
+      - name: Upload installer smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tactile-reader-installer-smoke-evidence
+          path: |
+            artifacts/installer-smoke/**
+            src-tauri/target/release/bundle/**
+          if-no-files-found: warn
+          retention-days: 14
