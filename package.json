@@ -11,7 +11,7 @@
     "test:watch": "vitest",
     "test:visual": "playwright test tests/visual --config playwright.config.ts",
     "test:installer-smoke": "node scripts/release/installer-smoke.mjs",
-    "test:release-scripts": "node --test scripts/release/installer-smoke.test.mjs",
+    "test:release-scripts": "node --test scripts/release/installer-smoke.check.mjs",
     "test:workflow": "node scripts/release/verify-workflow.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
