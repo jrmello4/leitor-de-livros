@@ -100,6 +100,7 @@ export function App() {
   const [diagnostic, setDiagnostic] = useState<string | undefined>();
   const [announcement, setAnnouncement] = useState(() => t('app.libraryReady'));
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
+  const readerTurnRequestRef = useRef<((delta: number) => void) | null>(null);
   const metadataGenerationRef = useRef(0);
   const favoriteInFlightRef = useRef(new Set<string>());
   const pageSelectionCoordinatorRef = useRef(createPageSelectionCoordinator());
@@ -599,6 +600,18 @@ export function App() {
     [commitActivePageSelection, profile.direction, selectPublicationPage],
   );
 
+  const dispatchPageTurn = useCallback((delta: number) => {
+    if (readerTurnRequestRef.current) {
+      readerTurnRequestRef.current(delta);
+      return;
+    }
+    void moveActivePage(delta);
+  }, [moveActivePage]);
+
+  const registerReaderTurnRequest = useCallback((request: ((delta: number) => void) | null) => {
+    readerTurnRequestRef.current = request;
+  }, []);
+
   const selectActivePage = useCallback(
     async (pageIndex: number) => {
       const current = activeIdRef.current
@@ -645,10 +658,10 @@ export function App() {
     (action: ActionName) => {
       switch (action) {
         case 'next_page':
-          moveActivePage(1);
+          dispatchPageTurn(1);
           break;
         case 'previous_page':
-          moveActivePage(-1);
+          dispatchPageTurn(-1);
           break;
         case 'toggle_library':
           pageSelectionCoordinatorRef.current.cancel();
@@ -677,7 +690,7 @@ export function App() {
           break;
       }
     },
-    [moveActivePage, profile.mode, showProfile, toggleFullscreen, updateProfile],
+    [dispatchPageTurn, profile.mode, showProfile, toggleFullscreen, updateProfile],
   );
 
   useEffect(() => {
@@ -880,6 +893,7 @@ export function App() {
             onSaveReaderState={saveActiveReaderState}
             onSelectPage={selectActivePage}
             onToggleBookmark={toggleActiveBookmark}
+            onRegisterTurnRequest={registerReaderTurnRequest}
           />
         ) : (
           <LibraryView
