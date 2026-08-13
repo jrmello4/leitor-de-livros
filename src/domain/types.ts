@@ -64,6 +64,7 @@ export interface CacheInfo {
 }
 
 export interface ReadingProfile {
+  id?: string;
   version: 1;
   name: string;
   mode: ReadingMode;
@@ -72,6 +73,8 @@ export interface ReadingProfile {
   reducedMotion: boolean;
   pageTurnDuration: number;
   layoutZone: LayoutZone;
+  zoomMode: ZoomMode;
+  zoomScale: number;
   bindings: BindingMap;
 }
 

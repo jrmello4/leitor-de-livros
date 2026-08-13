@@ -1,4 +1,5 @@
 import type { PageDescriptor, ReadingDirection, ReadingMode } from './types';
+import { t } from '../i18n/catalog';
 
 export function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(Math.max(value, minimum), maximum);
@@ -101,7 +102,7 @@ export function visiblePageIndexes(
 
 export function pageCounter(currentPage: number, pageCount: number): string {
   if (pageCount === 0) {
-    return 'No pages';
+    return t('navigator.noPages');
   }
 
   return `${Math.min(currentPage + 1, pageCount).toString().padStart(2, '0')} / ${pageCount

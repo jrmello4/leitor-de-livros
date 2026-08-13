@@ -1,6 +1,8 @@
-import { useEffect, useRef, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import type { ActionName, CacheInfo, ReadingProfile } from '../domain/types';
-import { ACTION_LABELS, bindingLabel } from '../domain/input';
+import { actionLabel, bindingLabel } from '../domain/input';
+import { t } from '../i18n/catalog';
+import type { NamedReadingProfile } from '../domain/profiles';
 
 interface ProfilePanelProps {
   profile: ReadingProfile;
@@ -14,6 +16,13 @@ interface ProfilePanelProps {
   cacheAvailable?: boolean;
   onSetCacheLimit?: (maxBytes: number) => void | Promise<void>;
   onClearCache?: () => void | Promise<void>;
+  profiles?: NamedReadingProfile[];
+  activeProfileId?: string;
+  onSelectProfile?: (profileId: string) => string | undefined;
+  onCreateProfile?: (name: string) => string | undefined;
+  onDuplicateProfile?: () => string | undefined;
+  onRenameProfile?: (name: string) => string | undefined;
+  onDeleteProfile?: () => string | undefined;
 }
 
 const CACHE_LIMITS = [
@@ -56,14 +65,36 @@ export function ProfilePanel({
   cacheAvailable = true,
   onSetCacheLimit = () => undefined,
   onClearCache = () => undefined,
+  profiles = [],
+  activeProfileId = '',
+  onSelectProfile = () => undefined,
+  onCreateProfile = () => undefined,
+  onDuplicateProfile = () => undefined,
+  onRenameProfile = () => undefined,
+  onDeleteProfile = () => undefined,
 }: ProfilePanelProps) {
   const selectedCacheLimit = CACHE_LIMITS.some((limit) => limit.value === cacheInfo.maxBytes)
     ? cacheInfo.maxBytes
     : 2 * 1024 * 1024 * 1024;
   const panelRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const [nameDraft, setNameDraft] = useState(profile.name);
+  const [profileError, setProfileError] = useState<string | undefined>();
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+
+  useEffect(() => {
+    setNameDraft(profile.name);
+    setProfileError(undefined);
+  }, [activeProfileId, profile.name]);
+
+  const runProfileAction = (action: () => string | undefined) => {
+    const error = action();
+    setProfileError(error);
+    if (!error) {
+      setNameDraft('');
+    }
+  };
 
   useEffect(() => {
     const activeElement = document.activeElement;
@@ -129,31 +160,92 @@ export function ProfilePanel({
     >
       <div className="panel-heading">
         <div>
-          <span className="eyebrow">PROFILE / V1</span>
+          <span className="eyebrow">{t('profile.heading')}</span>
           <h2 id="profile-panel-title">{profile.name}</h2>
         </div>
-        <button ref={closeRef} className="panel-close" onClick={onClose} aria-label="Close settings">×</button>
+        <button ref={closeRef} className="panel-close" onClick={onClose} aria-label={t('profile.close')}>×</button>
       </div>
 
       <div className="panel-scroll">
+        <section className="settings-section profile-management-section">
+          <span className="settings-label">{t('profile.named')}</span>
+          <label className="setting-row" htmlFor="profile-select">
+            <span>{t('profile.active')}</span>
+            <select
+              id="profile-select"
+              aria-label={t('profile.activeAria')}
+              value={activeProfileId || profile.id || profiles[0]?.id || ''}
+              onChange={(event) => runProfileAction(() => onSelectProfile(event.target.value))}
+            >
+              {profiles.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}
+            </select>
+          </label>
+          <label className="setting-row setting-row--stacked" htmlFor="profile-name">
+            <span>{t('profile.name')}</span>
+            <input
+              id="profile-name"
+              value={nameDraft}
+              maxLength={80}
+              onChange={(event) => setNameDraft(event.target.value)}
+            />
+          </label>
+          <div className="profile-actions">
+            <button type="button" className="secondary-button" onClick={() => runProfileAction(() => onRenameProfile(nameDraft))}>{t('profile.rename')}</button>
+            <button type="button" className="secondary-button" onClick={() => runProfileAction(() => onCreateProfile(nameDraft))}>{t('profile.new')}</button>
+            <button type="button" className="secondary-button" onClick={() => runProfileAction(onDuplicateProfile)}>{t('profile.duplicate')}</button>
+            <button type="button" className="quiet-button" disabled={profiles.length <= 1} onClick={() => runProfileAction(onDeleteProfile)}>{t('profile.delete')}</button>
+          </div>
+          {profileError && <p className="settings-help profile-error" role="alert">{profileError}</p>}
+          <p className="settings-help">{t('profile.copy')}</p>
+        </section>
+
         <section className="settings-section">
-          <span className="settings-label">Reading surface</span>
+          <span className="settings-label">{t('profile.surface')}</span>
           <label className="setting-row" htmlFor="page-arrangement">
-            <span>Page arrangement</span>
+            <span>{t('profile.arrangement')}</span>
             <select id="page-arrangement" value={profile.mode} onChange={(event) => onChange({ mode: event.target.value as ReadingProfile['mode'] })}>
-              <option value="single">Single page</option>
-              <option value="spread">Two-page spread</option>
+              <option value="single">{t('profile.single')}</option>
+              <option value="spread">{t('profile.spread')}</option>
             </select>
           </label>
           <label className="setting-row" htmlFor="reading-direction">
-            <span>Reading direction</span>
+            <span>{t('profile.direction')}</span>
             <select id="reading-direction" value={profile.direction} onChange={(event) => onChange({ direction: event.target.value as ReadingProfile['direction'] })}>
-              <option value="ltr">Left to right</option>
-              <option value="rtl">Right to left</option>
+              <option value="ltr">{t('profile.ltr')}</option>
+              <option value="rtl">{t('profile.rtl')}</option>
             </select>
           </label>
+          <label className="setting-row" htmlFor="layout-zone">
+            <span>{t('profile.layout')}</span>
+            <select id="layout-zone" value={profile.layoutZone} onChange={(event) => onChange({ layoutZone: event.target.value as ReadingProfile['layoutZone'] })}>
+              <option value="top">{t('profile.top')}</option>
+              <option value="bottom">{t('profile.bottom')}</option>
+              <option value="left">{t('profile.left')}</option>
+              <option value="right">{t('profile.right')}</option>
+            </select>
+          </label>
+          <label className="setting-row" htmlFor="profile-zoom-mode">
+            <span>{t('profile.zoomMode')}</span>
+            <select id="profile-zoom-mode" value={profile.zoomMode} onChange={(event) => onChange({ zoomMode: event.target.value as ReadingProfile['zoomMode'] })}>
+              <option value="page">{t('profile.fitPage')}</option>
+              <option value="width">{t('profile.fitWidth')}</option>
+              <option value="manual">{t('profile.manualZoom')}</option>
+            </select>
+          </label>
+          <label className="setting-row setting-row--stacked" htmlFor="profile-zoom-scale">
+            <span>{t('profile.zoomScale', { percent: Math.round(profile.zoomScale * 100) })}</span>
+            <input
+              id="profile-zoom-scale"
+              type="range"
+              min="0.5"
+              max="3"
+              step="0.05"
+              value={profile.zoomScale}
+              onChange={(event) => onChange({ zoomScale: Number(event.target.value) })}
+            />
+          </label>
           <label className="setting-row setting-row--stacked" htmlFor="turn-duration">
-            <span>Turn duration <strong>{profile.pageTurnDuration} ms</strong></span>
+            <span>{t('profile.turnDuration', { duration: profile.pageTurnDuration })}</span>
             <input
               id="turn-duration"
               type="range"
@@ -167,9 +259,9 @@ export function ProfilePanel({
         </section>
 
         <section className="settings-section">
-          <span className="settings-label">Access</span>
+          <span className="settings-label">{t('profile.access')}</span>
           <label className="toggle-row" htmlFor="reduced-motion">
-            <span><strong>Reduced motion</strong><small>Removes the fold animation and keeps navigation immediate.</small></span>
+            <span><strong>{t('profile.reducedMotion')}</strong><small>{t('profile.reducedMotionCopy')}</small></span>
             <input
               id="reduced-motion"
               type="checkbox"
@@ -178,29 +270,29 @@ export function ProfilePanel({
             />
           </label>
           <label className="setting-row" htmlFor="contrast-mode">
-            <span>Contrast</span>
+            <span>{t('profile.contrast')}</span>
             <select id="contrast-mode" value={profile.contrast} onChange={(event) => onChange({ contrast: event.target.value as ReadingProfile['contrast'] })}>
-              <option value="standard">Paper standard</option>
-              <option value="high">High contrast</option>
+              <option value="standard">{t('profile.standard')}</option>
+              <option value="high">{t('profile.highContrast')}</option>
             </select>
           </label>
         </section>
 
         <section className="settings-section cache-section">
-          <span className="settings-label">Derived page cache</span>
+          <span className="settings-label">{t('profile.cache')}</span>
           <div className="cache-summary" aria-live="polite">
             <div>
               <strong>{formatBytes(cacheInfo.usedBytes)}</strong>
-              <span>used of {formatBytes(cacheInfo.maxBytes)}</span>
+              <span>{t('profile.cacheUsed', { used: formatBytes(cacheInfo.usedBytes), max: formatBytes(cacheInfo.maxBytes) })}</span>
             </div>
-            <span>{cacheInfo.entryCount} derived pages</span>
+            <span>{t('profile.derivedPages', { count: cacheInfo.entryCount })}</span>
           </div>
           <div className="cache-meter" aria-hidden="true">
             <span style={{ width: `${Math.min(100, cacheInfo.maxBytes > 0 ? (cacheInfo.usedBytes / cacheInfo.maxBytes) * 100 : 0)}%` }} />
           </div>
-          {!cacheAvailable && <p className="settings-help cache-help">Cache controls are available in the desktop app.</p>}
+          {!cacheAvailable && <p className="settings-help cache-help">{t('profile.cacheDesktop')}</p>}
           <label className="setting-row" htmlFor="cache-limit">
-            <span>Cache limit</span>
+            <span>{t('profile.cacheLimit')}</span>
             <select
               id="cache-limit"
               disabled={!cacheAvailable}
@@ -212,21 +304,21 @@ export function ProfilePanel({
               ))}
             </select>
           </label>
-          {cacheAvailable && <p className="settings-help cache-help">Only derived pages are removed. Original files are never removed.</p>}
-          <button className="secondary-button cache-clear-button" type="button" disabled={!cacheAvailable} aria-label="Clear derived cache" onClick={() => void onClearCache()}>
-            Clear cache now
+          {cacheAvailable && <p className="settings-help cache-help">{t('profile.cacheHelp')}</p>}
+          <button className="secondary-button cache-clear-button" type="button" disabled={!cacheAvailable} aria-label={t('profile.clearCacheAria')} onClick={() => void onClearCache()}>
+            {t('profile.clearCache')}
           </button>
         </section>
 
         <section className="settings-section">
-          <span className="settings-label">Keyboard actions</span>
-          <p className="settings-help">Choose an action, then press a key. Conflicts are rejected so the route back to the library remains available.</p>
+          <span className="settings-label">{t('profile.keyboard')}</span>
+          <p className="settings-help">{t('profile.keyboardHelp')}</p>
           <div className="binding-list">
             {profileActions.map((action) => (
               <div className="binding-row" key={action}>
-                <span>{ACTION_LABELS[action]}</span>
+                <span>{actionLabel(action)}</span>
                 <button className={capturingAction === action ? 'binding-key binding-key--waiting' : 'binding-key'} onClick={() => onStartCapture(action)}>
-                  {capturingAction === action ? 'Press a key…' : bindingLabel(profile.bindings[action][0] ?? 'Unassigned')}
+                  {capturingAction === action ? t('profile.pressKey') : bindingLabel(profile.bindings[action][0] ?? t('profile.unassigned'))}
                 </button>
               </div>
             ))}
@@ -235,8 +327,8 @@ export function ProfilePanel({
       </div>
 
       <div className="panel-footer">
-        <button className="quiet-button" onClick={onReset}>Reset profile</button>
-        <span>Saved on this device</span>
+        <button className="quiet-button" onClick={onReset}>{t('profile.reset')}</button>
+        <span>{t('profile.saved')}</span>
       </div>
     </aside>
   );

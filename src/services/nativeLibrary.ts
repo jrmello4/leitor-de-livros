@@ -2,6 +2,7 @@ import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { calculateProgress } from '../domain/reader';
 import { defaultReaderState, normalizeReaderState } from '../domain/readerState';
+import { getActiveProfile, migrateProfileStore, type ProfileStore } from '../domain/profiles';
 import type {
   Bookmark,
   CacheInfo,
@@ -12,11 +13,11 @@ import type {
   ReadingProfile,
 } from '../domain/types';
 import { isPanelGraph, type PanelGraph } from '../domain/flow';
-import { cloneBindings } from '../domain/input';
+import { t } from '../i18n/catalog';
 import {
   clearPublicationStorage,
   loadBookmarks,
-  loadProfile,
+  loadProfileStore,
   loadReaderState,
   saveBookmarks,
   saveFavorite,
@@ -100,7 +101,7 @@ export async function importNativePaths(
   direction: ReadingDirection,
 ): Promise<{ publications: Publication[]; diagnostics: string[] }> {
   if (!isNativeRuntime()) {
-    return { publications: [], diagnostics: ['Native import is not available in the browser.'] };
+    return { publications: [], diagnostics: [t('import.nativeUnavailable')] };
   }
 
   const result = await invoke<unknown>('import_publications', { paths });
@@ -119,18 +120,34 @@ export async function saveNativeProgress(publicationId: string, currentPage: num
 }
 
 export async function loadNativeProfile(): Promise<ReadingProfile | null> {
+  const store = await loadNativeProfileStore();
+  return store ? getActiveProfile(store) : null;
+}
+
+export async function loadNativeProfileStore(): Promise<ProfileStore | null> {
   if (!isNativeRuntime()) {
     return null;
   }
   const stored = await invoke<unknown | null>('load_profile');
-  return hydrateProfile(stored);
+  return hydrateProfileStore(stored);
 }
 
 export async function saveNativeProfile(profile: ReadingProfile): Promise<void> {
+  const store = loadProfileStore();
+  const active = getActiveProfile(store);
+  await saveNativeProfileStore({
+    ...store,
+    profiles: store.profiles.map((candidate) => candidate.id === active.id
+      ? { ...candidate, ...profile, id: candidate.id, version: 1 as const }
+      : candidate),
+  });
+}
+
+export async function saveNativeProfileStore(store: ProfileStore): Promise<void> {
   if (!isNativeRuntime()) {
     return;
   }
-  await invoke('save_profile', { profile });
+  await invoke('save_profile', { profile: store });
 }
 
 export async function loadNativePanelGraph(publicationId: string, pageId: string): Promise<PanelGraph | null> {
@@ -426,18 +443,9 @@ function normalizeSelection(selection: string | string[] | null): string[] {
   return Array.isArray(selection) ? selection : [selection];
 }
 
-function hydrateProfile(value: unknown): ReadingProfile | null {
-  if (!value || typeof value !== 'object') {
+function hydrateProfileStore(value: unknown): ProfileStore | null {
+  if (value === null || value === undefined) {
     return null;
   }
-  const candidate = value as Partial<ReadingProfile>;
-  if (candidate.version !== 1) {
-    return null;
-  }
-  const fallback = loadProfile();
-  return {
-    ...fallback,
-    ...candidate,
-    bindings: cloneBindings(candidate.bindings ?? fallback.bindings),
-  };
+  return migrateProfileStore(value);
 }

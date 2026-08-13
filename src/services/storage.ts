@@ -1,25 +1,20 @@
-import { cloneBindings, DEFAULT_BINDINGS } from '../domain/input';
-import type { BindingMap, ReadingProfile } from '../domain/types';
+import {
+  createDefaultProfileStore,
+  getActiveProfile,
+  migrateProfileStore,
+  type ProfileStore,
+  validateProfileStore,
+} from '../domain/profiles';
+import type { ReadingProfile } from '../domain/types';
 import type { Bookmark, ReaderState } from '../domain/types';
 import { defaultReaderState, normalizeReaderState } from '../domain/readerState';
 
 const PROFILE_KEY = 'tactile-reader/profile/v1';
+const PROFILE_STORE_KEY = 'tactile-reader/profiles/v2';
 const PROGRESS_KEY = 'tactile-reader/progress/v1';
 const FAVORITES_KEY = 'tactile-reader/favorites/v1';
 const BOOKMARKS_KEY = 'tactile-reader/bookmarks/v1';
 const READER_STATE_KEY = 'tactile-reader/reader-state/v1';
-
-const defaultProfile: ReadingProfile = {
-  version: 1,
-  name: 'Paper Atelier',
-  mode: 'single',
-  direction: 'ltr',
-  contrast: 'standard',
-  reducedMotion: false,
-  pageTurnDuration: 420,
-  layoutZone: 'top',
-  bindings: cloneBindings(DEFAULT_BINDINGS),
-};
 
 function getStorage(): Storage | null {
   try {
@@ -29,34 +24,62 @@ function getStorage(): Storage | null {
   }
 }
 
-export function loadProfile(): ReadingProfile {
+export function loadProfileStore(): ProfileStore {
   const storage = getStorage();
   if (!storage) {
-    return { ...defaultProfile, bindings: cloneBindings(defaultProfile.bindings) };
+    return createDefaultProfileStore();
   }
 
   try {
-    const stored = JSON.parse(storage.getItem(PROFILE_KEY) ?? 'null') as Partial<ReadingProfile> | null;
-    if (!stored || stored.version !== 1) {
-      return { ...defaultProfile, bindings: cloneBindings(defaultProfile.bindings) };
+    const currentJson = storage.getItem(PROFILE_STORE_KEY);
+    const legacyJson = storage.getItem(PROFILE_KEY);
+    const stored = JSON.parse(currentJson ?? legacyJson ?? 'null') as unknown;
+    const migrated = migrateProfileStore(stored);
+    if (currentJson === null || (isLegacyProfile(stored) && validateProfileStore(stored).ok === false)) {
+      writeProfileStore(storage, migrated);
     }
-
-    return {
-      ...defaultProfile,
-      ...stored,
-      bindings: cloneBindings((stored.bindings as BindingMap | undefined) ?? defaultProfile.bindings),
-    };
+    return migrated;
   } catch {
-    return { ...defaultProfile, bindings: cloneBindings(defaultProfile.bindings) };
+    return createDefaultProfileStore();
+  }
+}
+
+export function loadProfile(): ReadingProfile {
+  return getActiveProfile(loadProfileStore());
+}
+
+export function saveProfileStore(store: ProfileStore): boolean {
+  const validation = validateProfileStore(store);
+  if (!validation.ok) {
+    return false;
+  }
+  const storage = getStorage();
+  if (!storage) {
+    return false;
+  }
+  try {
+    writeProfileStore(storage, validation.value);
+    return true;
+  } catch {
+    return false;
   }
 }
 
 export function saveProfile(profile: ReadingProfile): void {
-  getStorage()?.setItem(PROFILE_KEY, JSON.stringify(profile));
+  const store = loadProfileStore();
+  const active = getActiveProfile(store);
+  const nextStore = {
+    ...store,
+    profiles: store.profiles.map((candidate) => candidate.id === active.id
+      ? { ...candidate, ...profile, id: candidate.id, version: 1 as const }
+      : candidate),
+  };
+  saveProfileStore(nextStore);
 }
 
 export function hasStoredProfile(): boolean {
-  return getStorage()?.getItem(PROFILE_KEY) !== null;
+  const storage = getStorage();
+  return storage?.getItem(PROFILE_STORE_KEY) !== null || storage?.getItem(PROFILE_KEY) !== null;
 }
 
 export function loadProgress(publicationId: string): number {
@@ -88,10 +111,25 @@ export function saveProgress(publicationId: string, pageIndex: number): void {
   }
 }
 
-export function resetProfile(): ReadingProfile {
+export function resetProfileStore(): ProfileStore {
   const storage = getStorage();
+  storage?.removeItem(PROFILE_STORE_KEY);
   storage?.removeItem(PROFILE_KEY);
-  return { ...defaultProfile, bindings: cloneBindings(defaultProfile.bindings) };
+  return createDefaultProfileStore();
+}
+
+export function resetProfile(): ReadingProfile {
+  return getActiveProfile(resetProfileStore());
+}
+
+function writeProfileStore(storage: Storage, store: ProfileStore): void {
+  storage.setItem(PROFILE_STORE_KEY, JSON.stringify(store));
+  storage.removeItem(PROFILE_KEY);
+}
+
+function isLegacyProfile(value: unknown): value is { version: 1 } {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    && (value as { version?: unknown }).version === 1;
 }
 
 export function loadFavorites(): string[] {

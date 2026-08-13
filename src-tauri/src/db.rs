@@ -764,12 +764,7 @@ impl LibraryDb {
             }
             paths
         };
-        remove_derived_files_except(
-            &cache_root,
-            &cache_root,
-            &origin_paths,
-            &protected_paths,
-        )?;
+        remove_derived_files_except(&cache_root, &cache_root, &origin_paths, &protected_paths)?;
 
         let entries = {
             let mut statement = connection.prepare(
@@ -793,14 +788,8 @@ impl LibraryDb {
             if protected.contains(&page_id) {
                 continue;
             }
-            transaction.execute(
-                "DELETE FROM cache_entries WHERE page_id = ?1",
-                [&page_id],
-            )?;
-            transaction.execute(
-                "UPDATE pages SET cache_path = '' WHERE id = ?1",
-                [&page_id],
-            )?;
+            transaction.execute("DELETE FROM cache_entries WHERE page_id = ?1", [&page_id])?;
+            transaction.execute("UPDATE pages SET cache_path = '' WHERE id = ?1", [&page_id])?;
         }
         for publication_id in affected_publications {
             mark_publication_cache_missing(&transaction, &publication_id)?;
@@ -831,11 +820,7 @@ impl LibraryDb {
         // fails, the publication row and all dependent metadata remain intact.
         // Origins are deliberately skipped, including origins that happen to
         // be located inside the derived-cache tree.
-        let staging_root = cache_root.join(format!(
-            ".{}.{}.delete",
-            publication_id,
-            now()
-        ));
+        let staging_root = cache_root.join(format!(".{}.{}.delete", publication_id, now()));
         let mut staged_files = Vec::new();
         if cache_publication_dir.exists() {
             std::fs::create_dir_all(&staging_root)?;
@@ -883,10 +868,8 @@ impl LibraryDb {
                     [publication_id],
                 )?;
             }
-            let deleted = transaction.execute(
-                "DELETE FROM publications WHERE id = ?1",
-                [publication_id],
-            )?;
+            let deleted =
+                transaction.execute("DELETE FROM publications WHERE id = ?1", [publication_id])?;
             if deleted != 1 {
                 return Err(CoreError::from("publication disappeared during removal"));
             }
@@ -925,11 +908,11 @@ impl LibraryDb {
     }
 
     pub fn save_profile(&self, profile: &Value) -> CoreResult<()> {
+        let version = validate_profile_payload(profile)?;
         let connection = self
             .connection
             .lock()
             .map_err(|_| CoreError::from("database lock poisoned"))?;
-        let version = profile.get("version").and_then(Value::as_i64).unwrap_or(1);
         connection.execute(
             "INSERT INTO profiles (id, version, payload_json, updated_at)
              VALUES ('default', ?1, ?2, ?3)
@@ -1519,12 +1502,7 @@ fn remove_derived_files_except(
         let path = entry.path();
         let file_type = entry.file_type()?;
         if file_type.is_dir() {
-            remove_derived_files_except(
-                cache_root,
-                &path,
-                origin_paths,
-                protected_paths,
-            )?;
+            remove_derived_files_except(cache_root, &path, origin_paths, protected_paths)?;
             if path.read_dir()?.next().is_none() {
                 std::fs::remove_dir(path)?;
             }
@@ -1541,6 +1519,162 @@ fn remove_derived_files_except(
     Ok(())
 }
 
+fn validate_profile_payload(profile: &Value) -> CoreResult<i64> {
+    let object = profile
+        .as_object()
+        .ok_or_else(|| CoreError::from("profile payload must be an object"))?;
+    let version = object
+        .get("version")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| CoreError::from("profile payload version is required"))?;
+    match version {
+        1 => {
+            validate_profile_object(object, false)?;
+            Ok(1)
+        }
+        2 => {
+            let active_id = object
+                .get("activeProfileId")
+                .and_then(Value::as_str)
+                .filter(|value| is_valid_profile_id(value))
+                .ok_or_else(|| CoreError::from("active profile id is invalid"))?;
+            let profiles = object
+                .get("profiles")
+                .and_then(Value::as_array)
+                .filter(|profiles| !profiles.is_empty())
+                .ok_or_else(|| CoreError::from("profile store must contain a profile"))?;
+            let mut ids = HashSet::new();
+            for profile in profiles {
+                let profile_object = profile
+                    .as_object()
+                    .ok_or_else(|| CoreError::from("profile must be an object"))?;
+                validate_profile_object(profile_object, true)?;
+                let id = profile_object
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| CoreError::from("profile id is required"))?;
+                if !ids.insert(id.to_owned()) {
+                    return Err(CoreError::from("profile ids must be unique"));
+                }
+            }
+            if !ids.contains(active_id) {
+                return Err(CoreError::from("active profile must exist"));
+            }
+            Ok(2)
+        }
+        _ => Err(CoreError::from("profile payload version is not supported")),
+    }
+}
+
+fn validate_profile_object(
+    profile: &serde_json::Map<String, Value>,
+    require_zoom: bool,
+) -> CoreResult<()> {
+    if profile.get("version").and_then(Value::as_i64) != Some(1) {
+        return Err(CoreError::from("profile version is not supported"));
+    }
+    if require_zoom {
+        let id = profile
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|value| is_valid_profile_id(value))
+            .ok_or_else(|| CoreError::from("profile id is invalid"))?;
+        if id.is_empty() {
+            return Err(CoreError::from("profile id is invalid"));
+        }
+    }
+    let name = profile
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && value.chars().count() <= 80)
+        .ok_or_else(|| CoreError::from("profile name is invalid"))?;
+    if name.is_empty() {
+        return Err(CoreError::from("profile name is invalid"));
+    }
+    validate_enum(profile, "mode", &["single", "spread"])?;
+    validate_enum(profile, "direction", &["ltr", "rtl"])?;
+    validate_enum(profile, "contrast", &["standard", "high"])?;
+    validate_enum(profile, "layoutZone", &["top", "bottom", "left", "right"])?;
+    if require_zoom || profile.contains_key("zoomMode") {
+        validate_enum(profile, "zoomMode", &["page", "width", "manual"])?;
+    }
+    if profile
+        .get("reducedMotion")
+        .and_then(Value::as_bool)
+        .is_none()
+    {
+        return Err(CoreError::from("reduced motion must be boolean"));
+    }
+    let duration = profile
+        .get("pageTurnDuration")
+        .and_then(Value::as_i64)
+        .filter(|value| (120..=1200).contains(value))
+        .ok_or_else(|| CoreError::from("turn duration is invalid"))?;
+    let _ = duration;
+    if require_zoom || profile.contains_key("zoomScale") {
+        let scale = profile
+            .get("zoomScale")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite() && (0.5..=3.0).contains(value))
+            .ok_or_else(|| CoreError::from("zoom scale is invalid"))?;
+        let _ = scale;
+    }
+    let bindings = profile
+        .get("bindings")
+        .and_then(Value::as_object)
+        .ok_or_else(|| CoreError::from("bindings must be an object"))?;
+    for action in [
+        "next_page",
+        "previous_page",
+        "toggle_library",
+        "toggle_fullscreen",
+        "toggle_settings",
+        "toggle_spread",
+        "cancel",
+    ] {
+        let valid = bindings
+            .get(action)
+            .and_then(Value::as_array)
+            .map(|codes| {
+                codes.len() <= 2
+                    && codes.iter().all(|code| {
+                        code.as_str()
+                            .map(|value| !value.is_empty() && value.chars().count() <= 64)
+                            .unwrap_or(false)
+                    })
+            })
+            .unwrap_or(false);
+        if !valid {
+            return Err(CoreError::from("bindings contain an invalid action"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_enum(
+    profile: &serde_json::Map<String, Value>,
+    field: &str,
+    allowed: &[&str],
+) -> CoreResult<()> {
+    let value = profile
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| CoreError::from(format!("{field} is required")))?;
+    if !allowed.contains(&value) {
+        return Err(CoreError::from(format!("{field} is invalid")));
+    }
+    Ok(())
+}
+
+fn is_valid_profile_id(value: &str) -> bool {
+    value.len() >= 2
+        && value.len() <= 80
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-')
+}
+
 fn stage_derived_files(
     cache_root: &Path,
     directory: &Path,
@@ -1553,13 +1687,7 @@ fn stage_derived_files(
         let path = entry.path();
         let file_type = entry.file_type()?;
         if file_type.is_dir() {
-            stage_derived_files(
-                cache_root,
-                &path,
-                origin_paths,
-                staging_root,
-                staged_files,
-            )?;
+            stage_derived_files(cache_root, &path, origin_paths, staging_root, staged_files)?;
             continue;
         }
 
@@ -1729,6 +1857,62 @@ mod tests {
             )
             .expect("default cache limit");
         assert_eq!(cache_limit, TWO_GIB);
+    }
+
+    #[test]
+    fn profile_ipc_payload_validates_named_profile_schema() {
+        let root = temporary_root("profile-validation");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        let valid = serde_json::json!({
+            "version": 2,
+            "activeProfileId": "paper-atelier",
+            "profiles": [{
+                "id": "paper-atelier",
+                "version": 1,
+                "name": "Paper Atelier",
+                "mode": "single",
+                "direction": "ltr",
+                "contrast": "standard",
+                "reducedMotion": false,
+                "pageTurnDuration": 420,
+                "layoutZone": "top",
+                "zoomMode": "page",
+                "zoomScale": 1.0,
+                "bindings": {
+                    "next_page": ["ArrowRight"],
+                    "previous_page": ["ArrowLeft"],
+                    "toggle_library": ["KeyL"],
+                    "toggle_fullscreen": ["KeyF"],
+                    "toggle_settings": ["KeyS"],
+                    "toggle_spread": ["KeyM"],
+                    "cancel": ["Escape"]
+                }
+            }]
+        });
+        database.save_profile(&valid).expect("valid profile");
+        assert_eq!(
+            database.load_profile().expect("load profile"),
+            Some(valid.clone())
+        );
+
+        for (field, value) in [
+            ("direction", "diagonal"),
+            ("zoomMode", "warp"),
+            ("layoutZone", "center"),
+        ] {
+            let mut invalid = valid.clone();
+            invalid["profiles"][0][field] = serde_json::json!(value);
+            assert!(
+                database.save_profile(&invalid).is_err(),
+                "{field} should be rejected"
+            );
+        }
+        assert_eq!(
+            database.load_profile().expect("load after rejected writes"),
+            Some(valid)
+        );
+        drop(database);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -2274,8 +2458,14 @@ mod tests {
 
         assert!(result.is_err(), "invalid cache path must fail removal");
         assert_eq!(database.list_publications().expect("publications").len(), 1);
-        assert_eq!(std::fs::read(&source_path).expect("source remains"), source_bytes);
-        assert!(cache_path.is_file(), "failed cleanup must leave the cache path intact");
+        assert_eq!(
+            std::fs::read(&source_path).expect("source remains"),
+            source_bytes
+        );
+        assert!(
+            cache_path.is_file(),
+            "failed cleanup must leave the cache path intact"
+        );
 
         drop(database);
         std::fs::remove_dir_all(root).expect("cleanup database");

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { flowResolution, orderedPanels, type PanelGraph } from '../domain/flow';
+import { t } from '../i18n/catalog';
 
 interface AdaptiveFlowOverlayProps {
   graph: PanelGraph | null;
@@ -14,29 +15,29 @@ interface AdaptiveFlowOverlayProps {
 function statusLabel(graph: PanelGraph): string {
   switch (flowResolution(graph)) {
     case 'manual':
-      return 'Full-page reading active';
+      return t('flow.manual');
     case 'review':
-      return 'Panel guidance needs a check';
+      return t('flow.review');
     default:
-      return 'Panel guidance ready';
+      return t('flow.ready');
   }
 }
 
 function guidanceLabel(graph: PanelGraph, canCorrectOrder: boolean, hasSelection: boolean): string {
   switch (flowResolution(graph)) {
     case 'manual':
-      return 'Assistance is off for this page; the full composition stays intact.';
+      return t('flow.manualCopy');
     case 'review':
       if (canCorrectOrder) {
         return hasSelection
-          ? 'Choose the second marker to swap, or read the full page.'
-          : 'The suggested order is uncertain. Choose two markers to swap, or read the full page.';
+          ? t('flow.reviewSwap')
+          : t('flow.reviewUncertain');
       }
-      return 'The suggestion is uncertain. Read the full page to keep the composition intact.';
+      return t('flow.reviewKeep');
     default:
       return canCorrectOrder
-        ? (hasSelection ? 'Choose the second marker to swap.' : 'Choose two markers to correct the order.')
-        : 'The full-page route keeps reading uninterrupted.';
+        ? (hasSelection ? t('flow.chooseSecond') : t('flow.chooseTwo'))
+        : t('flow.fullPageRoute');
   }
 }
 
@@ -62,7 +63,7 @@ export function AdaptiveFlowOverlay({
   if (isAnalyzing || !graph) {
     return (
       <div className="flow-overlay" aria-live="polite">
-        <span className="flow-overlay-note">Mapping page locally…</span>
+        <span className="flow-overlay-note">{t('flow.mapping')}</span>
       </div>
     );
   }
@@ -87,7 +88,7 @@ export function AdaptiveFlowOverlay({
   };
 
   return (
-    <div className="flow-overlay" aria-label="Adaptive Flow panel order">
+    <div className="flow-overlay" aria-label={t('flow.label')}>
       <section className="flow-overlay-legend" data-flow-control aria-labelledby="flow-overlay-title">
         <span id="flow-overlay-title">FLOW / {String(panels.length).padStart(2, '0')}</span>
         <strong>{statusLabel(graph)}</strong>
@@ -98,9 +99,9 @@ export function AdaptiveFlowOverlay({
             data-flow-control
             type="button"
             onClick={onUseManualRoute}
-            aria-label="Read this page as one full page"
+            aria-label={t('flow.readFullPage')}
           >
-            Read full page
+            {t('flow.readFullPageButton')}
           </button>
         )}
       </section>
@@ -111,8 +112,8 @@ export function AdaptiveFlowOverlay({
           key={panel.id}
           type="button"
           aria-label={canCorrectOrder
-            ? `Panel ${index + 1}. ${firstSelection ? 'Choose as the second panel to swap.' : 'Choose as the first panel to swap.'}`
-            : `Panel ${index + 1}. Full-page reading route.`}
+            ? (firstSelection ? t('flow.panelSecond', { page: index + 1 }) : t('flow.panelFirst', { page: index + 1 }))
+            : t('flow.panelRoute', { page: index + 1 })}
           aria-pressed={firstSelection === panel.id}
           disabled={!canCorrectOrder}
           onPointerDown={(event) => event.stopPropagation()}

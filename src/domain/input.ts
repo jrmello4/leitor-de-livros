@@ -1,14 +1,19 @@
 import type { ActionName, BindingMap } from './types';
+import { t } from '../i18n/catalog';
 
 export const ACTION_LABELS: Record<ActionName, string> = {
-  next_page: 'Next page',
-  previous_page: 'Previous page',
-  toggle_library: 'Open library',
-  toggle_fullscreen: 'Fullscreen',
-  toggle_settings: 'Reader settings',
-  toggle_spread: 'Toggle spread',
-  cancel: 'Back / cancel',
+  next_page: t('input.next_page'),
+  previous_page: t('input.previous_page'),
+  toggle_library: t('input.toggle_library'),
+  toggle_fullscreen: t('input.toggle_fullscreen'),
+  toggle_settings: t('input.toggle_settings'),
+  toggle_spread: t('input.toggle_spread'),
+  cancel: t('input.cancel'),
 };
+
+export function actionLabel(action: ActionName): string {
+  return t(`input.${action}`);
+}
 
 export const DEFAULT_BINDINGS: BindingMap = {
   next_page: ['ArrowRight', 'PageDown'],

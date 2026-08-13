@@ -1,11 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createDemoPublication } from '../data/demo';
-import { canRunActionWhileSettingsOpen, InputMap } from '../domain/input';
+import { actionLabel, canRunActionWhileSettingsOpen, InputMap } from '../domain/input';
 import { createPageSelectionCoordinator, selectLatestPage, type PageSelectionRequest } from '../domain/pageSelection';
 import { calculateProgress, movePage, clamp, visiblePageIndexes } from '../domain/reader';
 import { nextBookmark, type LibrarySort } from '../domain/library';
+import {
+  createDefaultProfile,
+  createProfile,
+  deleteProfile,
+  duplicateProfile,
+  getActiveProfile,
+  renameProfile,
+  selectProfile,
+  updateProfile as updateNamedProfile,
+  type ProfileMutation,
+  type ProfileStore,
+} from '../domain/profiles';
 import { defaultReaderState } from '../domain/readerState';
 import type { ActionName, Bookmark, CacheInfo, PageDescriptor, Publication, ReaderState, ReadingProfile } from '../domain/types';
+import { t } from '../i18n/catalog';
 import { importFiles } from '../services/importers';
 import {
   chooseNativeFiles,
@@ -13,8 +26,8 @@ import {
   importNativePaths,
   isNativeRuntime,
   listNativePublications,
-  loadNativeProfile,
-  saveNativeProfile,
+  loadNativeProfileStore,
+  saveNativeProfileStore,
   saveNativeProgress,
   clearNativeCache,
   deleteNativePublication,
@@ -30,7 +43,13 @@ import {
   saveReaderStateForPublication,
   toggleFavoriteForPublication,
 } from '../services/readerState';
-import { hasStoredProfile, loadFavorites, loadProfile, loadProgress, resetProfile, saveProfile, saveProgress } from '../services/storage';
+import {
+  loadFavorites,
+  loadProfileStore,
+  loadProgress,
+  saveProfileStore,
+  saveProgress,
+} from '../services/storage';
 import { LibraryView } from './LibraryView';
 import { ProfilePanel } from './ProfilePanel';
 import { ReaderView } from './ReaderView';
@@ -65,7 +84,8 @@ const DEFAULT_CACHE_INFO: CacheInfo = {
 
 export function App() {
   const nativeRuntime = isNativeRuntime();
-  const [profile, setProfile] = useState<ReadingProfile>(() => loadProfile());
+  const [profileStore, setProfileStore] = useState<ProfileStore>(() => loadProfileStore());
+  const profile = useMemo(() => getActiveProfile(profileStore), [profileStore]);
   const [library, setLibrary] = useState<Publication[]>(() => initialLibrary(profile.direction));
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showProfile, setShowProfile] = useState(false);
@@ -78,11 +98,13 @@ export function App() {
   const [cacheInfo, setCacheInfo] = useState<CacheInfo>(DEFAULT_CACHE_INFO);
   const [isImporting, setIsImporting] = useState(false);
   const [diagnostic, setDiagnostic] = useState<string | undefined>();
-  const [announcement, setAnnouncement] = useState('Library ready.');
+  const [announcement, setAnnouncement] = useState(() => t('app.libraryReady'));
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
   const metadataGenerationRef = useRef(0);
   const favoriteInFlightRef = useRef(new Set<string>());
   const pageSelectionCoordinatorRef = useRef(createPageSelectionCoordinator());
+  const profileStoreRef = useRef(profileStore);
+  profileStoreRef.current = profileStore;
 
   const activePublication = library.find((publication) => publication.id === activeId);
   const activePublicationIdRef = useRef<string | null>(activePublication?.id ?? null);
@@ -97,7 +119,7 @@ export function App() {
     try {
       setCacheInfo(await getNativeCacheInfo());
     } catch {
-      setDiagnostic('Cache usage could not be read. Your original files were not modified.');
+      setDiagnostic(t('app.cacheUsageError'));
     }
   }, []);
 
@@ -119,7 +141,7 @@ export function App() {
       setReaderStates(Object.fromEntries(metadata.filter((entry) => publicationIds.has(entry.id)).map((entry) => [entry.id, entry.readerState])));
     } catch {
       if (generation === metadataGenerationRef.current) {
-        setDiagnostic('Reader metadata could not be restored. Reading can continue in memory.');
+        setDiagnostic(t('app.metadataError'));
       }
     }
   }, []);
@@ -200,26 +222,28 @@ export function App() {
     let cancelled = false;
     const bootNativeLibrary = async () => {
       try {
-        const nativeProfile = await loadNativeProfile();
-        const nextProfile = nativeProfile ?? profile;
-        if (!nativeProfile) {
-          await saveNativeProfile(hasStoredProfile() ? profile : nextProfile);
-        }
+        const nativeProfileStore = await loadNativeProfileStore();
+        const nextProfileStore = nativeProfileStore ?? profileStoreRef.current;
+        const nextProfile = getActiveProfile(nextProfileStore);
+        // Saving the normalized store also upgrades a legacy flat native row
+        // after it has been migrated in memory.
+        await saveNativeProfileStore(nextProfileStore);
         const nativeLibrary = await listNativePublications(nextProfile.direction);
         if (cancelled) {
           return;
         }
-        if (nativeProfile) {
-          setProfile(nativeProfile);
+        if (nativeProfileStore) {
+          setProfileStore(nativeProfileStore);
+          profileStoreRef.current = nativeProfileStore;
         }
         setLibrary(nativeLibrary);
         void hydrateMetadata(nativeLibrary);
         void refreshCacheInfo();
-        setAnnouncement(nativeLibrary.length > 0 ? 'Native library ready.' : 'Native library is empty.');
+        setAnnouncement(nativeLibrary.length > 0 ? t('app.nativeLibraryReady') : t('app.nativeLibraryEmpty'));
       } catch {
         if (!cancelled) {
-          setDiagnostic('The native library could not be opened. Your original files were not modified.');
-          setAnnouncement('Native library unavailable.');
+          setDiagnostic(t('app.nativeOpenError'));
+          setAnnouncement(t('app.nativeUnavailable'));
         }
       }
     };
@@ -239,18 +263,91 @@ export function App() {
     void refreshCacheInfo();
   }, [hydrateMetadata, library, nativeRuntime, refreshCacheInfo]);
 
-  const updateProfile = useCallback((patch: Partial<ReadingProfile>) => {
-    setProfile((current) => {
-      const next = { ...current, ...patch };
-      saveProfile(next);
-      if (nativeRuntime) {
-        void saveNativeProfile(next).catch(() => {
-          setDiagnostic('Reader preferences could not be saved to the native library.');
-        });
-      }
-      return next;
-    });
+  const persistProfileStore = useCallback((store: ProfileStore) => {
+    if (!saveProfileStore(store)) {
+      setDiagnostic(t('app.profileSaveError'));
+    }
+    if (nativeRuntime) {
+      void saveNativeProfileStore(store).catch(() => {
+        setDiagnostic(t('app.nativeProfileSaveError'));
+      });
+    }
   }, [nativeRuntime]);
+
+  const applyProfileZoom = useCallback((nextProfile: ReadingProfile) => {
+    const currentId = activeIdRef.current;
+    if (!currentId) {
+      return;
+    }
+    setReaderStates((current) => ({
+      ...current,
+      [currentId]: {
+        ...(current[currentId] ?? defaultReaderState),
+        zoomMode: nextProfile.zoomMode,
+        zoomScale: nextProfile.zoomScale,
+        panX: 0,
+        panY: 0,
+      },
+    }));
+  }, []);
+
+  const commitProfileMutation = useCallback((mutation: ProfileMutation, message: string): string | undefined => {
+    if (!mutation.ok) {
+      setDiagnostic(mutation.error);
+      return mutation.error;
+    }
+    setProfileStore(mutation.store);
+    profileStoreRef.current = mutation.store;
+    persistProfileStore(mutation.store);
+    applyProfileZoom(getActiveProfile(mutation.store));
+    setCapturingAction(null);
+    setAnnouncement(message);
+    return undefined;
+  }, [applyProfileZoom, persistProfileStore]);
+
+  const updateProfile = useCallback((patch: Partial<ReadingProfile>) => {
+    const mutation = updateNamedProfile(
+      profileStoreRef.current,
+      profileStoreRef.current.activeProfileId,
+      patch,
+    );
+    commitProfileMutation(mutation, t('app.profileUpdated'));
+  }, [commitProfileMutation]);
+
+  const selectReadingProfile = useCallback((profileId: string) => (
+    commitProfileMutation(
+      selectProfile(profileStoreRef.current, profileId),
+      t('app.profileSelected'),
+    )
+  ), [commitProfileMutation]);
+
+  const createReadingProfile = useCallback((name: string) => (
+    commitProfileMutation(
+      createProfile(profileStoreRef.current, name),
+      t('app.profileCreated'),
+    )
+  ), [commitProfileMutation]);
+
+  const duplicateReadingProfile = useCallback(() => (
+    commitProfileMutation(
+      duplicateProfile(profileStoreRef.current, profileStoreRef.current.activeProfileId),
+      t('app.profileDuplicated'),
+    )
+  ), [commitProfileMutation]);
+
+  const renameReadingProfile = useCallback((name: string) => (
+    commitProfileMutation(
+      renameProfile(profileStoreRef.current, profileStoreRef.current.activeProfileId, name),
+      t('app.profileRenamed'),
+    )
+  ), [commitProfileMutation]);
+
+  const deleteReadingProfile = useCallback(() => (
+    commitProfileMutation(
+      deleteProfile(profileStoreRef.current, profileStoreRef.current.activeProfileId),
+      t('app.profileDeleted'),
+    )
+  ), [commitProfileMutation]);
 
   const updatePublication = useCallback((id: string, updater: (publication: Publication) => Publication) => {
     setLibrary((current) => current.map((publication) => (publication.id === id ? updater(publication) : publication)));
@@ -265,9 +362,9 @@ export function App() {
     try {
       await toggleFavoriteForPublication(publication.id, nextFavorite);
       updatePublication(publication.id, (current) => ({ ...current, isFavorite: nextFavorite }));
-      setAnnouncement(nextFavorite ? `${publication.title} added to favorites.` : `${publication.title} removed from favorites.`);
+      setAnnouncement(nextFavorite ? t('app.favoriteAdded', { title: publication.title }) : t('app.favoriteRemoved', { title: publication.title }));
     } catch {
-      setDiagnostic('Favorite could not be saved. Your reading data was not changed.');
+      setDiagnostic(t('app.favoriteSaveError'));
     } finally {
       favoriteInFlightRef.current.delete(publication.id);
     }
@@ -295,9 +392,9 @@ export function App() {
         setActiveId(null);
       }
       await refreshCacheInfo();
-      setAnnouncement(`${publication.title} removed. Original files were preserved.`);
+      setAnnouncement(t('app.publicationRemoved', { title: publication.title }));
     } catch {
-      setDiagnostic('The publication could not be removed. Your original files were not modified.');
+      setDiagnostic(t('app.publicationRemoveError'));
       throw new Error('delete-publication-failed');
     }
   }, [activeId, refreshCacheInfo]);
@@ -318,10 +415,10 @@ export function App() {
       void hydrateMetadata(refreshedLibrary);
       await refreshCacheInfo();
       if (incomplete) {
-        setDiagnostic('Some pages could not be rebuilt yet; the original files were preserved. They will retry when opened.');
-        setAnnouncement('Cache limit saved with some pages unavailable until opened.');
+        setDiagnostic(t('app.cacheRebuildIncomplete'));
+        setAnnouncement(t('app.cacheLimitSavedIncomplete'));
       } else {
-        setAnnouncement('Cache limit saved.');
+        setAnnouncement(t('app.cacheLimitSaved'));
       }
     } catch {
       if (limitApplied) {
@@ -330,9 +427,9 @@ export function App() {
         setLibrary([]);
         setBookmarks({});
         setReaderStates({});
-        setDiagnostic('Cache limit was saved, but the library could not be refreshed. Reopen the app to reload it; original files were preserved.');
+        setDiagnostic(t('app.cacheRefreshError'));
       } else {
-        setDiagnostic('Cache limit could not be saved. Existing pages were kept.');
+        setDiagnostic(t('app.cacheLimitError'));
       }
     }
   }, [hydrateMetadata, nativeRuntime, profile.direction, profile.mode, refreshCacheInfo, reloadNativeLibraryWithEssentials]);
@@ -353,10 +450,10 @@ export function App() {
       void hydrateMetadata(readyLibrary);
       await refreshCacheInfo();
       if (incomplete) {
-        setDiagnostic('Some pages could not be rebuilt yet; the original files were preserved. They will retry when opened.');
-        setAnnouncement('Derived page cache cleared with some pages unavailable until opened.');
+        setDiagnostic(t('app.cacheRebuildIncomplete'));
+        setAnnouncement(t('app.cacheClearedIncomplete'));
       } else {
-        setAnnouncement('Derived page cache cleared. Original files were preserved.');
+        setAnnouncement(t('app.cacheCleared'));
       }
     } catch {
       if (cacheCleared) {
@@ -365,9 +462,9 @@ export function App() {
         setLibrary([]);
         setBookmarks({});
         setReaderStates({});
-        setDiagnostic('Cache was cleared, but the library could not be refreshed. Reopen the app to reload it; original files were preserved.');
+        setDiagnostic(t('app.cacheClearRefreshError'));
       } else {
-        setDiagnostic('Cache could not be cleared. Your original files were not modified.');
+        setDiagnostic(t('app.cacheClearError'));
       }
     }
   }, [hydrateMetadata, nativeRuntime, profile.direction, profile.mode, refreshCacheInfo, reloadNativeLibraryWithEssentials]);
@@ -376,7 +473,7 @@ export function App() {
     saveProgress(publicationId, pageIndex);
     if (nativeRuntime) {
       void saveNativeProgress(publicationId, pageIndex).catch(() => {
-        setDiagnostic('Reading progress could not be saved to the native library.');
+        setDiagnostic(t('app.progressSaveError'));
       });
     }
   }, [nativeRuntime]);
@@ -398,7 +495,7 @@ export function App() {
     try {
       await saveReaderStateForPublication(publicationId, state);
     } catch {
-      setDiagnostic('Zoom and pan could not be saved. Reading can continue, but this change may not survive closing.');
+      setDiagnostic(t('app.readerStateSaveError'));
     }
   }, []);
 
@@ -418,7 +515,7 @@ export function App() {
       }
     } catch {
       setBookmarks((all) => ({ ...all, [publicationId]: current }));
-      setDiagnostic('Page bookmark could not be saved. Your other reading data was not changed.');
+      setDiagnostic(t('app.bookmarkSaveError'));
     }
   }, [bookmarks]);
 
@@ -440,7 +537,10 @@ export function App() {
           return null;
         }
         const page = publication.pages[nextPage];
-        const preparedPage = await ensureNativePage(publication.id, page?.id ?? '');
+        const protectedPageIds = page
+          ? [...new Set([...activeWorkingSetPageIds(publication, profile), page.id])]
+          : activeWorkingSetPageIds(publication, profile);
+        const preparedPage = await ensureNativePage(publication.id, page?.id ?? '', protectedPageIds);
         if (!preparedPage) {
           throw new Error('page-unavailable');
         }
@@ -448,10 +548,10 @@ export function App() {
       },
       onCommit,
       () => {
-        setDiagnostic('This page could not be rebuilt from the original. Your file was not modified.');
+        setDiagnostic(t('app.pageRebuildError'));
       },
     );
-  }, [nativeRuntime]);
+  }, [nativeRuntime, profile]);
 
   const moveActivePage = useCallback(
     async (delta: number) => {
@@ -465,7 +565,7 @@ export function App() {
       const nextPage = movePage(current.currentPage, current.pages.length, profile.direction, delta);
       if (nextPage === current.currentPage) {
         pageSelectionCoordinatorRef.current.cancel();
-        setAnnouncement(delta > 0 ? 'You are at the end of this publication.' : 'You are at the beginning of this publication.');
+        setAnnouncement(delta > 0 ? t('app.endOfPublication') : t('app.beginningOfPublication'));
         return;
       }
 
@@ -487,7 +587,7 @@ export function App() {
           updatedAt: new Date().toISOString(),
         }));
         persistProgress(request.publicationId, request.pageIndex);
-        setAnnouncement(`Page ${request.pageIndex + 1} of ${latest.pages.length}.`);
+        setAnnouncement(t('app.pageReady', { page: request.pageIndex + 1, count: latest.pages.length }));
       });
     },
     [profile.direction, persistProgress, selectPublicationPage, updatePublication],
@@ -524,7 +624,7 @@ export function App() {
           updatedAt: new Date().toISOString(),
         }));
         persistProgress(request.publicationId, request.pageIndex);
-        setAnnouncement(`Page ${request.pageIndex + 1} of ${latest.pages.length}.`);
+        setAnnouncement(t('app.pageReady', { page: request.pageIndex + 1, count: latest.pages.length }));
       });
     },
     [profile.direction, persistProgress, selectPublicationPage, updatePublication],
@@ -550,7 +650,7 @@ export function App() {
         await document.documentElement.requestFullscreen();
       }
     } catch {
-      setAnnouncement('Fullscreen is not available in this environment.');
+      setAnnouncement(t('app.fullscreenUnavailable'));
     }
   }, []);
 
@@ -567,7 +667,7 @@ export function App() {
           pageSelectionCoordinatorRef.current.cancel();
           setActiveId(null);
           setShowProfile(false);
-          setAnnouncement('Library opened.');
+          setAnnouncement(t('app.libraryOpened'));
           break;
         case 'toggle_fullscreen':
           void toggleFullscreen();
@@ -577,7 +677,7 @@ export function App() {
           break;
         case 'toggle_spread':
           updateProfile({ mode: profile.mode === 'single' ? 'spread' : 'single' });
-          setAnnouncement(`Reading mode: ${profile.mode === 'single' ? 'spread' : 'single'} pages.`);
+          setAnnouncement(t('app.readingMode', { mode: profile.mode === 'single' ? t('profile.spread').toLowerCase() : t('profile.single').toLowerCase() }));
           break;
         case 'cancel':
           pageSelectionCoordinatorRef.current.cancel();
@@ -599,19 +699,19 @@ export function App() {
         event.preventDefault();
         if (event.code === 'Escape') {
           setCapturingAction(null);
-          setAnnouncement('Key capture cancelled.');
+          setAnnouncement(t('app.keyCaptureCancelled'));
           return;
         }
 
         const result = inputMap.bind(capturingAction, event.code);
         if (!result.ok) {
-          setAnnouncement(`${event.code} is already assigned to ${result.conflict.replace('_', ' ')}.`);
+          setAnnouncement(t('app.keyConflict', { code: event.code, action: actionLabel(result.conflict) }));
           return;
         }
 
         updateProfile({ bindings: inputMap.getBindings() });
         setCapturingAction(null);
-        setAnnouncement(`${event.code} assigned to ${capturingAction.replace('_', ' ')}.`);
+        setAnnouncement(t('app.keyAssigned', { code: event.code, action: actionLabel(capturingAction) }));
         return;
       }
 
@@ -671,7 +771,7 @@ export function App() {
       setActiveId(readyPublication.id);
       setShowProfile(false);
       setDiagnostic(undefined);
-      setAnnouncement(`${readyPublication.title} opened. Page ${readyPublication.currentPage + 1} of ${readyPublication.pages.length}.`);
+      setAnnouncement(t('app.publicationOpened', { title: readyPublication.title, page: readyPublication.currentPage + 1, count: readyPublication.pages.length }));
     });
   };
 
@@ -686,8 +786,8 @@ export function App() {
     setIsImporting(false);
 
     if (!result.publication) {
-      setDiagnostic(result.diagnostic ?? 'The publication could not be imported.');
-      setAnnouncement(result.diagnostic ?? 'Import failed.');
+      setDiagnostic(result.diagnostic ?? t('app.importError'));
+      setAnnouncement(result.diagnostic ?? t('app.importFailed'));
       return;
     }
 
@@ -701,7 +801,7 @@ export function App() {
       : importedPublication;
     setLibrary((current) => [openingPublication, ...current]);
     void openPublication(openingPublication);
-    setAnnouncement(`${openingPublication.title} imported locally.`);
+    setAnnouncement(t('app.publicationImportedBrowser', { title: openingPublication.title }));
   };
 
   const handleNativeImport = async (selectFolder: boolean) => {
@@ -710,7 +810,7 @@ export function App() {
     try {
       const paths = selectFolder ? await chooseNativeFolder() : await chooseNativeFiles();
       if (paths.length === 0) {
-        setAnnouncement('Import cancelled.');
+        setAnnouncement(t('app.importCancelled'));
         return;
       }
 
@@ -718,7 +818,7 @@ export function App() {
       const diagnosticMessage = result.diagnostics.length > 0 ? result.diagnostics.join(' ') : undefined;
       setDiagnostic(diagnosticMessage);
       if (result.publications.length === 0) {
-        setAnnouncement(diagnosticMessage ?? 'No supported native publication was found.');
+        setAnnouncement(diagnosticMessage ?? t('app.nativeNoPublication'));
         return;
       }
 
@@ -732,25 +832,33 @@ export function App() {
       await refreshCacheInfo();
       const openingPublication = result.publications[0];
       void openPublication(openingPublication);
-      setAnnouncement(`${openingPublication.title} imported into the native library.`);
+      setAnnouncement(t('app.publicationImportedNative', { title: openingPublication.title }));
     } catch {
-      setDiagnostic('The native import failed. The original files were not modified.');
-      setAnnouncement('Native import failed.');
+      setDiagnostic(t('app.nativeImportError'));
+      setAnnouncement(t('app.nativeImportFailed'));
     } finally {
       setIsImporting(false);
     }
   };
 
   const handleProfileReset = () => {
-    const fresh = resetProfile();
-    setProfile(fresh);
-    if (nativeRuntime) {
-      void saveNativeProfile(fresh).catch(() => {
-        setDiagnostic('Reader preferences could not be reset in the native library.');
-      });
-    }
+    const current = profileStoreRef.current;
+    const defaults = createDefaultProfile();
+    commitProfileMutation(
+      updateNamedProfile(current, current.activeProfileId, {
+        mode: defaults.mode,
+        direction: defaults.direction,
+        contrast: defaults.contrast,
+        reducedMotion: defaults.reducedMotion,
+        pageTurnDuration: defaults.pageTurnDuration,
+        layoutZone: defaults.layoutZone,
+        zoomMode: defaults.zoomMode,
+        zoomScale: defaults.zoomScale,
+        bindings: defaults.bindings,
+      }),
+      'Current reading profile reset.',
+    );
     setCapturingAction(null);
-    setAnnouncement('Reader preferences reset.');
   };
 
   return (
@@ -772,12 +880,16 @@ export function App() {
             onPrevious={() => moveActivePage(-1)}
             onToggleSettings={() => setShowProfile((current) => !current)}
             onToggleFullscreen={() => void toggleFullscreen()}
-            onFlowCorrected={() => setAnnouncement('Panel order corrected and saved for this publication.')}
-            onFlowManualRoute={() => setAnnouncement('Full-page reading enabled for this page.')}
+            onFlowCorrected={() => setAnnouncement(t('app.panelOrderCorrected'))}
+            onFlowManualRoute={() => setAnnouncement(t('app.fullPageReadingEnabled'))}
             nativeRuntime={nativeRuntime}
             settingsTriggerRef={settingsTriggerRef}
             bookmarks={bookmarks[activePublication.id] ?? []}
-            readerState={readerStates[activePublication.id] ?? defaultReaderState}
+            readerState={readerStates[activePublication.id] ?? {
+              ...defaultReaderState,
+              zoomMode: profile.zoomMode,
+              zoomScale: profile.zoomScale,
+            }}
             onSaveReaderState={saveActiveReaderState}
             onSelectPage={selectActivePage}
             onToggleBookmark={toggleActiveBookmark}
@@ -814,8 +926,15 @@ export function App() {
           <div className="profile-backdrop" aria-hidden="true" />
           <ProfilePanel
             profile={profile}
+            profiles={profileStore.profiles}
+            activeProfileId={profileStore.activeProfileId}
             capturingAction={capturingAction}
             onChange={updateProfile}
+            onSelectProfile={selectReadingProfile}
+            onCreateProfile={createReadingProfile}
+            onDuplicateProfile={duplicateReadingProfile}
+            onRenameProfile={renameReadingProfile}
+            onDeleteProfile={deleteReadingProfile}
             onStartCapture={setCapturingAction}
             onReset={handleProfileReset}
             cacheInfo={cacheInfo}

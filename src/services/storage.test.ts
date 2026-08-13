@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  loadProfileStore,
   loadBookmarks,
   loadFavorites,
   loadReaderState,
   saveBookmarks,
   saveFavorite,
   saveReaderState,
+  saveProfileStore,
 } from './storage';
+import { createDefaultProfileStore } from '../domain/profiles';
 import { defaultReaderState } from '../domain/readerState';
 
 describe('browser fallback storage', () => {
@@ -41,5 +44,31 @@ describe('browser fallback storage', () => {
     expect(loadFavorites()).toEqual([]);
     expect(loadBookmarks('book-a')).toEqual([]);
     expect(loadReaderState('book-a')).toEqual(defaultReaderState);
+  });
+
+  it('migrates the flat profile key into the named profile store', () => {
+    window.localStorage.setItem('tactile-reader/profile/v1', JSON.stringify({
+      version: 1,
+      name: 'Archive mode',
+      mode: 'spread',
+      direction: 'rtl',
+      contrast: 'standard',
+      reducedMotion: false,
+      pageTurnDuration: 480,
+      layoutZone: 'right',
+      bindings: { next_page: ['KeyN'] },
+    }));
+
+    const store = loadProfileStore();
+    expect(store.profiles[0]).toMatchObject({ name: 'Archive mode', direction: 'rtl', layoutZone: 'right' });
+    expect(store.profiles[0]?.bindings.next_page).toEqual(['KeyN']);
+    expect(JSON.parse(window.localStorage.getItem('tactile-reader/profiles/v2') ?? '{}').version).toBe(2);
+  });
+
+  it('persists the active profile catalogue and rejects invalid stores', () => {
+    const store = createDefaultProfileStore();
+    expect(saveProfileStore(store)).toBe(true);
+    expect(loadProfileStore()).toEqual(store);
+    expect(saveProfileStore({ ...store, activeProfileId: 'missing' })).toBe(false);
   });
 });
