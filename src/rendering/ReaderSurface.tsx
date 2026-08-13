@@ -123,7 +123,11 @@ export function ReaderSurface({ frame, staticContent, ariaLabel, onStatus, inter
       if (cancelled) {
         return;
       }
-      failuresRef.current = [...failuresRef.current, failureMessage(error)];
+      const message = failureMessage(error);
+      failuresRef.current = [
+        ...failuresRef.current,
+        forcedBackend === 'auto' ? message : 'Skipped ' + forcedBackend + ': ' + message,
+      ];
       if (forcedBackend === 'auto') {
         setAttempt((current) => Math.max(current, backend === 'webgpu' ? 1 : 2));
       } else {
