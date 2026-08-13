@@ -90,6 +90,7 @@ export function App() {
   }, [profilePreview, profileStore]);
   const [library, setLibrary] = useState<Publication[]>(() => initialLibrary(profile.direction));
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [navigatorVisible, setNavigatorVisible] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [capturingAction, setCapturingAction] = useState<ActionName | null>(null);
   const [query, setQuery] = useState('');
@@ -102,6 +103,7 @@ export function App() {
   const [diagnostic, setDiagnostic] = useState<string | undefined>();
   const [announcement, setAnnouncement] = useState(() => t('app.libraryReady'));
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
+  const navigatorTriggerRef = useRef<HTMLButtonElement>(null);
   const readerTurnRequestRef = useRef<((delta: number) => void) | null>(null);
   const metadataGenerationRef = useRef(0);
   const favoriteInFlightRef = useRef(new Set<string>());
@@ -761,6 +763,34 @@ export function App() {
     }
   }, [activePublication?.id, toggleBookmark]);
 
+  const updateActiveBookmarkLabel = useCallback((pageId: string, label: string) => {
+    if (!activePublication) {
+      return;
+    }
+    const current = bookmarks[activePublication.id] ?? [];
+    const existing = current.find((bookmark) => bookmark.pageId === pageId);
+    if (!existing) {
+      return;
+    }
+    const normalizedLabel = label.trim().slice(0, 120) || t('navigator.defaultBookmark');
+    const next = current.map((bookmark) => bookmark.pageId === pageId
+      ? { ...bookmark, label: normalizedLabel, updatedAt: new Date().toISOString() }
+      : bookmark);
+    setBookmarks((all) => ({ ...all, [activePublication.id]: next }));
+    void saveBookmarkForPublication(activePublication.id, next.find((bookmark) => bookmark.pageId === pageId)!).catch(() => {
+      setBookmarks((all) => ({ ...all, [activePublication.id]: current }));
+      setDiagnostic(t('app.bookmarkSaveError'));
+    });
+  }, [activePublication?.id, bookmarks]);
+
+  const toggleNavigator = useCallback(() => {
+    setNavigatorVisible((current) => !current);
+  }, []);
+
+  const closeNavigator = useCallback(() => {
+    setNavigatorVisible(false);
+  }, []);
+
   const toggleFullscreen = useCallback(async () => {
     try {
       if (document.fullscreenElement) {
@@ -782,9 +812,23 @@ export function App() {
         case 'previous_page':
           dispatchPageTurn(-1);
           break;
+        case 'toggle_navigator':
+          if (activePublication) {
+            toggleNavigator();
+          }
+          break;
+        case 'toggle_bookmark':
+          if (activePublication) {
+            const page = activePublication.pages[activePublication.currentPage];
+            if (page) {
+              toggleActiveBookmark(page.id);
+            }
+          }
+          break;
         case 'toggle_library':
           pageSelectionCoordinatorRef.current.cancel();
           setActiveId(null);
+          setNavigatorVisible(false);
           setShowProfile(false);
           setAnnouncement(t('app.libraryOpened'));
           break;
@@ -800,6 +844,7 @@ export function App() {
           break;
         case 'cancel':
           pageSelectionCoordinatorRef.current.cancel();
+          setNavigatorVisible(false);
           if (showProfile) {
             setShowProfile(false);
           } else {
@@ -809,7 +854,7 @@ export function App() {
           break;
       }
     },
-    [dispatchPageTurn, profile.mode, showProfile, toggleFullscreen, updateProfile],
+    [activePublication, dispatchPageTurn, profile.mode, showProfile, toggleActiveBookmark, toggleFullscreen, toggleNavigator, updateProfile],
   );
 
   useEffect(() => {
@@ -993,6 +1038,7 @@ export function App() {
             announcement={announcement}
             onBack={() => {
               pageSelectionCoordinatorRef.current.cancel();
+              setNavigatorVisible(false);
               setActiveId(null);
             }}
             onNext={() => moveActivePage(1)}
@@ -1012,6 +1058,11 @@ export function App() {
             onSaveReaderState={saveActiveReaderState}
             onSelectPage={selectActivePage}
             onToggleBookmark={toggleActiveBookmark}
+            navigatorVisible={navigatorVisible}
+            navigatorTriggerRef={navigatorTriggerRef}
+            onToggleNavigator={toggleNavigator}
+            onCloseNavigator={closeNavigator}
+            onUpdateBookmarkLabel={updateActiveBookmarkLabel}
             onRegisterTurnRequest={registerReaderTurnRequest}
           />
         ) : (

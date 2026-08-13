@@ -1595,6 +1595,17 @@ html:fullscreen .reader-controls:focus-within {
   background: var(--copper);
 }
 
+.page-thumb__bookmark-label {
+  width: 100%;
+  margin-top: 6px;
+  padding: 4px 5px;
+  border: 1px solid var(--line);
+  background: var(--night-soft);
+  color: var(--mist);
+  font-family: var(--utility);
+  font-size: 9px;
+}
+
 .zoom-controls {
   position: absolute;
   z-index: 7;

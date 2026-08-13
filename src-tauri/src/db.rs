@@ -335,14 +335,13 @@ impl LibraryDb {
             .connection
             .lock()
             .map_err(|_| CoreError::from("database lock poisoned"))?;
-        let cache_path = connection
+        let (cache_path, source_path) = connection
             .query_row(
-                "SELECT custom_cover_cache FROM publications WHERE id = ?1",
+                "SELECT custom_cover_cache, custom_cover_source FROM publications WHERE id = ?1",
                 [publication_id],
-                |row| row.get::<_, Option<String>>(0),
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
             )
             .optional()?
-            .flatten()
             .ok_or_else(|| CoreError::from("publication does not exist or has no custom cover"))?;
         let changed = connection.execute(
             "UPDATE publications
@@ -357,8 +356,11 @@ impl LibraryDb {
             return Err(CoreError::from("publication does not exist"));
         }
         let cache_root = self.cache_dir.canonicalize()?;
-        if let Ok(canonical) = Path::new(&cache_path).canonicalize() {
-            if canonical.starts_with(cache_root) {
+        let source_canonical = source_path
+            .as_deref()
+            .and_then(|path| Path::new(path).canonicalize().ok());
+        if let Ok(canonical) = Path::new(cache_path.as_deref().unwrap_or_default()).canonicalize() {
+            if canonical.starts_with(cache_root) && source_canonical.as_ref() != Some(&canonical) {
                 let _ = std::fs::remove_file(canonical);
             }
         }
@@ -1880,8 +1882,15 @@ fn validate_profile_object(
         "toggle_fullscreen",
         "toggle_settings",
         "toggle_spread",
+        "toggle_navigator",
+        "toggle_bookmark",
         "cancel",
     ] {
+        if bindings.get(action).is_none()
+            && matches!(action, "toggle_navigator" | "toggle_bookmark")
+        {
+            continue;
+        }
         let valid = bindings
             .get(action)
             .and_then(Value::as_array)
