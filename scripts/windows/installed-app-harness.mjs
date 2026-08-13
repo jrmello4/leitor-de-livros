@@ -166,7 +166,14 @@ async function terminateOwnedProcessTree(child, dependencies) {
   if (!child || child.exitCode !== null || child.signalCode !== null) {
     return;
   }
-  child.kill();
+  try {
+    child.kill();
+  } catch (error) {
+    if (child.exitCode === null && child.signalCode === null) {
+      throw error;
+    }
+    return;
+  }
   await Promise.race([
     dependencies.once(child, 'exit'),
     dependencies.delay(1_500),
@@ -174,8 +181,11 @@ async function terminateOwnedProcessTree(child, dependencies) {
   if (child.exitCode === null && child.signalCode === null) {
     try {
       dependencies.execFileSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-    } catch {
-      // The owned process may have exited between the check and taskkill.
+    } catch (error) {
+      if (child.exitCode === null && child.signalCode === null) {
+        throw error;
+      }
+      // The owned process exited between the check and taskkill.
     }
   }
 }
@@ -188,6 +198,20 @@ async function closeSession({ browser, child, stdout, stderr }, dependencies) {
   await endStream(stderr).catch((error) => failures.push(error));
   if (failures.length > 0) {
     throw lifecycleError('cleanup', 'Could not fully close the installed application session', failures[0]);
+  }
+}
+
+async function waitForCdpConnection(port, label, timeoutMs, dependencies) {
+  try {
+    await waitFor(async () => {
+      try {
+        return (await dependencies.fetch('http://127.0.0.1:' + port + '/json/version')).ok;
+      } catch {
+        return false;
+      }
+    }, label + ' CDP endpoint did not answer', { timeoutMs }, dependencies);
+  } catch (error) {
+    throw lifecycleError('connection', 'CDP endpoint timed out', error);
   }
 }
 
@@ -216,13 +240,7 @@ async function launchApp(options, dependencies) {
     });
     child.stdout?.pipe(stdout);
     child.stderr?.pipe(stderr);
-    await waitFor(async () => {
-      try {
-        return (await dependencies.fetch('http://127.0.0.1:' + port + '/json/version')).ok;
-      } catch {
-        return false;
-      }
-    }, label + ' CDP endpoint did not answer', { timeoutMs }, dependencies);
+    await waitForCdpConnection(port, label, timeoutMs, dependencies);
     browser = await dependencies.chromium.connectOverCDP('http://127.0.0.1:' + port);
     const page = await waitFor(async () => {
       const pages = browser.contexts().flatMap((context) => context.pages());
@@ -258,8 +276,10 @@ async function launchApp(options, dependencies) {
         cleanupFailure = cleanupError;
       }
     }
-    const lifecycle = lifecycleError('launch', 'Could not launch installed application ' + executable, error);
-    lifecycle.cleanupFailure = cleanupFailure;
+    const lifecycle = error instanceof InstalledAppLifecycleError
+      ? error
+      : lifecycleError('launch', 'Could not launch installed application ' + executable, error);
+    lifecycle.cleanupFailure = cleanupFailure?.cause ?? cleanupFailure;
     throw lifecycle;
   }
 }

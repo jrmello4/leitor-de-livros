@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createInstalledAppHarness } from '../windows/installed-app-harness.mjs';
+import { createInstalledAppHarness, InstalledAppLifecycleError } from '../windows/installed-app-harness.mjs';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(scriptDirectory, '../..');
@@ -28,9 +28,16 @@ export function errorMessage(error) {
 }
 
 export function resultWithFailure(result, error) {
+  const lifecycleEvidence = error instanceof InstalledAppLifecycleError
+    ? {
+      stage: error.stage,
+      ...(error.cleanupFailure ? { cleanupFailure: errorMessage(error.cleanupFailure) } : {}),
+    }
+    : {};
   return {
     ...result,
     status: 'failed',
+    ...lifecycleEvidence,
     failure: errorMessage(error),
   };
 }
