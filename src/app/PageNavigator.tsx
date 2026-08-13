@@ -32,6 +32,7 @@ export function PageNavigator({
   const bookmarkIds = useMemo(() => new Set(bookmarks.map((bookmark) => bookmark.pageId)), [bookmarks]);
   const bookmarkByPageId = useMemo(() => new Map(bookmarks.map((bookmark) => [bookmark.pageId, bookmark])), [bookmarks]);
   const [labelDrafts, setLabelDrafts] = useState<Record<string, string>>({});
+  const savedLabelsRef = useRef(new Map<string, string>());
 
   useEffect(() => {
     setJumpValue(String(safeCurrent + 1));
@@ -39,6 +40,7 @@ export function PageNavigator({
 
   useEffect(() => {
     setLabelDrafts(Object.fromEntries(bookmarks.map((bookmark) => [bookmark.pageId, bookmark.label])));
+    savedLabelsRef.current = new Map(bookmarks.map((bookmark) => [bookmark.pageId, bookmark.label]));
   }, [bookmarks]);
 
   useEffect(() => {
@@ -107,7 +109,12 @@ export function PageNavigator({
   };
 
   const saveLabel = (pageId: string, value: string) => {
-    onUpdateBookmarkLabel(pageId, value.trim().slice(0, 120));
+    const normalized = value.trim().slice(0, 120);
+    if (savedLabelsRef.current.get(pageId) === normalized) {
+      return;
+    }
+    savedLabelsRef.current.set(pageId, normalized);
+    onUpdateBookmarkLabel(pageId, normalized);
   };
 
   return (

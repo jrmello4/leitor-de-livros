@@ -92,6 +92,23 @@ const DEFAULT_CACHE_INFO: CacheInfo = {
   entryCount: 0,
 };
 
+function sameBookmark(left: Bookmark | undefined, right: Bookmark | undefined): boolean {
+  return left?.pageId === right?.pageId
+    && left?.label === right?.label
+    && left?.createdAt === right?.createdAt
+    && left?.updatedAt === right?.updatedAt;
+}
+
+function restoreBookmark(bookmarks: Bookmark[], pageId: string, previous: Bookmark | undefined, previousIndex: number): Bookmark[] {
+  const index = bookmarks.findIndex((bookmark) => bookmark.pageId === pageId);
+  const restored = bookmarks.filter((bookmark) => bookmark.pageId !== pageId);
+  if (!previous) {
+    return restored;
+  }
+  restored.splice(Math.min(previousIndex < 0 ? (index < 0 ? restored.length : index) : previousIndex, restored.length), 0, previous);
+  return restored;
+}
+
 export function App() {
   const nativeRuntime = isNativeRuntime();
   const [profileStore, setProfileStore] = useState<ProfileStore>(() => loadProfileStore());
@@ -119,6 +136,7 @@ export function App() {
   const readerTurnRequestRef = useRef<((delta: number) => void) | null>(null);
   const metadataGenerationRef = useRef(0);
   const favoriteInFlightRef = useRef(new Set<string>());
+  const bookmarkWriteQueuesRef = useRef(new Map<string, Promise<void>>());
   const pageSelectionCoordinatorRef = useRef(createPageSelectionCoordinator());
   const profileStoreRef = useRef(profileStore);
   profileStoreRef.current = profileStore;
@@ -130,7 +148,22 @@ export function App() {
   activeIdRef.current = activeId;
   const libraryRef = useRef(library);
   libraryRef.current = library;
+  const bookmarksRef = useRef(bookmarks);
+  bookmarksRef.current = bookmarks;
   const inputMap = useMemo(() => new InputMap(profile.bindings), [profile.bindings]);
+
+  const enqueueBookmarkWrite = useCallback((key: string, write: () => Promise<void>) => {
+    const previous = bookmarkWriteQueuesRef.current.get(key) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(write);
+    bookmarkWriteQueuesRef.current.set(key, next);
+    const cleanup = () => {
+      if (bookmarkWriteQueuesRef.current.get(key) === next) {
+        bookmarkWriteQueuesRef.current.delete(key);
+      }
+    };
+    void next.then(cleanup, cleanup);
+    return next;
+  }, []);
 
   const refreshCacheInfo = useCallback(async () => {
     try {
@@ -461,7 +494,10 @@ export function App() {
   const replaceBrowserCover = useCallback(async (publication: Publication, file: File) => {
     try {
       const cover = await readBrowserCover(file);
-      saveCustomCover(publication.id, cover);
+      if (!saveCustomCover(publication.id, cover)) {
+        setDiagnostic(t('app.coverSaveError'));
+        return;
+      }
       updatePublication(publication.id, (current) => ({
         ...current,
         customCover: cover,
@@ -499,7 +535,10 @@ export function App() {
         const refreshed = await listNativePublications(profile.direction);
         setLibrary((current) => current.map((entry) => refreshed.find((candidate) => candidate.id === entry.id) ?? entry));
       } else {
-        clearCustomCover(publication.id);
+        if (!clearCustomCover(publication.id)) {
+          setDiagnostic(t('app.coverSaveError'));
+          return;
+        }
         updatePublication(publication.id, (current) => {
           const next = { ...current, updatedAt: new Date().toISOString() };
           delete next.customCover;
@@ -512,6 +551,22 @@ export function App() {
       setDiagnostic(t('app.coverSaveError'));
     }
   }, [nativeRuntime, profile.direction, updatePublication]);
+
+  const handleBrowserCoverError = useCallback((publication: Publication) => {
+    if (nativeRuntime || !publication.customCover) {
+      return;
+    }
+    if (!clearCustomCover(publication.id)) {
+      setDiagnostic(t('app.coverSaveError'));
+      return;
+    }
+    updatePublication(publication.id, (current) => {
+      const next = { ...current, updatedAt: new Date().toISOString() };
+      delete next.customCover;
+      return next;
+    });
+    setDiagnostic(t('app.coverInvalid'));
+  }, [nativeRuntime, updatePublication]);
 
   const removePublication = useCallback(async (publication: Publication) => {
     metadataGenerationRef.current += 1;
@@ -643,24 +698,35 @@ export function App() {
   }, []);
 
   const toggleBookmark = useCallback(async (publicationId: string, pageId: string) => {
-    const current = bookmarks[publicationId] ?? [];
+    const current = bookmarksRef.current[publicationId] ?? [];
     const existing = current.find((bookmark) => bookmark.pageId === pageId);
     const next = nextBookmark(current, pageId, '', new Date().toISOString());
-    setBookmarks((all) => ({ ...all, [publicationId]: next }));
+    const nextState = { ...bookmarksRef.current, [publicationId]: next };
+    bookmarksRef.current = nextState;
+    setBookmarks(nextState);
+    const key = `${publicationId}:${pageId}`;
     try {
-      if (existing) {
-        await removeBookmarkForPublication(publicationId, pageId);
-      } else {
-        const created = next.find((bookmark) => bookmark.pageId === pageId);
-        if (created) {
-          await saveBookmarkForPublication(publicationId, created);
-        }
-      }
+      await enqueueBookmarkWrite(key, () => existing
+        ? removeBookmarkForPublication(publicationId, pageId)
+        : saveBookmarkForPublication(publicationId, next.find((bookmark) => bookmark.pageId === pageId)!));
     } catch {
-      setBookmarks((all) => ({ ...all, [publicationId]: current }));
+      setBookmarks((all) => {
+        const latest = all[publicationId] ?? [];
+        const expected = next.find((bookmark) => bookmark.pageId === pageId);
+        const actual = latest.find((bookmark) => bookmark.pageId === pageId);
+        if (!sameBookmark(actual, expected)) {
+          return all;
+        }
+        const restored = {
+          ...all,
+          [publicationId]: restoreBookmark(latest, pageId, current.find((bookmark) => bookmark.pageId === pageId), current.findIndex((bookmark) => bookmark.pageId === pageId)),
+        };
+        bookmarksRef.current = restored;
+        return restored;
+      });
       setDiagnostic(t('app.bookmarkSaveError'));
     }
-  }, [bookmarks]);
+  }, [enqueueBookmarkWrite]);
 
   const selectPublicationPage = useCallback(async (
     publication: Publication,
@@ -784,10 +850,11 @@ export function App() {
   }, [activePublication?.id, toggleBookmark]);
 
   const updateActiveBookmarkLabel = useCallback((pageId: string, label: string) => {
-    if (!activePublication) {
+    const publicationId = activePublicationIdRef.current;
+    if (!publicationId) {
       return;
     }
-    const current = bookmarks[activePublication.id] ?? [];
+    const current = bookmarksRef.current[publicationId] ?? [];
     const existing = current.find((bookmark) => bookmark.pageId === pageId);
     if (!existing) {
       return;
@@ -796,12 +863,27 @@ export function App() {
     const next = current.map((bookmark) => bookmark.pageId === pageId
       ? { ...bookmark, label: normalizedLabel, updatedAt: new Date().toISOString() }
       : bookmark);
-    setBookmarks((all) => ({ ...all, [activePublication.id]: next }));
-    void saveBookmarkForPublication(activePublication.id, next.find((bookmark) => bookmark.pageId === pageId)!).catch(() => {
-      setBookmarks((all) => ({ ...all, [activePublication.id]: current }));
+    const nextState = { ...bookmarksRef.current, [publicationId]: next };
+    bookmarksRef.current = nextState;
+    setBookmarks(nextState);
+    const expected = next.find((bookmark) => bookmark.pageId === pageId)!;
+    void enqueueBookmarkWrite(`${publicationId}:${pageId}`, () => saveBookmarkForPublication(publicationId, expected)).catch(() => {
+      setBookmarks((all) => {
+        const latest = all[publicationId] ?? [];
+        const actual = latest.find((bookmark) => bookmark.pageId === pageId);
+        if (!sameBookmark(actual, expected)) {
+          return all;
+        }
+        const restored = {
+          ...all,
+          [publicationId]: restoreBookmark(latest, pageId, current.find((bookmark) => bookmark.pageId === pageId), current.findIndex((bookmark) => bookmark.pageId === pageId)),
+        };
+        bookmarksRef.current = restored;
+        return restored;
+      });
       setDiagnostic(t('app.bookmarkSaveError'));
     });
-  }, [activePublication?.id, bookmarks]);
+  }, [enqueueBookmarkWrite]);
 
   const toggleNavigator = useCallback(() => {
     setNavigatorVisible((current) => !current);
@@ -856,6 +938,7 @@ export function App() {
           void toggleFullscreen();
           break;
         case 'toggle_settings':
+          setNavigatorVisible(false);
           setShowProfile((current) => !current);
           break;
         case 'toggle_spread':
@@ -864,6 +947,11 @@ export function App() {
           break;
         case 'cancel':
           pageSelectionCoordinatorRef.current.cancel();
+          if (navigatorVisible) {
+            setNavigatorVisible(false);
+            setCapturingAction(null);
+            break;
+          }
           setNavigatorVisible(false);
           if (showProfile) {
             setShowProfile(false);
@@ -874,7 +962,7 @@ export function App() {
           break;
       }
     },
-    [activePublication, dispatchPageTurn, profile.mode, showProfile, toggleActiveBookmark, toggleFullscreen, toggleNavigator, updateProfile],
+    [activePublication, dispatchPageTurn, navigatorVisible, profile.mode, showProfile, toggleActiveBookmark, toggleFullscreen, toggleNavigator, updateProfile],
   );
 
   useEffect(() => {
@@ -975,7 +1063,10 @@ export function App() {
       return;
     }
 
-    const importedPublication = result.publication as Publication;
+    const importedPublication = {
+      ...(result.publication as Publication),
+      customCover: loadCustomCover(result.publication.id),
+    };
     const openingPublication = profile.direction === 'rtl'
       ? {
           ...importedPublication,
@@ -1063,7 +1154,10 @@ export function App() {
             }}
             onNext={() => moveActivePage(1)}
             onPrevious={() => moveActivePage(-1)}
-            onToggleSettings={() => setShowProfile((current) => !current)}
+            onToggleSettings={() => {
+              setNavigatorVisible(false);
+              setShowProfile((current) => !current);
+            }}
             onToggleFullscreen={() => void toggleFullscreen()}
             onFlowCorrected={() => setAnnouncement(t('app.panelOrderCorrected'))}
             onFlowManualRoute={() => setAnnouncement(t('app.fullPageReadingEnabled'))}
@@ -1106,6 +1200,7 @@ export function App() {
             onToggleFavorite={(publication) => void toggleFavorite(publication)}
             onDelete={(publication) => removePublication(publication)}
             onReplaceCover={replaceBrowserCover}
+            onCoverError={handleBrowserCoverError}
             onChooseNativeCover={replaceNativeCover}
             onResetCover={resetPublicationCover}
             favoriteOnly={favoriteOnly}

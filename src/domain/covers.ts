@@ -25,18 +25,28 @@ export function normalizeCustomCover(value: unknown): CustomCover | undefined {
   const candidate = value as Partial<CustomCover>;
   if (
     typeof candidate.src !== 'string'
-    || !candidate.src.startsWith('data:image/') && !candidate.src.startsWith('asset:') && !candidate.src.startsWith('http')
+    || !isSafeCoverSource(candidate.src)
     || typeof candidate.sourceName !== 'string'
     || candidate.sourceName.trim().length === 0
   ) {
     return undefined;
   }
+  const sourceName = candidate.sourceName.split(/[\\/]/).pop()?.trim() ?? '';
+  if (!sourceName) {
+    return undefined;
+  }
   return {
     src: candidate.src,
-    sourceName: candidate.sourceName.split(/[\\/]/).pop() ?? candidate.sourceName,
+    sourceName,
   };
 }
 
 export function publicationCoverSrc(publication: Publication): string {
   return normalizeCustomCover(publication.customCover)?.src ?? publication.pages[0]?.src ?? '';
+}
+
+function isSafeCoverSource(src: string): boolean {
+  return /^data:image\//i.test(src)
+    || src.startsWith('asset:')
+    || /^https?:\/\/asset\.localhost(?:\/|$)/i.test(src);
 }

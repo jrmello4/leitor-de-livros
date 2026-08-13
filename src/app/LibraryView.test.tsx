@@ -105,6 +105,19 @@ describe('LibraryView favorites and safe deletion', () => {
     expect(onResetCover).toHaveBeenCalledWith(book);
   });
 
+  it('falls back to the original cover when a custom cover cannot load', () => {
+    const book = { ...publication('book-a', 'Book A', false), customCover: { src: 'data:image/png;base64,broken', sourceName: 'replacement.png' } };
+    const onCoverError = vi.fn();
+    root = renderLibrary(host, [book], { onCoverError });
+
+    const image = host.querySelector<HTMLImageElement>('.cover-button img');
+    expect(image).not.toBeNull();
+    act(() => image?.dispatchEvent(new Event('error', { bubbles: false })));
+
+    expect(image?.src).toContain('data:image/gif;base64');
+    expect(onCoverError).toHaveBeenCalledWith(book);
+  });
+
   it('requires confirmation and explains that the original is preserved', async () => {
     const book = publication('book-a', 'Book A', false);
     const onDelete = vi.fn();

@@ -111,4 +111,14 @@ describe('browser fallback storage', () => {
     expect(loadCustomCover('book-a')).toBeUndefined();
     expect(loadFavorites()).toEqual(['book-a']);
   });
+
+  it('keeps valid covers when another persisted cover is malformed', () => {
+    window.localStorage.setItem('tactile-reader/custom-covers/v1', JSON.stringify({
+      valid: { src: 'data:image/png;base64,AA==', sourceName: 'valid.png' },
+      invalid: { src: 'https://example.com/cover.png', sourceName: 'invalid.png' },
+    }));
+
+    expect(loadCustomCover('valid')).toEqual({ src: 'data:image/png;base64,AA==', sourceName: 'valid.png' });
+    expect(loadCustomCover('invalid')).toBeUndefined();
+  });
 });
