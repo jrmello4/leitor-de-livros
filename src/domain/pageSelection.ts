@@ -1,3 +1,32 @@
+import { activeWorkingSetPageIds } from './reader';
+import type { PageDescriptor, Publication, ReadingProfile } from './types';
+
+export type EnsurePage = (
+  publicationId: string,
+  pageId: string,
+  protectedPageIds: string[],
+) => Promise<PageDescriptor | null>;
+
+export async function preparePageSelection(
+  publication: Publication,
+  profile: ReadingProfile,
+  pageIndex: number,
+  ensurePage: EnsurePage,
+): Promise<PageDescriptor> {
+  const page = publication.pages[pageIndex];
+  const protectedPageIds = [
+    ...new Set([
+      ...activeWorkingSetPageIds(publication, profile, publication.currentPage),
+      ...activeWorkingSetPageIds(publication, profile, pageIndex),
+    ]),
+  ];
+  const preparedPage = await ensurePage(publication.id, page?.id ?? '', protectedPageIds);
+  if (!preparedPage) {
+    throw new Error('page-unavailable');
+  }
+  return preparedPage;
+}
+
 export interface PageSelectionRequest {
   sequence: number;
   publicationId: string;

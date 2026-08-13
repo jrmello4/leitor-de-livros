@@ -1,4 +1,4 @@
-import type { PageDescriptor, ReadingDirection, ReadingMode } from './types';
+import type { PageDescriptor, Publication, ReadingDirection, ReadingMode, ReadingProfile } from './types';
 
 export function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(Math.max(value, minimum), maximum);
@@ -97,6 +97,30 @@ export function visiblePageIndexes(
   }
 
   return direction === 'rtl' ? [neighbor, safeCurrent] : [safeCurrent, neighbor];
+}
+
+export function activeWorkingSetPageIds(
+  publication: Publication,
+  profile: ReadingProfile,
+  pageIndex: number,
+): string[] {
+  if (publication.pages.length === 0) {
+    return [];
+  }
+
+  const safePageIndex = clamp(pageIndex, 0, publication.pages.length - 1);
+  const indexes = new Set([
+    ...visiblePageIndexes(safePageIndex, publication.pages, profile.mode, profile.direction),
+    safePageIndex - 1,
+    safePageIndex,
+    safePageIndex + 1,
+  ]);
+
+  return [...indexes]
+    .filter((index) => index >= 0 && index < publication.pages.length)
+    .sort((left, right) => left - right)
+    .map((index) => publication.pages[index]?.id)
+    .filter((id): id is string => Boolean(id));
 }
 
 export function pageCounter(currentPage: number, pageCount: number): string {

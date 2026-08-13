@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { mostRecentPublication, visiblePublications as getVisiblePublications, type LibrarySort } from '../domain/library';
+import { mostRecentPublication, safeSourceName, visiblePublications as getVisiblePublications, type LibrarySort } from '../domain/library';
 import type { Publication } from '../domain/types';
 import { t } from '../i18n/catalog';
 
@@ -238,11 +238,11 @@ export function LibraryView({
         <div className="toolbar-controls">
           <label className="search-field">
             <span aria-hidden="true">⌕</span>
-            <input aria-label={t('library.searchAria')} value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder={t('library.search')} />
+            <input className="library-focus-control" aria-label={t('library.searchAria')} value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder={t('library.search')} />
           </label>
           <label className="sort-field">
             <span>{t('library.sort')}</span>
-            <select aria-label={t('library.sortAria')} value={sort} onChange={(event) => onSortChange(event.target.value as LibrarySort)}>
+            <select className="library-focus-control" aria-label={t('library.sortAria')} value={sort} onChange={(event) => onSortChange(event.target.value as LibrarySort)}>
               <option value="recent">{t('library.sortRecent')}</option>
               <option value="title">{t('library.sortTitle')}</option>
               <option value="added">{t('library.sortAdded')}</option>
@@ -273,7 +273,7 @@ export function LibraryView({
               </button>
               <div className="publication-meta">
                 <div>
-                  <p className="eyebrow">{publication.sourceLabel}</p>
+                  <p className="eyebrow">{safeSourceName(publication.sourceLabel)}</p>
                   <h2>{publication.title}</h2>
                 </div>
                 <div className="publication-actions">
