@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  activeWorkingSetPageIds,
   calculateProgress,
   clampPan,
   clampZoomScale,
@@ -8,7 +9,8 @@ import {
   pageCounter,
   visiblePageIndexes,
 } from './reader';
-import type { PageDescriptor } from './types';
+import { createDefaultProfile } from './profiles';
+import type { PageDescriptor, Publication } from './types';
 
 const pages: PageDescriptor[] = [1, 2, 3, 4].map((number, index) => ({
   id: `page-${number}`,
@@ -18,6 +20,30 @@ const pages: PageDescriptor[] = [1, 2, 3, 4].map((number, index) => ({
   width: 100,
   height: 140,
 }));
+
+const longPages: PageDescriptor[] = Array.from({ length: 8 }, (_, index) => ({
+  id: `page-${index + 1}`,
+  index,
+  name: `page-${index + 1}.png`,
+  src: `blob:${index + 1}`,
+  width: 100,
+  height: 140,
+}));
+
+const publicationAtPageTwo: Publication = {
+  id: 'long-publication',
+  title: 'Long publication',
+  sourceLabel: 'long.cbz',
+  format: 'cbz',
+  pages: longPages,
+  coverPageId: longPages[0].id,
+  currentPage: 1,
+  progress: 0.25,
+  direction: 'ltr',
+  addedAt: '2026-08-13T00:00:00.000Z',
+  updatedAt: '2026-08-13T00:00:00.000Z',
+  isFavorite: false,
+};
 
 describe('reader navigation contracts', () => {
   it('clamps manual zoom to the supported range', () => {
@@ -42,6 +68,24 @@ describe('reader navigation contracts', () => {
     expect(visiblePageIndexes(1, pages, 'spread', 'ltr')).toEqual([1, 2]);
     expect(visiblePageIndexes(2, pages, 'spread', 'rtl')).toEqual([1, 2]);
     expect(visiblePageIndexes(0, pages, 'single', 'ltr')).toEqual([0]);
+  });
+
+  it('protects the destination page working set instead of the previous page neighbors', () => {
+    const singleLtrProfile = createDefaultProfile();
+
+    expect(activeWorkingSetPageIds(publicationAtPageTwo, singleLtrProfile, 5)).toEqual([
+      'page-5',
+      'page-6',
+      'page-7',
+    ]);
+  });
+
+  it('bounds destination working sets for spread, RTL, and publication edges', () => {
+    const singleLtrProfile = createDefaultProfile();
+    const spreadRtlProfile = { ...singleLtrProfile, mode: 'spread' as const, direction: 'rtl' as const };
+
+    expect(activeWorkingSetPageIds(publicationAtPageTwo, spreadRtlProfile, 7)).toEqual(['page-7', 'page-8']);
+    expect(activeWorkingSetPageIds(publicationAtPageTwo, singleLtrProfile, 0)).toEqual(['page-1', 'page-2']);
   });
 
   it('reports bounded progress and a stable counter', () => {

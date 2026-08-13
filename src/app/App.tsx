@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createDemoPublication } from '../data/demo';
 import { canRunActionWhileSettingsOpen, InputMap } from '../domain/input';
 import { createPageSelectionCoordinator, selectLatestPage, type PageSelectionRequest } from '../domain/pageSelection';
-import { calculateProgress, movePage, clamp, visiblePageIndexes } from '../domain/reader';
+import { activeWorkingSetPageIds, calculateProgress, movePage, clamp } from '../domain/reader';
 import { nextBookmark, type LibrarySort } from '../domain/library';
 import {
   createDefaultProfile,
@@ -61,19 +61,6 @@ function initialLibrary(direction: ReadingProfile['direction']): Publication[] {
   demo.currentPage = direction === 'rtl' && savedPage === 0 ? demo.pages.length - 1 : Math.min(savedPage, demo.pages.length - 1);
   demo.progress = calculateProgress(demo.currentPage, demo.pages.length, direction);
   return [demo];
-}
-
-function activeWorkingSetPageIds(publication: Publication, profile: ReadingProfile): string[] {
-  const indexes = new Set([
-    ...visiblePageIndexes(publication.currentPage, publication.pages, profile.mode, profile.direction),
-    publication.currentPage - 1,
-    publication.currentPage,
-    publication.currentPage + 1,
-  ]);
-  return [...indexes]
-    .filter((index) => index >= 0 && index < publication.pages.length)
-    .map((index) => publication.pages[index]?.id)
-    .filter((id): id is string => Boolean(id));
 }
 
 const DEFAULT_CACHE_INFO: CacheInfo = {
@@ -151,7 +138,7 @@ export function App() {
     let incomplete = false;
     const activePageId = activePublication?.pages[activePublication.currentPage]?.id;
     const activeProtectedPageIds = activePublication
-      ? activeWorkingSetPageIds(activePublication, profile)
+      ? activeWorkingSetPageIds(activePublication, profile, activePublication.currentPage)
       : [];
     for (const publication of initial) {
       const pageIds = new Set([
@@ -409,7 +396,7 @@ export function App() {
       const active = activeIdRef.current
         ? libraryRef.current.find((publication) => publication.id === activeIdRef.current)
         : undefined;
-      await setNativeCacheLimit(maxBytes, active ? activeWorkingSetPageIds(active, profile) : []);
+      await setNativeCacheLimit(maxBytes, active ? activeWorkingSetPageIds(active, profile, active.currentPage) : []);
       limitApplied = true;
       const { library: refreshedLibrary, incomplete } = await reloadNativeLibraryWithEssentials(profile.direction);
       setLibrary(refreshedLibrary);
@@ -444,7 +431,7 @@ export function App() {
       const active = activeIdRef.current
         ? libraryRef.current.find((publication) => publication.id === activeIdRef.current)
         : undefined;
-      await clearNativeCache(active ? activeWorkingSetPageIds(active, profile) : []);
+      await clearNativeCache(active ? activeWorkingSetPageIds(active, profile, active.currentPage) : []);
       cacheCleared = true;
       const { library: readyLibrary, incomplete } = await reloadNativeLibraryWithEssentials(profile.direction);
       setLibrary(readyLibrary);
@@ -538,9 +525,7 @@ export function App() {
           return null;
         }
         const page = publication.pages[nextPage];
-        const protectedPageIds = page
-          ? [...new Set([...activeWorkingSetPageIds(publication, profile), page.id])]
-          : activeWorkingSetPageIds(publication, profile);
+        const protectedPageIds = activeWorkingSetPageIds(publication, profile, nextPage);
         const preparedPage = await ensureNativePage(publication.id, page?.id ?? '', protectedPageIds);
         if (!preparedPage) {
           throw new Error('page-unavailable');
