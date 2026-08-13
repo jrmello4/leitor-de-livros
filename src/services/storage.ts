@@ -6,7 +6,7 @@ import {
   validateProfileStore,
 } from '../domain/profiles';
 import type { ReadingProfile } from '../domain/types';
-import type { Bookmark, ReaderState } from '../domain/types';
+import type { Bookmark, CustomCover, ReaderState } from '../domain/types';
 import { defaultReaderState, normalizeReaderState } from '../domain/readerState';
 
 const PROFILE_KEY = 'tactile-reader/profile/v1';
@@ -15,6 +15,7 @@ const PROGRESS_KEY = 'tactile-reader/progress/v1';
 const FAVORITES_KEY = 'tactile-reader/favorites/v1';
 const BOOKMARKS_KEY = 'tactile-reader/bookmarks/v1';
 const READER_STATE_KEY = 'tactile-reader/reader-state/v1';
+const CUSTOM_COVERS_KEY = 'tactile-reader/custom-covers/v1';
 
 function getStorage(): Storage | null {
   try {
@@ -177,6 +178,22 @@ export function saveReaderState(publicationId: string, state: ReaderState): void
   saveValue(READER_STATE_KEY, { ...states, [publicationId]: normalizeReaderState(state) });
 }
 
+export function loadCustomCover(publicationId: string): CustomCover | undefined {
+  const covers = loadValue(CUSTOM_COVERS_KEY, {}, isCustomCoverMap);
+  return covers[publicationId];
+}
+
+export function saveCustomCover(publicationId: string, cover: CustomCover): void {
+  const covers = loadValue(CUSTOM_COVERS_KEY, {}, isCustomCoverMap);
+  saveValue(CUSTOM_COVERS_KEY, { ...covers, [publicationId]: cover });
+}
+
+export function clearCustomCover(publicationId: string): void {
+  const covers = loadValue(CUSTOM_COVERS_KEY, {}, isCustomCoverMap);
+  delete covers[publicationId];
+  saveValue(CUSTOM_COVERS_KEY, covers);
+}
+
 /** Remove only browser-side metadata for a publication. Imported source files
  * are represented by object URLs and are never touched by this operation. */
 export function clearPublicationStorage(publicationId: string): void {
@@ -200,6 +217,8 @@ export function clearPublicationStorage(publicationId: string): void {
     const progress = loadValue(PROGRESS_KEY, {}, isRecord);
     delete progress[publicationId];
     saveValue(PROGRESS_KEY, progress);
+
+    clearCustomCover(publicationId);
   } catch {
     // Storage can be unavailable or quota-limited; the native caller reports
     // no destructive filesystem work even when metadata cleanup is skipped.
@@ -241,6 +260,14 @@ function isBookmark(value: unknown): value is Bookmark {
     && typeof value.label === 'string'
     && typeof value.createdAt === 'string'
     && typeof value.updatedAt === 'string';
+}
+
+function isCustomCoverMap(value: unknown): value is Record<string, CustomCover> {
+  return isRecord(value) && Object.values(value).every((cover) => (
+    isRecord(cover)
+    && typeof cover.src === 'string'
+    && typeof cover.sourceName === 'string'
+  ));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

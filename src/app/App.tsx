@@ -22,7 +22,9 @@ import { actionLabel, t } from '../i18n/catalog';
 import { importFiles } from '../services/importers';
 import {
   chooseNativeFiles,
+  chooseNativeCover,
   chooseNativeFolder,
+  clearNativeCover,
   importNativePaths,
   isNativeRuntime,
   listNativePublications,
@@ -34,6 +36,7 @@ import {
   ensureNativePage,
   getNativeCacheInfo,
   setNativeCacheLimit,
+  setNativeCover,
 } from '../services/nativeLibrary';
 import {
   listBookmarksForPublication,
@@ -43,8 +46,10 @@ import {
   saveReaderStateForPublication,
   toggleFavoriteForPublication,
 } from '../services/readerState';
+import { clearCustomCover, readBrowserCover, saveCustomCover } from '../services/covers';
 import {
   loadFavorites,
+  loadCustomCover,
   loadProfileStore,
   loadProgress,
   saveProfileStore,
@@ -58,6 +63,7 @@ import { ReaderView } from './ReaderView';
 function initialLibrary(direction: ReadingProfile['direction']): Publication[] {
   const demo = createDemoPublication();
   demo.isFavorite = loadFavorites().includes(demo.id);
+  demo.customCover = loadCustomCover(demo.id);
   const savedPage = loadProgress(demo.id);
   demo.currentPage = direction === 'rtl' && savedPage === 0 ? demo.pages.length - 1 : Math.min(savedPage, demo.pages.length - 1);
   demo.progress = calculateProgress(demo.currentPage, demo.pages.length, direction);
@@ -359,6 +365,61 @@ export function App() {
       favoriteInFlightRef.current.delete(publication.id);
     }
   }, [updatePublication]);
+
+  const replaceBrowserCover = useCallback(async (publication: Publication, file: File) => {
+    try {
+      const cover = await readBrowserCover(file);
+      saveCustomCover(publication.id, cover);
+      updatePublication(publication.id, (current) => ({
+        ...current,
+        customCover: cover,
+        updatedAt: new Date().toISOString(),
+      }));
+      setAnnouncement(t('app.coverSaved', { title: publication.title }));
+      setDiagnostic(undefined);
+    } catch (error) {
+      setDiagnostic(error instanceof Error && ['tooLarge', 'unsupported', 'missing'].includes(error.message)
+        ? t('app.coverInvalid')
+        : t('app.coverSaveError'));
+    }
+  }, [updatePublication]);
+
+  const replaceNativeCover = useCallback(async (publication: Publication) => {
+    try {
+      const sourcePath = await chooseNativeCover();
+      if (!sourcePath) {
+        return;
+      }
+      await setNativeCover(publication.id, sourcePath);
+      const refreshed = await listNativePublications(profile.direction);
+      setLibrary((current) => current.map((entry) => refreshed.find((candidate) => candidate.id === entry.id) ?? entry));
+      setAnnouncement(t('app.coverSaved', { title: publication.title }));
+      setDiagnostic(undefined);
+    } catch {
+      setDiagnostic(t('app.coverSaveError'));
+    }
+  }, [profile.direction]);
+
+  const resetPublicationCover = useCallback(async (publication: Publication) => {
+    try {
+      if (nativeRuntime) {
+        await clearNativeCover(publication.id);
+        const refreshed = await listNativePublications(profile.direction);
+        setLibrary((current) => current.map((entry) => refreshed.find((candidate) => candidate.id === entry.id) ?? entry));
+      } else {
+        clearCustomCover(publication.id);
+        updatePublication(publication.id, (current) => {
+          const next = { ...current, updatedAt: new Date().toISOString() };
+          delete next.customCover;
+          return next;
+        });
+      }
+      setAnnouncement(t('app.coverReset', { title: publication.title }));
+      setDiagnostic(undefined);
+    } catch {
+      setDiagnostic(t('app.coverSaveError'));
+    }
+  }, [nativeRuntime, profile.direction, updatePublication]);
 
   const removePublication = useCallback(async (publication: Publication) => {
     metadataGenerationRef.current += 1;
@@ -895,6 +956,9 @@ export function App() {
             }}
             onToggleFavorite={(publication) => void toggleFavorite(publication)}
             onDelete={(publication) => removePublication(publication)}
+            onReplaceCover={replaceBrowserCover}
+            onChooseNativeCover={replaceNativeCover}
+            onResetCover={resetPublicationCover}
             favoriteOnly={favoriteOnly}
             onFavoriteOnlyChange={setFavoriteOnly}
             settingsTriggerRef={settingsTriggerRef}
