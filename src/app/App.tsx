@@ -3,7 +3,7 @@ import { createDemoPublication } from '../data/demo';
 import { canRunActionWhileSettingsOpen, InputMap } from '../domain/input';
 import { createPageSelectionCoordinator, selectLatestPage, type PageSelectionRequest } from '../domain/pageSelection';
 import { calculateProgress, movePage, clamp, visiblePageIndexes } from '../domain/reader';
-import { nextBookmark } from '../domain/library';
+import { nextBookmark, type LibrarySort } from '../domain/library';
 import { defaultReaderState } from '../domain/readerState';
 import type { ActionName, Bookmark, CacheInfo, PageDescriptor, Publication, ReaderState, ReadingProfile } from '../domain/types';
 import { importFiles } from '../services/importers';
@@ -71,7 +71,7 @@ export function App() {
   const [showProfile, setShowProfile] = useState(false);
   const [capturingAction, setCapturingAction] = useState<ActionName | null>(null);
   const [query, setQuery] = useState('');
-  const [sort, setSort] = useState<'recent' | 'title'>('recent');
+  const [sort, setSort] = useState<LibrarySort>('recent');
   const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [bookmarks, setBookmarks] = useState<Record<string, Bookmark[]>>({});
   const [readerStates, setReaderStates] = useState<Record<string, ReaderState>>({});

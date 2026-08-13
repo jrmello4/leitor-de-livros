@@ -70,6 +70,7 @@ function publicationFromPages(
   sourceLabel: string,
   format: PublicationFormat,
   pages: PageDescriptor[],
+  sourceNames: string[] = [sourceLabel],
 ): Publication {
   const now = new Date().toISOString();
   const id = createId('publication');
@@ -87,6 +88,9 @@ function publicationFromPages(
     addedAt: now,
     updatedAt: now,
     isFavorite: false,
+    sourceNames: sourceNames
+      .map((name) => name.split(/[\\/]/).pop() ?? name)
+      .filter(Boolean),
   };
 }
 
@@ -128,7 +132,7 @@ async function importCbz(file: File): Promise<ImportResult> {
     }
 
     const title = file.name.replace(/\.cbz$/i, '') || 'Imported CBZ';
-    return { publication: publicationFromPages(title, file.name, 'cbz', pages) };
+    return { publication: publicationFromPages(title, file.name, 'cbz', pages, [file.name]) };
   } catch {
     return { diagnostic: 'The CBZ could not be read. The original file was not modified.' };
   }
@@ -139,7 +143,15 @@ export async function importFiles(files: File[]): Promise<ImportResult> {
   if (imageFiles.length > 0) {
     const pages = pagesFromFiles(imageFiles);
     const title = imageFiles[0]?.name.replace(/\.[^.]+$/, '') || 'Imported pages';
-    return { publication: publicationFromPages(title, `${imageFiles.length} image files`, 'images', pages) };
+    return {
+      publication: publicationFromPages(
+        title,
+        `${imageFiles.length} image files`,
+        'images',
+        pages,
+        imageFiles.map((file) => file.name),
+      ),
+    };
   }
 
   const cbz = files.find((file) => formatForFile(file.name) === 'cbz');

@@ -1,6 +1,6 @@
 import type { Bookmark, PageDescriptor, Publication } from './types';
 
-export type LibrarySort = 'recent' | 'title';
+export type LibrarySort = 'recent' | 'title' | 'added';
 
 export function mostRecentPublication(publications: Publication[]): Publication | undefined {
   return publications.reduce<Publication | undefined>((latest, publication) => (
@@ -15,12 +15,41 @@ export function visiblePublications(
 ): Publication[] {
   const normalizedQuery = query.trim().toLowerCase();
   return [...publications]
-    .filter((publication) => publication.title.toLowerCase().includes(normalizedQuery))
-    .sort((left, right) => (
-      sort === 'title'
-        ? left.title.localeCompare(right.title)
-        : right.updatedAt.localeCompare(left.updatedAt)
-    ));
+    .filter((publication) => {
+      const searchable = [
+        publication.title,
+        publication.sourceLabel,
+        ...(publication.sourceNames ?? []),
+      ].join('\n').toLowerCase();
+      return searchable.includes(normalizedQuery);
+    })
+    .sort((left, right) => comparePublications(left, right, sort));
+}
+
+function comparePublications(left: Publication, right: Publication, sort: LibrarySort): number {
+  if (sort === 'title') {
+    return compareText(left.title, right.title)
+      || compareText(left.sourceLabel, right.sourceLabel)
+      || compareText(left.id, right.id);
+  }
+  if (sort === 'added') {
+    return compareDescending(left.addedAt, right.addedAt)
+      || compareText(left.title, right.title)
+      || compareText(left.sourceLabel, right.sourceLabel)
+      || compareText(left.id, right.id);
+  }
+  return compareDescending(left.updatedAt, right.updatedAt)
+    || compareText(left.title, right.title)
+    || compareText(left.sourceLabel, right.sourceLabel)
+    || compareText(left.id, right.id);
+}
+
+function compareDescending(left: string, right: string): number {
+  return right.localeCompare(left);
+}
+
+function compareText(left: string, right: string): number {
+  return left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' });
 }
 
 export function nextBookmark(bookmarks: Bookmark[], pageId: string, label = '', now: string): Bookmark[] {

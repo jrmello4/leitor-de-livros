@@ -38,6 +38,8 @@ export interface Publication {
   addedAt: string;
   updatedAt: string;
   isFavorite: boolean;
+  /** Safe basenames used for discovery; never contains an absolute source path. */
+  sourceNames?: string[];
   diagnostic?: string;
 }
 

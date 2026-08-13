@@ -50,6 +50,11 @@ interface NativePublicationDto {
   diagnostic?: string;
 }
 
+function safeSourceName(value: unknown): string {
+  const source = normalizeString(value);
+  return source.split(/[\\/]/).pop() ?? source;
+}
+
 interface NativeImportResultDto {
   publications: NativePublicationDto[];
   diagnostics: string[];
@@ -277,10 +282,11 @@ function mapPublication(value: unknown, direction: ReadingDirection): Publicatio
   const currentPage = pages.length === 0
     ? 0
     : Math.max(0, Math.min(normalizeInteger(publication.currentPage), pages.length - 1));
+  const sourceLabel = safeSourceName(publication.sourceLabel);
   return {
     id: normalizeString(publication.id),
     title: normalizeString(publication.title, 'Untitled publication'),
-    sourceLabel: normalizeString(publication.sourceLabel),
+    sourceLabel,
     format: normalizeFormat(publication.format),
     pages: pages.map((page) => ({
       id: page.id,
@@ -297,6 +303,7 @@ function mapPublication(value: unknown, direction: ReadingDirection): Publicatio
     addedAt: normalizeString(publication.addedAt),
     updatedAt: normalizeString(publication.updatedAt),
     isFavorite: publication.isFavorite === true,
+    sourceNames: sourceLabel ? [sourceLabel] : [],
     diagnostic: typeof publication.diagnostic === 'string' ? publication.diagnostic : undefined,
   };
 }

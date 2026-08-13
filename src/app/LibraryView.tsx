@@ -1,15 +1,15 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { mostRecentPublication, visiblePublications as getVisiblePublications } from '../domain/library';
+import { mostRecentPublication, visiblePublications as getVisiblePublications, type LibrarySort } from '../domain/library';
 import type { Publication } from '../domain/types';
 
 interface LibraryViewProps {
   publications: Publication[];
   query: string;
-  sort: 'recent' | 'title';
+  sort: LibrarySort;
   diagnostic?: string;
   isImporting: boolean;
   onQueryChange: (query: string) => void;
-  onSortChange: (sort: 'recent' | 'title') => void;
+  onSortChange: (sort: LibrarySort) => void;
   onOpen: (publication: Publication) => void;
   onImport: (files: File[]) => void;
   isNativeRuntime: boolean;
@@ -238,13 +238,14 @@ export function LibraryView({
         <div className="toolbar-controls">
           <label className="search-field">
             <span aria-hidden="true">⌕</span>
-            <input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Search your shelf" />
+            <input aria-label="Search your shelf" value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Search your shelf" />
           </label>
           <label className="sort-field">
             <span>Sort</span>
-            <select value={sort} onChange={(event) => onSortChange(event.target.value as 'recent' | 'title')}>
+            <select aria-label="Sort publications" value={sort} onChange={(event) => onSortChange(event.target.value as LibrarySort)}>
               <option value="recent">Recent</option>
               <option value="title">Title</option>
+              <option value="added">Date added</option>
             </select>
           </label>
           <label className="favorite-filter" htmlFor="favorite-only">
