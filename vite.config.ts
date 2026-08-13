@@ -17,6 +17,7 @@ export default defineConfig({
       '**/dist/**',
       'tests/visual/**',
       'scripts/release/**',
+      'scripts/performance/**',
     ],
   },
 });
