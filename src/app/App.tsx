@@ -65,6 +65,7 @@ import { ProfilePanel } from './ProfilePanel';
 import { ReaderView } from './ReaderView';
 import { SmokeHarness } from './SmokeHarness';
 import { isSmokeMode } from '../release/testModes';
+import { resolveNativeImportRequest, type NativeImportRequest } from './nativeImportFlow';
 
 function initialLibrary(direction: ReadingProfile['direction']): Publication[] {
   const demo = createDemoPublication();
@@ -1068,16 +1069,20 @@ export function App() {
     setAnnouncement(t('app.publicationImportedBrowser', { title: openingPublication.title }));
   };
 
-  const handleNativeImportPaths = async (paths: string[]): Promise<boolean> => {
-    if (paths.length === 0) {
-      setAnnouncement(t('app.importCancelled'));
-      return false;
-    }
-
+  const handleNativeImport = async (request: NativeImportRequest): Promise<boolean> => {
     setIsImporting(true);
     setDiagnostic(undefined);
     try {
-      const result = await importNativePaths(paths, profile.direction);
+      const resolution = await resolveNativeImportRequest(request, {
+        chooseFiles: chooseNativeFiles,
+        chooseFolder: chooseNativeFolder,
+      });
+      if (resolution.kind === 'cancelled') {
+        setAnnouncement(t('app.importCancelled'));
+        return false;
+      }
+
+      const result = await importNativePaths(resolution.paths, profile.direction);
       setSmokeImportSequence((current) => current + 1);
       const diagnosticMessage = result.diagnostics.length > 0 ? result.diagnostics.join(' ') : undefined;
       setDiagnostic(diagnosticMessage);
@@ -1103,24 +1108,6 @@ export function App() {
       setAnnouncement(t('app.nativeImportFailed'));
       return false;
     } finally {
-      setIsImporting(false);
-    }
-  };
-
-  const handleNativeImport = async (selectFolder: boolean) => {
-    setIsImporting(true);
-    setDiagnostic(undefined);
-    try {
-      const paths = selectFolder ? await chooseNativeFolder() : await chooseNativeFiles();
-      if (paths.length === 0) {
-        setAnnouncement(t('app.importCancelled'));
-        setIsImporting(false);
-        return;
-      }
-      await handleNativeImportPaths(paths);
-    } catch {
-      setDiagnostic(t('app.nativeImportError'));
-      setAnnouncement(t('app.nativeImportFailed'));
       setIsImporting(false);
     }
   };
@@ -1203,8 +1190,8 @@ export function App() {
             onOpen={openPublication}
             onImport={handleImport}
             isNativeRuntime={nativeRuntime}
-            onImportNative={() => void handleNativeImport(false)}
-            onImportFolder={() => void handleNativeImport(true)}
+            onImportNative={() => void handleNativeImport({ kind: 'files' })}
+            onImportFolder={() => void handleNativeImport({ kind: 'folder' })}
             onOpenSettings={() => {
               void refreshCacheInfo();
               setShowProfile(true);
@@ -1225,7 +1212,7 @@ export function App() {
       {isSmokeMode(import.meta.env.VITE_SMOKE_TEST === '1', nativeRuntime) && (
         <SmokeHarness
           onImportPath={async (path) => {
-            const imported = await handleNativeImportPaths([path]);
+            const imported = await handleNativeImport({ kind: 'paths', paths: [path] });
             if (!imported) {
               throw new Error('Native import did not create a publication.');
             }
