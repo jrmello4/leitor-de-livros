@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInstalledAppHarness } from '../windows/installed-app-harness.mjs';
+import { measureImportToFirstFrame, waitForCommittedPage } from './performance-navigation.mjs';
 import {
   evaluateScenarioMetrics,
   PERFORMANCE_REPORT_VERSION,
@@ -214,6 +215,9 @@ async function waitForReader(page) {
   await page.getByTestId('reader-stage').waitFor({ state: 'visible' });
   await page.getByTestId('reader-current-page').waitFor({ state: 'visible' });
   await waitFor(async () => (await page.locator('.render-surface .page-sheet').count()) > 0 || (await page.locator('.render-surface canvas').count()) > 0, 'Reader surface did not mount');
+}
+
+async function waitForTwoFrames(page) {
   await page.evaluate(() => new Promise((resolvePromise) => requestAnimationFrame(() => requestAnimationFrame(resolvePromise))));
 }
 
@@ -226,7 +230,7 @@ async function resetReaderToFirstPage(page) {
   const currentPage = Number(await page.getByTestId('reader-current-page').getAttribute('data-page-index'));
   for (let pageIndex = currentPage; pageIndex > 0; pageIndex -= 1) {
     await page.getByTestId('reader-previous').click();
-    await page.getByTestId('reader-current-page').toHaveAttribute('data-page-index', String(pageIndex - 1));
+    await waitForCommittedPage(page, pageIndex - 1, waitFor);
   }
 }
 
@@ -250,6 +254,7 @@ async function openCard(page, sourceName) {
   const card = page.locator(`[data-testid="library-publication-card"][data-publication-source*="${sourceName}"]`).first();
   await card.locator('.cover-button').click();
   await waitForReader(page);
+  await waitForTwoFrames(page);
   return { latencyMs: performance.now() - started, card: card.first() };
 }
 
@@ -396,15 +401,16 @@ async function runPerformanceScenarios(session, fixtures) {
   let memorySamples = [];
 
   try {
-    const importStarted = performance.now();
     const importSequence = Number(await page.getByTestId('smoke-import-complete').getAttribute('data-sequence'));
-    await page.getByTestId('smoke-source-path').fill(fixtures.navigation);
-    await page.getByTestId('smoke-import').click();
-    await waitForImportComplete(page, importSequence);
-    const importCompletedAt = performance.now();
-    const importMs = importCompletedAt - importStarted;
-    await waitForReader(page);
-    const firstFrameMs = performance.now() - importCompletedAt;
+    const { importMs, firstFrameMs } = await measureImportToFirstFrame({
+      triggerImport: async () => {
+        await page.getByTestId('smoke-source-path').fill(fixtures.navigation);
+        await page.getByTestId('smoke-import').click();
+      },
+      waitForImportComplete: () => waitForImportComplete(page, importSequence),
+      waitForReader: () => waitForReader(page),
+      waitForTwoFrames: () => waitForTwoFrames(page),
+    }, () => performance.now());
     await waitForStatus(page, 'Imported');
     scenarioResults.import = { status: 'passed', source: 'performance-50.cbz', pageCount: 50, importMs };
     scenarioResults['first-frame'] = { status: firstFrameMs <= PERFORMANCE_THRESHOLDS.firstFrameMs ? 'passed' : 'failed', firstFrameMs };
@@ -413,7 +419,7 @@ async function runPerformanceScenarios(session, fixtures) {
     const navigationMeasurement = await measureInteraction(page, async () => {
       for (let pageIndex = 1; pageIndex < 50; pageIndex += 1) {
         await page.getByTestId('reader-next').click();
-        await page.getByTestId('reader-current-page').toHaveAttribute('data-page-index', String(pageIndex));
+        await waitForCommittedPage(page, pageIndex, waitFor);
       }
     });
     const navigationFrame = summarizeFrames(navigationMeasurement.frames);
@@ -476,6 +482,7 @@ async function runPerformanceScenarios(session, fixtures) {
     const navigationCard = page.locator('[data-testid="library-publication-card"][data-publication-source*="performance-50.cbz"]').first();
     await navigationCard.locator('.cover-button').click();
     await waitForReader(page);
+    await waitForTwoFrames(page);
     await resetReaderToFirstPage(page);
     memorySampler = startMemorySampler(child.pid);
     const longBefore = await getCacheInfo(page);
@@ -484,11 +491,11 @@ async function runPerformanceScenarios(session, fixtures) {
       for (let cycle = 0; cycle < cycles; cycle += 1) {
         for (let pageIndex = 1; pageIndex < 50; pageIndex += 1) {
           await page.getByTestId('reader-next').click();
-          await page.getByTestId('reader-current-page').toHaveAttribute('data-page-index', String(pageIndex));
+          await waitForCommittedPage(page, pageIndex, waitFor);
         }
         for (let pageIndex = 48; pageIndex >= 0; pageIndex -= 1) {
           await page.getByTestId('reader-previous').click();
-          await page.getByTestId('reader-current-page').toHaveAttribute('data-page-index', String(pageIndex));
+          await waitForCommittedPage(page, pageIndex, waitFor);
         }
       }
     });
