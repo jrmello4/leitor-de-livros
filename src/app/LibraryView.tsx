@@ -282,7 +282,14 @@ export function LibraryView({
       {visiblePublications.length > 0 ? (
         <section className="publication-grid" aria-label={t('library.publicationsAria')}>
           {visiblePublications.map((publication) => (
-            <article className="publication-card" key={publication.id}>
+            <article
+              className="publication-card"
+              key={publication.id}
+              data-testid="library-publication-card"
+              data-publication-id={publication.id}
+              data-publication-format={publication.format}
+              data-publication-source={publication.sourceLabel}
+            >
               <button className="cover-button" type="button" onClick={() => onOpen(publication)} aria-label={t('library.open', { title: publication.title })}>
                 <img
                   src={publicationCoverSrc(publication)}
@@ -343,6 +350,7 @@ export function LibraryView({
                 <button
                   className="delete-link"
                   type="button"
+                  data-testid="library-publication-remove"
                   aria-label={t('library.removeAria', { title: publication.title })}
                   onClick={(event) => {
                     deleteTriggerRef.current = event.currentTarget;
@@ -403,6 +411,7 @@ export function LibraryView({
               <button
                 className="primary-button"
                 type="button"
+                data-testid="library-remove-confirm"
                 disabled={isDeleting}
                 aria-label={t('library.removeConfirm', { title: pendingDelete.title })}
                 onClick={confirmDelete}

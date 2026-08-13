@@ -490,7 +490,7 @@ export function ReaderView({
     >
       <header className="reader-topbar">
         <div className="reader-topbar-start">
-          <button className="reader-back" onClick={onBack} aria-label={t('reader.back')}>← <span>{t('reader.library')}</span></button>
+          <button className="reader-back" data-testid="reader-back" onClick={onBack} aria-label={t('reader.back')}>← <span>{t('reader.library')}</span></button>
           <span className="reader-divider" aria-hidden="true" />
           <div className="reader-title">
             <span className="eyebrow">{t('reader.nowReading')}</span>
@@ -498,7 +498,7 @@ export function ReaderView({
           </div>
         </div>
         <div className="reader-topbar-end">
-          <span className="reader-counter">{readerCounter}</span>
+          <span className="reader-counter" data-testid="reader-current-page" data-page-index={publication.currentPage}>{readerCounter}</span>
           <button
             className={`reader-tool reader-flow-toggle ${flowVisible ? 'reader-flow-toggle--active' : ''}`}
             type="button"
@@ -532,7 +532,7 @@ export function ReaderView({
             <span className="reader-tool-label">{t('reader.bookmark')}</span>
             <span className="reader-tool-symbol" aria-hidden="true">{currentBookmarked ? '◆' : '◇'}</span>
           </button>
-          <button className="reader-tool" onClick={onToggleFullscreen} aria-label={t('reader.fullscreen')}>
+          <button className="reader-tool" data-testid="reader-fullscreen" onClick={onToggleFullscreen} aria-label={t('reader.fullscreen')}>
             <span className="reader-tool-label">{t('reader.fullscreen')}</span>
             <span className="reader-tool-symbol" aria-hidden="true">↗</span>
           </button>
@@ -569,6 +569,7 @@ export function ReaderView({
           }
         }}
         onWheel={onWheel}
+        data-testid="reader-stage"
         aria-label={t('reader.canvas')}
       >
         <div className="stage-caption stage-caption--left">{profile.direction === 'rtl' ? t('reader.rightToLeft') : t('reader.leftToRight')}</div>
@@ -643,15 +644,15 @@ export function ReaderView({
       </section>
 
       <footer className="reader-controls">
-        <button className="nav-button" onClick={() => requestTurn(-1)} aria-disabled={!canPrevious} aria-label={t('reader.previousAria')}>← <span>{t('reader.previous')}</span></button>
+        <button className="nav-button" data-testid="reader-previous" onClick={() => requestTurn(-1)} aria-disabled={!canPrevious} aria-label={t('reader.previousAria')}>← <span>{t('reader.previous')}</span></button>
         <div className="reader-progress" aria-label={t('reader.percentRead', { percent: Math.round(publication.progress * 100) })}>
           <div className="progress-track"><span style={{ width: `${publication.progress * 100}%` }} /></div>
           <span>{t('reader.percentComplete', { percent: Math.round(publication.progress * 100) })}</span>
         </div>
-        <button className="nav-button nav-button--forward" onClick={() => requestTurn(1)} aria-disabled={!canNext} aria-label={t('reader.nextAria')}><span>{t('reader.next')}</span> →</button>
+        <button className="nav-button nav-button--forward" data-testid="reader-next" onClick={() => requestTurn(1)} aria-disabled={!canNext} aria-label={t('reader.nextAria')}><span>{t('reader.next')}</span> →</button>
       </footer>
 
-      <p className="reader-announcement" aria-hidden="true">{announcement}</p>
+      <p className="reader-announcement" data-testid="reader-announcement" aria-hidden="true">{announcement}</p>
     </main>
   );
 }

@@ -63,6 +63,8 @@ import { LibraryView } from './LibraryView';
 import { LiveAnnouncement } from './LiveAnnouncement';
 import { ProfilePanel } from './ProfilePanel';
 import { ReaderView } from './ReaderView';
+import { SmokeHarness } from './SmokeHarness';
+import { isSmokeMode } from '../release/testModes';
 
 function initialLibrary(direction: ReadingProfile['direction']): Publication[] {
   const demo = createDemoPublication();
@@ -1059,22 +1061,21 @@ export function App() {
     setAnnouncement(t('app.publicationImportedBrowser', { title: openingPublication.title }));
   };
 
-  const handleNativeImport = async (selectFolder: boolean) => {
+  const handleNativeImportPaths = async (paths: string[]): Promise<boolean> => {
+    if (paths.length === 0) {
+      setAnnouncement(t('app.importCancelled'));
+      return false;
+    }
+
     setIsImporting(true);
     setDiagnostic(undefined);
     try {
-      const paths = selectFolder ? await chooseNativeFolder() : await chooseNativeFiles();
-      if (paths.length === 0) {
-        setAnnouncement(t('app.importCancelled'));
-        return;
-      }
-
       const result = await importNativePaths(paths, profile.direction);
       const diagnosticMessage = result.diagnostics.length > 0 ? result.diagnostics.join(' ') : undefined;
       setDiagnostic(diagnosticMessage);
       if (result.publications.length === 0) {
         setAnnouncement(t('app.nativeNoPublication'));
-        return;
+        return false;
       }
 
       setLibrary((current) => {
@@ -1088,10 +1089,30 @@ export function App() {
       const openingPublication = result.publications[0];
       void openPublication(openingPublication);
       setAnnouncement(t('app.publicationImportedNative', { title: openingPublication.title }));
+      return true;
     } catch {
       setDiagnostic(t('app.nativeImportError'));
       setAnnouncement(t('app.nativeImportFailed'));
+      return false;
     } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleNativeImport = async (selectFolder: boolean) => {
+    setIsImporting(true);
+    setDiagnostic(undefined);
+    try {
+      const paths = selectFolder ? await chooseNativeFolder() : await chooseNativeFiles();
+      if (paths.length === 0) {
+        setAnnouncement(t('app.importCancelled'));
+        setIsImporting(false);
+        return;
+      }
+      await handleNativeImportPaths(paths);
+    } catch {
+      setDiagnostic(t('app.nativeImportError'));
+      setAnnouncement(t('app.nativeImportFailed'));
       setIsImporting(false);
     }
   };
@@ -1189,6 +1210,18 @@ export function App() {
           />
         )}
       </div>
+
+      {isSmokeMode(import.meta.env.VITE_SMOKE_TEST === '1', nativeRuntime) && (
+        <SmokeHarness
+          onImportPath={async (path) => {
+            const imported = await handleNativeImportPaths([path]);
+            if (!imported) {
+              throw new Error('Native import did not create a publication.');
+            }
+          }}
+          diagnostic={diagnostic ?? null}
+        />
+      )}
 
       {showProfile && (
         <>
