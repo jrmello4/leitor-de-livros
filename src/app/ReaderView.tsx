@@ -379,6 +379,11 @@ export function ReaderView({
       return;
     }
 
+    if (commit && !canNext) {
+      requestTurn(1, 'idle');
+      return;
+    }
+
     setTurnPhase(shouldCommit ? 'committing' : 'cancelling');
     setDragProgress(shouldCommit ? 1 : 0);
     if (profile.reducedMotion) {
@@ -638,12 +643,12 @@ export function ReaderView({
       </section>
 
       <footer className="reader-controls">
-        <button className="nav-button" onClick={() => requestTurn(-1)} disabled={!canPrevious} aria-label={t('reader.previousAria')}>← <span>{t('reader.previous')}</span></button>
+        <button className="nav-button" onClick={() => requestTurn(-1)} aria-disabled={!canPrevious} aria-label={t('reader.previousAria')}>← <span>{t('reader.previous')}</span></button>
         <div className="reader-progress" aria-label={t('reader.percentRead', { percent: Math.round(publication.progress * 100) })}>
           <div className="progress-track"><span style={{ width: `${publication.progress * 100}%` }} /></div>
           <span>{t('reader.percentComplete', { percent: Math.round(publication.progress * 100) })}</span>
         </div>
-        <button className="nav-button nav-button--forward" onClick={() => requestTurn(1)} disabled={!canNext} aria-label={t('reader.nextAria')}><span>{t('reader.next')}</span> →</button>
+        <button className="nav-button nav-button--forward" onClick={() => requestTurn(1)} aria-disabled={!canNext} aria-label={t('reader.nextAria')}><span>{t('reader.next')}</span> →</button>
       </footer>
 
       <p className="reader-announcement" aria-hidden="true">{announcement}</p>

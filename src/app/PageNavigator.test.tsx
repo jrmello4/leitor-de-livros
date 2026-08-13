@@ -120,6 +120,7 @@ describe('PageNavigator', () => {
       });
     }
     expect(onUpdateBookmarkLabel).toHaveBeenCalledWith('page-2', 'Climax');
+    expect(onUpdateBookmarkLabel).toHaveBeenCalledTimes(1);
   });
 
   it('restores focus to its trigger when closed', () => {

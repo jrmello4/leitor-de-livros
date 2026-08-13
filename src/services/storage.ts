@@ -7,6 +7,7 @@ import {
 } from '../domain/profiles';
 import type { ReadingProfile } from '../domain/types';
 import type { Bookmark, CustomCover, ReaderState } from '../domain/types';
+import { normalizeCustomCover } from '../domain/covers';
 import { defaultReaderState, normalizeReaderState } from '../domain/readerState';
 
 const PROFILE_KEY = 'tactile-reader/profile/v1';
@@ -179,19 +180,22 @@ export function saveReaderState(publicationId: string, state: ReaderState): void
 }
 
 export function loadCustomCover(publicationId: string): CustomCover | undefined {
-  const covers = loadValue(CUSTOM_COVERS_KEY, {}, isCustomCoverMap);
-  return covers[publicationId];
+  return loadCustomCoverMap()[publicationId];
 }
 
-export function saveCustomCover(publicationId: string, cover: CustomCover): void {
-  const covers = loadValue(CUSTOM_COVERS_KEY, {}, isCustomCoverMap);
-  saveValue(CUSTOM_COVERS_KEY, { ...covers, [publicationId]: cover });
+export function saveCustomCover(publicationId: string, cover: CustomCover): boolean {
+  const normalized = normalizeCustomCover(cover);
+  if (!normalized) {
+    return false;
+  }
+  const covers = loadCustomCoverMap();
+  return saveValue(CUSTOM_COVERS_KEY, { ...covers, [publicationId]: normalized });
 }
 
-export function clearCustomCover(publicationId: string): void {
-  const covers = loadValue(CUSTOM_COVERS_KEY, {}, isCustomCoverMap);
+export function clearCustomCover(publicationId: string): boolean {
+  const covers = loadCustomCoverMap();
   delete covers[publicationId];
-  saveValue(CUSTOM_COVERS_KEY, covers);
+  return saveValue(CUSTOM_COVERS_KEY, covers);
 }
 
 /** Remove only browser-side metadata for a publication. Imported source files
@@ -240,11 +244,16 @@ function loadValue<T>(key: string, fallback: T, isValid: (value: unknown) => val
   }
 }
 
-function saveValue(key: string, value: unknown): void {
+function saveValue(key: string, value: unknown): boolean {
   try {
-    getStorage()?.setItem(key, JSON.stringify(value));
+    const storage = getStorage();
+    if (!storage) {
+      return false;
+    }
+    storage.setItem(key, JSON.stringify(value));
+    return true;
   } catch {
-    return;
+    return false;
   }
 }
 
@@ -262,12 +271,27 @@ function isBookmark(value: unknown): value is Bookmark {
     && typeof value.updatedAt === 'string';
 }
 
-function isCustomCoverMap(value: unknown): value is Record<string, CustomCover> {
-  return isRecord(value) && Object.values(value).every((cover) => (
-    isRecord(cover)
-    && typeof cover.src === 'string'
-    && typeof cover.sourceName === 'string'
-  ));
+function loadCustomCoverMap(): Record<string, CustomCover> {
+  const storage = getStorage();
+  if (!storage) {
+    return {};
+  }
+  try {
+    const parsed: unknown = JSON.parse(storage.getItem(CUSTOM_COVERS_KEY) ?? 'null');
+    if (!isRecord(parsed)) {
+      return {};
+    }
+    const covers: Record<string, CustomCover> = {};
+    for (const [publicationId, value] of Object.entries(parsed)) {
+      const cover = normalizeCustomCover(value);
+      if (cover) {
+        covers[publicationId] = cover;
+      }
+    }
+    return covers;
+  } catch {
+    return {};
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

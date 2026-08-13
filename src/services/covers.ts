@@ -12,16 +12,30 @@ export function readBrowserCover(file: File): Promise<CustomCover> {
 
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.addEventListener('load', () => {
+    reader.addEventListener('load', async () => {
       const cover = normalizeCustomCover({ src: reader.result, sourceName: file.name });
       if (!cover) {
         reject(new Error('unsupported'));
         return;
       }
-      resolve(cover);
+      try {
+        await decodeCover(cover.src);
+        resolve(cover);
+      } catch {
+        reject(new Error('unreadable'));
+      }
     });
     reader.addEventListener('error', () => reject(new Error('unreadable')));
     reader.readAsDataURL(file);
+  });
+}
+
+function decodeCover(src: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.addEventListener('load', () => resolve(), { once: true });
+    image.addEventListener('error', () => reject(new Error('unreadable')), { once: true });
+    image.src = src;
   });
 }
 

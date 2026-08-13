@@ -21,4 +21,12 @@ describe('custom covers', () => {
     expect(publicationCoverSrc(publication)).toBe('data:image/png;base64,AA==');
     expect(publicationCoverSrc({ pages: [{ src: 'page-src' }] } as Publication)).toBe('page-src');
   });
+
+  it('rejects unsafe custom cover URLs and keeps the original cover', () => {
+    const publication = {
+      pages: [{ src: 'page-src' }],
+      customCover: { src: 'https://example.com/cover.png', sourceName: 'cover.png' },
+    } as Publication;
+    expect(publicationCoverSrc(publication)).toBe('page-src');
+  });
 });

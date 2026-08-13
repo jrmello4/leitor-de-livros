@@ -422,17 +422,17 @@ function parseTransferText(value: string): unknown {
 
 function uniqueImportedName(baseName: string, usedNames: Set<string>): string {
   const normalizedBase = baseName.trim();
-  let candidate = `${normalizedBase} (imported)`;
-  let suffix = 2;
-  while (usedNames.has(candidate.toLocaleLowerCase())) {
-    candidate = `${normalizedBase} (imported ${suffix})`;
+  let suffix = 1;
+  while (true) {
+    const suffixText = suffix === 1 ? ' (imported)' : ` (imported ${suffix})`;
+    const availableBaseLength = Math.max(1, PROFILE_NAME_LIMIT - suffixText.length);
+    const truncatedBase = normalizedBase.slice(0, availableBaseLength).trim();
+    const candidate = `${truncatedBase}${suffixText}`;
+    if (!usedNames.has(candidate.toLocaleLowerCase())) {
+      return candidate;
+    }
     suffix += 1;
   }
-  if (candidate.length <= PROFILE_NAME_LIMIT) {
-    return candidate;
-  }
-  const suffixText = candidate.slice(normalizedBase.length);
-  return `${normalizedBase.slice(0, Math.max(1, PROFILE_NAME_LIMIT - suffixText.length)).trim()}${suffixText}`;
 }
 
 function uniqueImportedId(baseId: string, usedIds: Set<string>): string {

@@ -4,9 +4,9 @@ use std::{
     sync::Mutex,
 };
 
+use image::{ImageFormat, ImageReader};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
-use image::{ImageFormat, ImageReader};
 
 use crate::{
     error::{CoreError, CoreResult},
@@ -261,7 +261,9 @@ impl LibraryDb {
         if metadata.len() == 0 || metadata.len() > MAX_CUSTOM_COVER_BYTES {
             return Err(CoreError::from("custom cover exceeds the 10 MiB limit"));
         }
-        let image = ImageReader::open(&source)?.with_guessed_format()?.decode()?;
+        let image = ImageReader::open(&source)?
+            .with_guessed_format()?
+            .decode()?;
         let source_name = source
             .file_name()
             .and_then(|name| name.to_str())
@@ -331,37 +333,98 @@ impl LibraryDb {
     }
 
     pub fn clear_custom_cover(&self, publication_id: &str) -> CoreResult<()> {
-        let connection = self
+        let mut connection = self
             .connection
             .lock()
             .map_err(|_| CoreError::from("database lock poisoned"))?;
-        let (cache_path, source_path) = connection
+        let (cache_path, source_path, source_name) = connection
             .query_row(
-                "SELECT custom_cover_cache, custom_cover_source FROM publications WHERE id = ?1",
+                "SELECT custom_cover_cache, custom_cover_source, custom_cover_name
+                   FROM publications WHERE id = ?1",
                 [publication_id],
-                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
             )
             .optional()?
             .ok_or_else(|| CoreError::from("publication does not exist or has no custom cover"))?;
-        let changed = connection.execute(
-            "UPDATE publications
-                SET custom_cover_source = NULL,
-                    custom_cover_cache = NULL,
-                    custom_cover_name = NULL,
-                    updated_at = ?1
-              WHERE id = ?2",
-            params![now(), publication_id],
-        )?;
-        if changed != 1 {
-            return Err(CoreError::from("publication does not exist"));
-        }
         let cache_root = self.cache_dir.canonicalize()?;
         let source_canonical = source_path
             .as_deref()
             .and_then(|path| Path::new(path).canonicalize().ok());
-        if let Ok(canonical) = Path::new(cache_path.as_deref().unwrap_or_default()).canonicalize() {
-            if canonical.starts_with(cache_root) && source_canonical.as_ref() != Some(&canonical) {
-                let _ = std::fs::remove_file(canonical);
+        let cover_target = cache_path
+            .as_deref()
+            .and_then(|path| Path::new(path).canonicalize().ok())
+            .filter(|path| {
+                path.starts_with(&cache_root)
+                    && path.is_file()
+                    && source_canonical.as_ref() != Some(path)
+            });
+        let mut staged_cover: Option<(PathBuf, PathBuf)> = None;
+        if let Some(target) = cover_target {
+            let backup = target.with_file_name(format!(".custom-cover-clear-{}.bak", now()));
+            std::fs::rename(&target, &backup)?;
+            staged_cover = Some((target, backup));
+        }
+
+        let transaction_result = (|| -> CoreResult<()> {
+            let transaction = connection.transaction()?;
+            let changed = transaction.execute(
+                "UPDATE publications
+                    SET custom_cover_source = NULL,
+                        custom_cover_cache = NULL,
+                        custom_cover_name = NULL,
+                        updated_at = ?1
+                  WHERE id = ?2",
+                params![now(), publication_id],
+            )?;
+            if changed != 1 {
+                return Err(CoreError::from("publication does not exist"));
+            }
+            transaction.commit()?;
+            Ok(())
+        })();
+        if let Err(error) = transaction_result {
+            if let Some((target, backup)) = staged_cover.take() {
+                if let Err(restore_error) = std::fs::rename(backup, target) {
+                    return Err(format!(
+                        "custom cover reset failed: {error}; rollback failed: {restore_error}"
+                    )
+                    .into());
+                }
+            }
+            return Err(error);
+        }
+
+        if let Some((target, backup)) = staged_cover {
+            if let Err(error) = std::fs::remove_file(&backup) {
+                let restore_file = std::fs::rename(&backup, &target);
+                if let Err(restore_error) = restore_file {
+                    return Err(format!(
+                        "custom cover cleanup failed: {error}; file rollback failed: {restore_error}"
+                    )
+                    .into());
+                }
+                let restore_metadata = (|| -> CoreResult<()> {
+                    let transaction = connection.transaction()?;
+                    transaction.execute(
+                        "UPDATE publications
+                            SET custom_cover_source = ?1,
+                                custom_cover_cache = ?2,
+                                custom_cover_name = ?3,
+                                updated_at = ?4
+                          WHERE id = ?5",
+                        params![source_path, cache_path, source_name, now(), publication_id],
+                    )?;
+                    transaction.commit()?;
+                    Ok(())
+                })();
+                restore_metadata?;
+                return Err(error.into());
             }
         }
         Ok(())
@@ -1268,6 +1331,12 @@ impl LibraryDb {
         if !canonical.starts_with(cache_root) || !canonical.is_file() {
             return None;
         }
+        ImageReader::open(&canonical)
+            .ok()?
+            .with_guessed_format()
+            .ok()?
+            .decode()
+            .ok()?;
         canonical.to_str().map(str::to_owned)
     }
 }
@@ -2121,12 +2190,18 @@ mod tests {
             .list_publications()
             .expect("publications")
             .remove(0);
-        assert_eq!(publication.custom_cover_name.as_deref(), Some("replacement.png"));
+        assert_eq!(
+            publication.custom_cover_name.as_deref(),
+            Some("replacement.png")
+        );
         assert!(publication
             .custom_cover_path
             .as_deref()
             .is_some_and(|path| Path::new(path).exists()));
-        assert_eq!(std::fs::read(&publication_source).expect("source bytes"), original_bytes);
+        assert_eq!(
+            std::fs::read(&publication_source).expect("source bytes"),
+            original_bytes
+        );
 
         database
             .clear_custom_cover("publication-1")

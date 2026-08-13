@@ -121,4 +121,20 @@ describe('named reading profiles', () => {
       expect(merged.store.profiles.at(-1)?.id).not.toBe(current.profiles[0]?.id);
     }
   });
+
+  it('keeps imported conflict names within the profile limit after truncation', () => {
+    const current = createDefaultProfileStore();
+    const imported = createDefaultProfileStore();
+    const longName = 'a'.repeat(80);
+    current.profiles[0] = { ...current.profiles[0]!, name: `${'a'.repeat(69)} (imported)` };
+    imported.profiles[0] = { ...imported.profiles[0]!, name: longName };
+
+    const merged = mergeProfileStore(current, imported);
+    expect(merged.ok).toBe(true);
+    if (merged.ok) {
+      const importedName = merged.store.profiles.at(-1)!.name;
+      expect(importedName.length).toBeLessThanOrEqual(80);
+      expect(importedName).not.toBe(current.profiles[0]?.name);
+    }
+  });
 });
