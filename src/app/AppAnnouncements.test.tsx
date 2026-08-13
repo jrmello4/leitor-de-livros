@@ -22,9 +22,9 @@ vi.mock('../rendering/ReaderSurface', () => ({
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-async function flushReact() {
+async function flushReact(delayMs = 0) {
   await Promise.resolve();
-  await new Promise((resolve) => window.setTimeout(resolve, 0));
+  await new Promise((resolve) => window.setTimeout(resolve, delayMs));
 }
 
 describe('application live-region wiring', () => {
@@ -70,7 +70,7 @@ describe('application live-region wiring', () => {
 
     await act(async () => {
       host.querySelector<HTMLButtonElement>('[aria-label="Next page"]')?.click();
-      await flushReact();
+      await flushReact(500);
     });
 
     const statusMessages = [...host.querySelectorAll('[role="status"]')].map((node) => node.textContent ?? '');
