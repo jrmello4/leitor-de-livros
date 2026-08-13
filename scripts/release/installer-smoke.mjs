@@ -28,18 +28,52 @@ export function errorMessage(error) {
 }
 
 export function resultWithFailure(result, error) {
-  const lifecycleEvidence = error instanceof InstalledAppLifecycleError
-    ? {
-      stage: error.stage,
-      ...(error.cleanupFailure ? { cleanupFailure: errorMessage(error.cleanupFailure) } : {}),
-    }
-    : {};
+  const lifecycle = error instanceof InstalledAppLifecycleError
+    ? error
+    : new InstalledAppLifecycleError('execution', errorMessage(error), { cause: error });
   return {
     ...result,
     status: 'failed',
-    ...lifecycleEvidence,
-    failure: errorMessage(error),
+    stage: lifecycle.stage,
+    ...(lifecycle.cleanupFailure ? { cleanupFailure: errorMessage(lifecycle.cleanupFailure) } : {}),
+    failure: lifecycle.message,
   };
+}
+
+function preservePrimaryFailure(primaryError, cleanupError) {
+  if (!primaryError) {
+    return cleanupError instanceof InstalledAppLifecycleError
+      ? cleanupError
+      : new InstalledAppLifecycleError('cleanup', errorMessage(cleanupError), { cause: cleanupError });
+  }
+  const lifecycle = primaryError instanceof InstalledAppLifecycleError
+    ? primaryError
+    : new InstalledAppLifecycleError('execution', errorMessage(primaryError), { cause: primaryError });
+  lifecycle.cleanupFailure ??= cleanupError instanceof InstalledAppLifecycleError
+    ? cleanupError.cause ?? cleanupError
+    : cleanupError;
+  return lifecycle;
+}
+
+export async function settleInstallerLifecycle({ cleanup, execute, result }) {
+  let error;
+  try {
+    await execute();
+  } catch (executionError) {
+    error = executionError;
+  }
+  try {
+    await cleanup();
+  } catch (cleanupError) {
+    error = preservePrimaryFailure(error, cleanupError);
+  }
+  if (error) {
+    const lifecycle = error instanceof InstalledAppLifecycleError
+      ? error
+      : new InstalledAppLifecycleError('execution', errorMessage(error), { cause: error });
+    return { error: lifecycle, result: resultWithFailure(result, lifecycle) };
+  }
+  return { error: undefined, result: { ...result, status: 'passed' } };
 }
 
 async function recursiveFiles(directory) {
@@ -166,6 +200,7 @@ async function runMissingPdfiumScenario(installDirectory, pdfPath, runDirectory,
     executable,
     label: 'missing-pdfium',
     evidenceDirectory: join(evidenceRoot, result.runId),
+    runRoot: runDirectory,
     timeoutMs,
   });
   try {
@@ -189,6 +224,7 @@ async function runIntactScenario(executable, cbzPath, pdfPath, runDirectory, res
     executable,
     label: 'intact-first',
     evidenceDirectory: join(evidenceRoot, result.runId),
+    runRoot: runDirectory,
     timeoutMs,
   });
   try {
@@ -219,6 +255,7 @@ async function runIntactScenario(executable, cbzPath, pdfPath, runDirectory, res
     executable,
     label: 'intact-resumed',
     evidenceDirectory: join(evidenceRoot, result.runId),
+    runRoot: runDirectory,
     timeoutMs,
   });
   try {
@@ -252,7 +289,6 @@ async function main() {
   const runDirectory = await mkdtemp(join(tmpdir(), 'tactile-reader-smoke-'));
   installedAppHarness.registerRunRoot(runDirectory);
   const evidenceDirectory = join(evidenceRoot, runId);
-  await mkdir(evidenceDirectory, { recursive: true });
   const result = {
     runId,
     status: 'failed',
@@ -266,35 +302,52 @@ async function main() {
     failure: null,
   };
 
+  const outcome = await settleInstallerLifecycle({
+    result,
+    execute: async () => {
+      await mkdir(evidenceDirectory, { recursive: true });
+      const fixtures = await createRunFixtures(runDirectory);
+      result.sourceHashesBefore = {
+        cbz: await sha256(fixtures.cbz),
+        pdf: await sha256(fixtures.pdf),
+      };
+      result.installer = await buildInstaller(runDirectory, runId);
+      const executable = await installedAppHarness.installPackage(result.installer, result.installDirectory);
+      await runMissingPdfiumScenario(result.installDirectory, fixtures.pdf, runDirectory, result);
+      await runIntactScenario(executable, fixtures.cbz, fixtures.pdf, runDirectory, result);
+      result.sourceHashesAfter = {
+        cbz: await sha256(fixtures.cbz),
+        pdf: await sha256(fixtures.pdf),
+      };
+      if (JSON.stringify(result.sourceHashesBefore) !== JSON.stringify(result.sourceHashesAfter)) {
+        throw new Error('Fixture source hashes changed during the smoke run.');
+      }
+    },
+    cleanup: () => installedAppHarness.cleanupRun({
+      installDirectory: result.installDirectory,
+      runRoot: runDirectory,
+    }),
+  });
+  Object.assign(result, outcome.result);
   try {
-    const fixtures = await createRunFixtures(runDirectory);
-    result.sourceHashesBefore = {
-      cbz: await sha256(fixtures.cbz),
-      pdf: await sha256(fixtures.pdf),
-    };
-    result.installer = await buildInstaller(runDirectory, runId);
-    const executable = await installedAppHarness.installPackage(result.installer, result.installDirectory);
-    await runMissingPdfiumScenario(result.installDirectory, fixtures.pdf, runDirectory, result);
-    await runIntactScenario(executable, fixtures.cbz, fixtures.pdf, runDirectory, result);
-    result.sourceHashesAfter = {
-      cbz: await sha256(fixtures.cbz),
-      pdf: await sha256(fixtures.pdf),
-    };
-    if (JSON.stringify(result.sourceHashesBefore) !== JSON.stringify(result.sourceHashesAfter)) {
-      throw new Error('Fixture source hashes changed during the smoke run.');
+    if (outcome.error) {
+      await mkdir(evidenceDirectory, { recursive: true });
+      await writeFile(join(evidenceDirectory, 'failure.txt'), errorMessage(outcome.error) + '\n', 'utf8');
     }
-    result.status = 'passed';
-  } catch (error) {
-    Object.assign(result, resultWithFailure(result, error));
-    try {
-      await writeFile(join(evidenceDirectory, 'failure.txt'), errorMessage(error) + '\n', 'utf8');
-    } catch {
-      // The result write below remains the final evidence attempt.
-    }
-  } finally {
+  } catch {
+    // The result write below remains the final evidence attempt.
+  }
+  try {
+    await mkdir(evidenceDirectory, { recursive: true });
     await writeFile(join(evidenceDirectory, 'result.json'), JSON.stringify(result, null, 2) + '\n', 'utf8');
     console.log(JSON.stringify({ evidenceDirectory, result }));
     if (result.status !== 'passed') {
+      process.exitCode = 1;
+    }
+  } catch (error) {
+    try {
+      console.error(errorMessage(error));
+    } finally {
       process.exitCode = 1;
     }
   }

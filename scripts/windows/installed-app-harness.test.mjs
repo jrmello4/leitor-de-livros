@@ -62,7 +62,21 @@ function successfulLaunchDependencies(events, child, options = {}) {
     createWriteStream: (filePath) => fakeStream(events, filePath.endsWith('.stdout.log') ? 'stdout' : 'stderr'),
     delay: async () => undefined,
     fetch: async () => ({ ok: true }),
+    mkdir: async () => undefined,
     spawn: () => child,
+  };
+}
+
+function launchOptions(harness, label, options = {}) {
+  const runRoot = 'C:\\runs\\installed-app-harness-' + label;
+  harness.registerRunRoot(runRoot);
+  return {
+    evidenceDirectory: 'C:\\safe-evidence',
+    executable: 'C:\\safe-app\\Tactile Reader.exe',
+    label,
+    runRoot,
+    timeoutMs: 1,
+    ...options,
   };
 }
 
@@ -115,9 +129,51 @@ test('reports the installation stage and underlying cause', async () => {
   await assert.rejects(
     harness.installPackage('C:\\runs\\package.exe', 'C:\\runs\\installed'),
     (error) => error instanceof InstalledAppLifecycleError
-      && error.stage === 'install'
+      && error.stage === 'installation'
       && error.cause === installerFailure
       && /NSIS failed/.test(error.message),
+  );
+});
+
+test('uses the closed execution stage for condition timeouts', async () => {
+  const times = [0, 0, 2];
+  const harness = createInstalledAppHarness({
+    delay: async () => undefined,
+    now: () => times.shift() ?? 2,
+  });
+
+  await assert.rejects(
+    harness.waitFor(() => false, 'reader never became ready', { timeoutMs: 1 }),
+    (error) => error instanceof InstalledAppLifecycleError
+      && error.stage === 'execution'
+      && /reader never became ready/.test(error.message),
+  );
+});
+
+test('reports a deterministic occupied-port listen error', async () => {
+  const occupied = Object.assign(new Error('address already in use'), { code: 'EADDRINUSE' });
+  const harness = createInstalledAppHarness({
+    createServer: () => {
+      let onError;
+      return {
+        once(event, listener) {
+          assert.equal(event, 'error');
+          onError = listener;
+        },
+        listen(port, host) {
+          assert.equal(port, 0);
+          assert.equal(host, '127.0.0.1');
+          queueMicrotask(() => onError(occupied));
+        },
+      };
+    },
+  });
+
+  await assert.rejects(
+    harness.allocatePort(),
+    (error) => error instanceof InstalledAppLifecycleError
+      && error.stage === 'launch'
+      && error.cause === occupied,
   );
 });
 
@@ -189,17 +245,13 @@ test('records a cleanup failure without replacing a connection deadline', async 
     delay: async () => undefined,
     execFileSync: () => { throw new Error('taskkill failed'); },
     fetch: async () => ({ ok: false }),
+    mkdir: async () => undefined,
     now: () => times.shift() ?? 2,
     spawn: () => child,
   });
 
   await assert.rejects(
-    harness.launchApp({
-      evidenceDirectory: 'C:\\safe-evidence',
-      executable: 'C:\\safe-app\\Tactile Reader.exe',
-      label: 'connection',
-      timeoutMs: 1,
-    }),
+    harness.launchApp(launchOptions(harness, 'connection')),
     (error) => error instanceof InstalledAppLifecycleError
       && error.stage === 'connection'
       && /CDP endpoint timed out/.test(error.message)
@@ -229,12 +281,7 @@ test('uses taskkill for a launched process tree that does not exit after kill', 
     },
   });
 
-  const session = await harness.launchApp({
-    evidenceDirectory: 'C:\\safe-evidence',
-    executable: 'C:\\safe-app\\Tactile Reader.exe',
-    label: 'process-tree',
-    timeoutMs: 1,
-  });
+  const session = await harness.launchApp(launchOptions(harness, 'process-tree'));
   await session.close();
 
   assert.deepEqual(events, ['browser', 'kill', 'taskkill', 'stdout', 'stderr']);
@@ -256,12 +303,7 @@ test('close is idempotent and closes browser, process, then streams', async () =
   });
   const harness = createInstalledAppHarness(successfulLaunchDependencies(events, child));
 
-  const session = await harness.launchApp({
-    evidenceDirectory: 'C:\\safe-evidence',
-    executable: 'C:\\safe-app\\Tactile Reader.exe',
-    label: 'idempotent-close',
-    timeoutMs: 1,
-  });
+  const session = await harness.launchApp(launchOptions(harness, 'idempotent-close'));
   await session.close();
   await session.close();
 
@@ -289,12 +331,7 @@ test('concurrent close callers share the same pending cleanup', async () => {
       return browserClose.promise;
     },
   }));
-  const session = await harness.launchApp({
-    evidenceDirectory: 'C:\\safe-evidence',
-    executable: 'C:\\safe-app\\Tactile Reader.exe',
-    label: 'concurrent-close',
-    timeoutMs: 1,
-  });
+  const session = await harness.launchApp(launchOptions(harness, 'concurrent-close'));
 
   const firstClose = session.close();
   const concurrentClose = session.close();
@@ -331,12 +368,7 @@ test('concurrent close callers share a cleanup error and a later call retries', 
       }
     },
   }));
-  const session = await harness.launchApp({
-    evidenceDirectory: 'C:\\safe-evidence',
-    executable: 'C:\\safe-app\\Tactile Reader.exe',
-    label: 'retry-close',
-    timeoutMs: 1,
-  });
+  const session = await harness.launchApp(launchOptions(harness, 'retry-close'));
 
   const firstClose = session.close();
   const concurrentClose = session.close();
@@ -365,13 +397,104 @@ test('does not terminate an already-exited launched process', async () => {
     execFileSync: () => assert.fail('must not taskkill an already-exited process'),
   });
 
+  const session = await harness.launchApp(launchOptions(harness, 'already-exited'));
+  await session.close();
+
+  assert.deepEqual(events, ['browser', 'stdout', 'stderr']);
+});
+
+test('launch contains Tauri app data under the registered run root', async () => {
+  const events = [];
+  let launchOptions;
+  const child = Object.assign(new EventEmitter(), {
+    exitCode: 0,
+    signalCode: null,
+    pid: 9012,
+    stderr: { pipe() {} },
+    stdout: { pipe() {} },
+  });
+  const runRoot = 'C:\\runs\\app-data-contained';
+  const harness = createInstalledAppHarness({
+    ...successfulLaunchDependencies(events, child),
+    spawn: (_executable, _argumentsList, options) => {
+      launchOptions = options;
+      return child;
+    },
+  });
+  harness.registerRunRoot(runRoot);
+
   const session = await harness.launchApp({
     evidenceDirectory: 'C:\\safe-evidence',
     executable: 'C:\\safe-app\\Tactile Reader.exe',
-    label: 'already-exited',
+    label: 'contained-app-data',
+    runRoot,
     timeoutMs: 1,
   });
   await session.close();
 
-  assert.deepEqual(events, ['browser', 'stdout', 'stderr']);
+  assert.equal(launchOptions.env.APPDATA, resolve(runRoot, 'app-data', 'roaming'));
+  assert.equal(launchOptions.env.LOCALAPPDATA, resolve(runRoot, 'app-data', 'local'));
+});
+
+test('silently uninstalls NSIS before removing the owned run root and remains idempotent', async (t) => {
+  const events = [];
+  const runRoot = await mkdtemp(join(tmpdir(), 'installed-app-harness-cleanup-'));
+  const installDirectory = join(runRoot, 'installed');
+  const uninstaller = join(installDirectory, 'uninstall.exe');
+  t.after(() => rm(runRoot, { recursive: true, force: true }));
+  await mkdir(installDirectory, { recursive: true });
+  await writeFile(uninstaller, 'owned uninstaller');
+  const harness = createInstalledAppHarness({
+    execFileSync: (command, argumentsList, options) => {
+      assert.equal(command, uninstaller);
+      assert.deepEqual(argumentsList, ['/S']);
+      assert.deepEqual(options, { cwd: installDirectory, stdio: 'ignore', windowsHide: true });
+      events.push('uninstall');
+    },
+    remove: async (target, options) => {
+      assert.equal(target, resolve(runRoot));
+      assert.deepEqual(options, { recursive: true, force: true });
+      events.push('remove-root');
+      await rm(target, options);
+    },
+  });
+  harness.registerRunRoot(runRoot);
+
+  assert.equal(await harness.uninstallPackage(runRoot, installDirectory), true);
+  await harness.removeOwnedRunRoot(runRoot);
+  assert.equal(await harness.uninstallPackage(runRoot, installDirectory), false);
+  await harness.removeOwnedRunRoot(runRoot);
+
+  assert.deepEqual(events, ['uninstall', 'remove-root', 'remove-root']);
+});
+
+test('cleanup closes the session, uninstalls NSIS, and removes the run root even after an earlier cleanup failure', async (t) => {
+  const events = [];
+  const runRoot = await mkdtemp(join(tmpdir(), 'installed-app-harness-cleanup-order-'));
+  const installDirectory = join(runRoot, 'installed');
+  const uninstaller = join(installDirectory, 'uninstall.exe');
+  t.after(() => rm(runRoot, { recursive: true, force: true }));
+  await mkdir(installDirectory, { recursive: true });
+  await writeFile(uninstaller, 'owned uninstaller');
+  const harness = createInstalledAppHarness({
+    execFileSync: () => { events.push('uninstall'); },
+    remove: async (target, options) => {
+      events.push('remove-root');
+      await rm(target, options);
+    },
+  });
+  harness.registerRunRoot(runRoot);
+
+  await assert.rejects(
+    harness.cleanupRun({
+      installDirectory,
+      runRoot,
+      session: { close: async () => { events.push('session-close'); throw new Error('browser close failed'); } },
+    }),
+    (error) => error instanceof InstalledAppLifecycleError
+      && error.stage === 'cleanup'
+      && error.cause?.message === 'browser close failed',
+  );
+
+  assert.deepEqual(events, ['session-close', 'uninstall', 'remove-root']);
 });

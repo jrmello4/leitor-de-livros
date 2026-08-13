@@ -6,14 +6,29 @@ import {
 } from './performance-navigation.mjs';
 
 test('first frame includes import time', async () => {
+  const events = [];
   const times = [100, 600, 900];
   const result = await measureImportToFirstFrame({
-    triggerImport: async () => undefined,
-    waitForImportComplete: async () => undefined,
-    waitForReader: async () => undefined,
-    waitForTwoFrames: async () => undefined,
-  }, () => times.shift());
+    prepareImport: async () => { events.push('fill'); },
+    triggerImport: async () => { events.push('click'); },
+    waitForImportComplete: async () => { events.push('import-complete'); },
+    waitForReader: async () => { events.push('reader'); },
+    waitForTwoFrames: async () => { events.push('two-frames'); },
+  }, () => {
+    events.push('now');
+    return times.shift();
+  });
   assert.deepEqual(result, { importMs: 500, firstFrameMs: 800 });
+  assert.deepEqual(events, [
+    'fill',
+    'now',
+    'click',
+    'import-complete',
+    'now',
+    'reader',
+    'two-frames',
+    'now',
+  ]);
 });
 
 test('waits until the reader commits the expected page index', async () => {

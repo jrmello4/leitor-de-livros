@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createInstalledAppHarness } from '../windows/installed-app-harness.mjs';
+import { createInstalledAppHarness, InstalledAppLifecycleError } from '../windows/installed-app-harness.mjs';
 import { measureImportToFirstFrame, waitForCommittedPage } from './performance-navigation.mjs';
 import {
   evaluateScenarioMetrics,
@@ -18,6 +18,7 @@ import {
   percentile,
   validatePerformanceReport,
   normalizeGpuClass,
+  classifyGpu,
 } from './performance-contract.mjs';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
@@ -35,6 +36,65 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function preservePrimaryFailure(primaryError, cleanupError) {
+  if (!primaryError) {
+    return cleanupError instanceof InstalledAppLifecycleError
+      ? cleanupError
+      : new InstalledAppLifecycleError('cleanup', errorMessage(cleanupError), { cause: cleanupError });
+  }
+  const lifecycle = primaryError instanceof InstalledAppLifecycleError
+    ? primaryError
+    : new InstalledAppLifecycleError('execution', errorMessage(primaryError), { cause: primaryError });
+  lifecycle.cleanupFailure ??= cleanupError instanceof InstalledAppLifecycleError
+    ? cleanupError.cause ?? cleanupError
+    : cleanupError;
+  return lifecycle;
+}
+
+export function performanceFailureEvidence(error) {
+  const lifecycle = error instanceof InstalledAppLifecycleError
+    ? error
+    : new InstalledAppLifecycleError('execution', errorMessage(error), { cause: error });
+  return {
+    stage: lifecycle.stage,
+    failure: lifecycle.message,
+    ...(lifecycle.cleanupFailure ? { cleanupFailure: errorMessage(lifecycle.cleanupFailure) } : {}),
+    errors: [lifecycle.message],
+  };
+}
+
+export async function settlePerformanceLifecycle({ cleanup, execute }) {
+  let error;
+  let value;
+  try {
+    value = await execute();
+  } catch (executionError) {
+    error = executionError;
+  }
+  try {
+    await cleanup();
+  } catch (cleanupError) {
+    error = preservePrimaryFailure(error, cleanupError);
+  }
+  if (error && !(error instanceof InstalledAppLifecycleError)) {
+    error = new InstalledAppLifecycleError('execution', errorMessage(error), { cause: error });
+  }
+  return { error, value };
+}
+
+export function requirePassedPerformanceReport(report) {
+  if (report.status === 'passed') {
+    return report;
+  }
+  const failures = Object.entries(report.scenarios ?? {})
+    .filter(([, scenario]) => scenario?.status === 'failed')
+    .map(([name, scenario]) => name + ': ' + (scenario.failures?.join('; ') || 'scenario failed'));
+  throw new InstalledAppLifecycleError(
+    'execution',
+    'Performance scenarios failed: ' + (failures.join(' | ') || 'report status is failed'),
+  );
+}
+
 function commandOutput(command, args, options = {}) {
   return execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...options }).trim();
 }
@@ -45,20 +105,6 @@ function readPackageVersion() {
 
 function readBuildCommit() {
   return process.env.GITHUB_SHA ?? commandOutput('git', ['rev-parse', 'HEAD'], { cwd: repositoryRoot });
-}
-
-function classifyGpu(name, adapterRam = 0) {
-  const normalized = String(name ?? '').toLowerCase();
-  if (/nvidia|geforce|quadro|rtx|gtx|tesla|radeon\s+(rx|pro)|intel\s+arc/.test(normalized)) {
-    return 'dedicated';
-  }
-  if (/intel.*(uhd|iris|hd\s+graphics)|amd.*radeon\s+graphics|radeon\s+vega|apu|microsoft basic display/.test(normalized)) {
-    return 'integrated';
-  }
-  if (Number(adapterRam) >= 2 * 1024 ** 3) {
-    return 'dedicated';
-  }
-  return undefined;
 }
 
 async function readWebglRenderer(page) {
@@ -403,10 +449,8 @@ async function runPerformanceScenarios(session, fixtures) {
   try {
     const importSequence = Number(await page.getByTestId('smoke-import-complete').getAttribute('data-sequence'));
     const { importMs, firstFrameMs } = await measureImportToFirstFrame({
-      triggerImport: async () => {
-        await page.getByTestId('smoke-source-path').fill(fixtures.navigation);
-        await page.getByTestId('smoke-import').click();
-      },
+      prepareImport: () => page.getByTestId('smoke-source-path').fill(fixtures.navigation),
+      triggerImport: () => page.getByTestId('smoke-import').click(),
       waitForImportComplete: () => waitForImportComplete(page, importSequence),
       waitForReader: () => waitForReader(page),
       waitForTwoFrames: () => waitForTwoFrames(page),
@@ -576,41 +620,51 @@ async function main() {
   const runDirectory = await mkdtemp(join(tmpdir(), 'tactile-reader-performance-'));
   installedAppHarness.registerRunRoot(runDirectory);
   const evidenceDirectory = join(reportRoot, runId);
-  await mkdir(evidenceDirectory, { recursive: true });
   let session;
   let report;
-  try {
-    const fixtures = await createRunFixtures(runDirectory);
-    const built = await buildInstaller(runDirectory, runId);
-    const executable = await installedAppHarness.installPackage(built.installer, join(runDirectory, 'installed'));
-    session = await installedAppHarness.launchApp({
-      executable,
-      label: 'performance',
-      evidenceDirectory,
-      pageDescription: 'performance harness',
-      timeoutMs,
-    });
-    const hardware = readHardwareSnapshot(await readWebglRenderer(session.page));
-    if (!hardware.gpuClassDetected) {
-      throw new Error('Could not classify the active GPU as integrated or dedicated.');
-    }
-    if (hardware.gpuClassDetected !== gpuClass) {
-      throw new Error(`Requested GPU class ${gpuClass} does not match detected class ${hardware.gpuClassDetected}.`);
-    }
-    const result = await runPerformanceScenarios(session, fixtures);
-    report = buildReport({
-      runId,
-      hardware,
-      build: { commit: readBuildCommit(), version: readPackageVersion(), tauriIdentifier: built.identifier },
-      ...result,
-    });
-    const validationErrors = validatePerformanceReport(report);
-    report.errors.push(...validationErrors);
-    if (validationErrors.length > 0) {
-      report.status = 'failed';
-    }
-  } catch (error) {
-    report = {
+  const installDirectory = join(runDirectory, 'installed');
+  const outcome = await settlePerformanceLifecycle({
+    execute: async () => {
+      await mkdir(evidenceDirectory, { recursive: true });
+      const fixtures = await createRunFixtures(runDirectory);
+      const built = await buildInstaller(runDirectory, runId);
+      const executable = await installedAppHarness.installPackage(built.installer, installDirectory);
+      session = await installedAppHarness.launchApp({
+        executable,
+        label: 'performance',
+        evidenceDirectory,
+        pageDescription: 'performance harness',
+        runRoot: runDirectory,
+        timeoutMs,
+      });
+      const hardware = readHardwareSnapshot(await readWebglRenderer(session.page));
+      if (!hardware.gpuClassDetected) {
+        throw new Error('Could not classify the active GPU as integrated or dedicated.');
+      }
+      if (hardware.gpuClassDetected !== gpuClass) {
+        throw new Error(`Requested GPU class ${gpuClass} does not match detected class ${hardware.gpuClassDetected}.`);
+      }
+      const result = await runPerformanceScenarios(session, fixtures);
+      report = buildReport({
+        runId,
+        hardware,
+        build: { commit: readBuildCommit(), version: readPackageVersion(), tauriIdentifier: built.identifier },
+        ...result,
+      });
+      const validationErrors = validatePerformanceReport(report);
+      report.errors.push(...validationErrors);
+      if (validationErrors.length > 0) {
+        report.status = 'failed';
+        report.summary.status = 'failed';
+        throw new InstalledAppLifecycleError('execution', 'Performance report validation failed: ' + validationErrors.join('; '));
+      }
+      return requirePassedPerformanceReport(report);
+    },
+    cleanup: () => installedAppHarness.cleanupRun({ installDirectory, runRoot: runDirectory, session }),
+  });
+  report = outcome.value ?? report;
+  if (outcome.error) {
+    report ??= {
       schemaVersion: PERFORMANCE_REPORT_VERSION,
       status: 'failed',
       runId,
@@ -620,15 +674,22 @@ async function main() {
       thresholds: PERFORMANCE_THRESHOLDS,
       scenarios: Object.fromEntries(PERFORMANCE_SCENARIOS.map((scenario) => [scenario, { status: 'not-run' }])),
       summary: { status: 'failed' },
-      errors: [errorMessage(error)],
+      errors: [],
     };
-  } finally {
-    await session?.close();
+    Object.assign(report, performanceFailureEvidence(outcome.error));
+    report.status = 'failed';
+    report.summary.status = 'failed';
+  }
+  try {
+    await mkdir(evidenceDirectory, { recursive: true });
     await writeFile(join(evidenceDirectory, 'performance-report.json'), JSON.stringify(report, null, 2) + '\n', 'utf8');
     console.log(JSON.stringify({ evidenceDirectory, report }));
     if (report?.status !== 'passed') {
       process.exitCode = 1;
     }
+  } catch (error) {
+    console.error(errorMessage(error));
+    process.exitCode = 1;
   }
 }
 

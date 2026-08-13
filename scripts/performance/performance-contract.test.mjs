@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  classifyGpu,
   comparePerformanceReports,
   evaluateScenarioMetrics,
   percentile,
   validatePerformanceReport,
 } from './performance-contract.mjs';
+
+test('does not classify the Microsoft Basic Display software adapter as integrated', () => {
+  assert.equal(classifyGpu('Microsoft Basic Display Adapter', 4 * 1024 ** 3), undefined);
+  assert.equal(classifyGpu('Intel(R) Iris(R) Xe Graphics'), 'integrated');
+  assert.equal(classifyGpu('NVIDIA GeForce RTX 4070'), 'dedicated');
+});
 
 test('computes frame-time p95 and rejects threshold breaches', () => {
   assert.equal(percentile([10, 20, 30, 40, 50], 95), 50);

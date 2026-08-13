@@ -6,6 +6,7 @@ export async function waitForCommittedPage(page, expectedIndex, waitFor) {
 }
 
 export async function measureImportToFirstFrame(steps, now) {
+  await steps.prepareImport();
   const startedAt = now();
   await steps.triggerImport();
   await steps.waitForImportComplete();
