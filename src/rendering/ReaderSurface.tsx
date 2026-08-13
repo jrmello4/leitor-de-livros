@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createWebGl2Backend, createWebGpuBackend, type CanvasRenderer } from './backends';
 import type { RenderBackendKind, RenderFrame, RenderQuality, RendererStatus } from './contracts';
 import { adaptRenderQuality, FrameTelemetry } from './telemetry';
-import { resolveBackendPreference } from './backendSelection';
+import { parseVisualBackend } from '../release/testModes';
 
 interface ReaderSurfaceProps {
   frame: RenderFrame;
@@ -25,7 +25,7 @@ export function ReaderSurface({ frame, staticContent, ariaLabel, onStatus, inter
   const [quality, setQuality] = useState<RenderQuality>('rich');
   const [fps, setFps] = useState<number>();
   const [resizeVersion, setResizeVersion] = useState(0);
-  const forcedBackend = resolveBackendPreference(
+  const forcedBackend = parseVisualBackend(
     typeof window === 'undefined' ? '' : window.location.search,
     import.meta.env.VITE_VISUAL_TEST === '1',
   );
