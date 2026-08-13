@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import type { Bookmark, PageDescriptor } from '../domain/types';
 import { clamp } from '../domain/reader';
 import { t } from '../i18n/catalog';
@@ -10,6 +10,8 @@ export interface PageNavigatorProps {
   onSelectPage: (pageIndex: number) => void;
   onToggleBookmark: (pageId: string) => void;
   onClose: () => void;
+  onUpdateBookmarkLabel?: (pageId: string, label: string) => void;
+  triggerRef?: RefObject<HTMLButtonElement | null>;
 }
 
 /** A compact, keyboard-first page strip. It intentionally owns no reader state. */
@@ -20,27 +22,70 @@ export function PageNavigator({
   onSelectPage,
   onToggleBookmark,
   onClose,
+  onUpdateBookmarkLabel = () => undefined,
+  triggerRef,
 }: PageNavigatorProps) {
   const safeCurrent = pages.length > 0 ? clamp(currentPage, 0, pages.length - 1) : 0;
   const [jumpValue, setJumpValue] = useState(String(safeCurrent + 1));
   const panelRef = useRef<HTMLElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
   const bookmarkIds = useMemo(() => new Set(bookmarks.map((bookmark) => bookmark.pageId)), [bookmarks]);
+  const bookmarkByPageId = useMemo(() => new Map(bookmarks.map((bookmark) => [bookmark.pageId, bookmark])), [bookmarks]);
+  const [labelDrafts, setLabelDrafts] = useState<Record<string, string>>({});
 
   useEffect(() => {
     setJumpValue(String(safeCurrent + 1));
   }, [safeCurrent]);
 
   useEffect(() => {
+    setLabelDrafts(Object.fromEntries(bookmarks.map((bookmark) => [bookmark.pageId, bookmark.label])));
+  }, [bookmarks]);
+
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+      ? document.activeElement
+      : triggerRef?.current;
+    const focusableSelector = [
+      'button:not([disabled])',
+      'input:not([disabled])',
+      'select:not([disabled])',
+      '[tabindex]:not([tabindex="-1"])',
+    ].join(',');
+
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
+        event.stopPropagation();
         onClose();
+        return;
+      }
+      if (event.key !== 'Tab') {
+        return;
+      }
+      const focusable = Array.from(panelRef.current?.querySelectorAll<HTMLElement>(focusableSelector) ?? []);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        panelRef.current?.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
       }
     };
     window.addEventListener('keydown', onKeyDown);
-    panelRef.current?.focus();
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
+    closeRef.current?.focus();
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      const restoreTarget = opener?.isConnected ? opener : triggerRef?.current;
+      restoreTarget?.focus();
+    };
+  }, [onClose, triggerRef]);
 
   const selectPage = (pageIndex: number) => {
     if (pages.length === 0) {
@@ -61,6 +106,10 @@ export function PageNavigator({
     }
   };
 
+  const saveLabel = (pageId: string, value: string) => {
+    onUpdateBookmarkLabel(pageId, value.trim().slice(0, 120));
+  };
+
   return (
     <aside
       className="page-navigator"
@@ -74,7 +123,7 @@ export function PageNavigator({
           <span className="eyebrow">{t('navigator.title')}</span>
           <strong>{pages.length === 0 ? t('navigator.noPages') : t('navigator.pageOf', { page: safeCurrent + 1, count: pages.length })}</strong>
         </div>
-        <button type="button" className="page-navigator__close" aria-label={t('navigator.close')} onClick={onClose}>
+        <button ref={closeRef} type="button" className="page-navigator__close" aria-label={t('navigator.close')} onClick={onClose}>
           ×
         </button>
       </div>
@@ -130,12 +179,30 @@ export function PageNavigator({
                 className={`page-thumb__bookmark ${bookmarked ? 'page-thumb__bookmark--active' : ''}`}
                 aria-label={bookmarked ? t('navigator.removeBookmark', { page: index + 1 }) : t('navigator.addBookmark', { page: index + 1 })}
                 aria-pressed={bookmarked}
-                title={bookmarks.find((bookmark) => bookmark.pageId === page.id)?.label || undefined}
+                title={bookmarkByPageId.get(page.id)?.label || undefined}
                 onClick={() => onToggleBookmark(page.id)}
                 data-reader-control
               >
                 {bookmarked ? '◆' : '◇'}
               </button>
+              {bookmarked && (
+                <input
+                  className="page-thumb__bookmark-label"
+                  value={labelDrafts[page.id] ?? bookmarkByPageId.get(page.id)?.label ?? ''}
+                  aria-label={t('navigator.bookmarkTitle', { page: index + 1 })}
+                  maxLength={120}
+                  onChange={(event) => setLabelDrafts((current) => ({ ...current, [page.id]: event.currentTarget.value }))}
+                  onBlur={(event) => saveLabel(page.id, event.currentTarget.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      saveLabel(page.id, event.currentTarget.value);
+                      event.currentTarget.blur();
+                    }
+                  }}
+                  data-reader-control
+                />
+              )}
             </div>
           );
         })}

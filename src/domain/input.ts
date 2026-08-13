@@ -7,6 +7,8 @@ export const DEFAULT_BINDINGS: BindingMap = {
   toggle_fullscreen: ['KeyF'],
   toggle_settings: ['KeyS'],
   toggle_spread: ['KeyM'],
+  toggle_navigator: ['KeyN'],
+  toggle_bookmark: ['KeyB'],
   cancel: ['Escape'],
 };
 
@@ -21,6 +23,8 @@ const ACTION_ORDER: ActionName[] = [
   'toggle_fullscreen',
   'toggle_settings',
   'toggle_spread',
+  'toggle_navigator',
+  'toggle_bookmark',
   'cancel',
 ];
 

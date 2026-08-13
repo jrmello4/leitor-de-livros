@@ -32,6 +32,11 @@ interface ReaderViewProps {
   onSaveReaderState: (state: ReaderState) => void;
   onSelectPage: (pageIndex: number) => void;
   onToggleBookmark: (pageId: string) => void;
+  onUpdateBookmarkLabel?: (pageId: string, label: string) => void;
+  navigatorVisible: boolean;
+  navigatorTriggerRef: RefObject<HTMLButtonElement | null>;
+  onToggleNavigator: () => void;
+  onCloseNavigator: () => void;
   onRegisterTurnRequest?: (request: ((delta: number) => void) | null) => void;
 }
 
@@ -71,6 +76,11 @@ export function ReaderView({
   onSaveReaderState,
   onSelectPage,
   onToggleBookmark,
+  onUpdateBookmarkLabel,
+  navigatorVisible,
+  navigatorTriggerRef,
+  onToggleNavigator,
+  onCloseNavigator,
   onRegisterTurnRequest,
 }: ReaderViewProps) {
   const paperRef = useRef<HTMLDivElement>(null);
@@ -82,7 +92,6 @@ export function ReaderView({
   const [turnPhase, setTurnPhase] = useState<PageTurnPhase>('idle');
   const [pageChangeDirection, setPageChangeDirection] = useState<'forward' | 'backward' | null>(null);
   const [flowVisible, setFlowVisible] = useState(false);
-  const [navigatorVisible, setNavigatorVisible] = useState(false);
   const [localReaderState, setLocalReaderState] = useState<ReaderState>(() => normalizeReaderState(readerState ?? defaultReaderState));
   const [panDragging, setPanDragging] = useState(false);
   const spaceHeldRef = useRef(false);
@@ -497,7 +506,8 @@ export function ReaderView({
           <button
             className={`reader-tool ${navigatorVisible ? 'reader-tool--active' : ''}`}
             type="button"
-            onClick={() => setNavigatorVisible((current) => !current)}
+            ref={navigatorTriggerRef}
+            onClick={onToggleNavigator}
             aria-pressed={navigatorVisible}
             aria-label={navigatorVisible ? t('reader.hideNavigator') : t('reader.showNavigator')}
             data-reader-control
@@ -534,7 +544,9 @@ export function ReaderView({
           bookmarks={bookmarks}
           onSelectPage={onSelectPage}
           onToggleBookmark={onToggleBookmark}
-          onClose={() => setNavigatorVisible(false)}
+          onUpdateBookmarkLabel={onUpdateBookmarkLabel}
+          triggerRef={navigatorTriggerRef}
+          onClose={onCloseNavigator}
         />
       )}
 

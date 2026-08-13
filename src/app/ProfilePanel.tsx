@@ -57,6 +57,8 @@ const profileActions: ActionName[] = [
   'toggle_fullscreen',
   'toggle_settings',
   'toggle_spread',
+  'toggle_navigator',
+  'toggle_bookmark',
   'cancel',
 ];
 

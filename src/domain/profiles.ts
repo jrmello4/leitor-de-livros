@@ -69,6 +69,8 @@ const ACTION_NAMES: ActionName[] = [
   'toggle_fullscreen',
   'toggle_settings',
   'toggle_spread',
+  'toggle_navigator',
+  'toggle_bookmark',
   'cancel',
 ];
 
@@ -496,9 +498,10 @@ function isValidZoomScale(value: unknown): value is number {
 function isValidBindings(value: unknown): value is BindingMap {
   if (!isRecord(value)) return false;
   return ACTION_NAMES.every((action) => (
-    Array.isArray(value[action])
-      && value[action].length <= 2
-      && value[action].every((code) => typeof code === 'string' && code.length > 0 && code.length <= 64)
+    value[action] === undefined
+      || (Array.isArray(value[action])
+        && value[action].length <= 2
+        && value[action].every((code) => typeof code === 'string' && code.length > 0 && code.length <= 64))
   ));
 }
 

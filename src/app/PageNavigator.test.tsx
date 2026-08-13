@@ -107,4 +107,31 @@ describe('PageNavigator', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(host.querySelector<HTMLButtonElement>('[aria-label="Close page navigator"]')).not.toBeNull();
   });
+
+  it('edits a bookmark title from the keyboard', () => {
+    const onUpdateBookmarkLabel = vi.fn();
+    renderNavigator({ onUpdateBookmarkLabel });
+    const title = host.querySelector<HTMLInputElement>('[aria-label="Bookmark title for page 2"]');
+    expect(title).not.toBeNull();
+    if (title) {
+      act(() => {
+        title.value = 'Climax';
+        title.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      });
+    }
+    expect(onUpdateBookmarkLabel).toHaveBeenCalledWith('page-2', 'Climax');
+  });
+
+  it('restores focus to its trigger when closed', () => {
+    const trigger = document.createElement('button');
+    document.body.prepend(trigger);
+    const triggerRef = { current: trigger };
+    trigger.focus();
+    renderNavigator({ triggerRef });
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Close page navigator');
+
+    act(() => root.unmount());
+    expect(document.activeElement).toBe(trigger);
+    root = createRoot(host);
+  });
 });
