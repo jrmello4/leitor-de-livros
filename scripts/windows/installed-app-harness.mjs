@@ -254,17 +254,20 @@ async function launchApp(options, dependencies) {
       }
       return undefined;
     }, label + ' did not expose the ' + pageDescription, { timeoutMs }, dependencies);
-    let closed = false;
+    let closePromise;
     return {
       browser,
       child,
       page,
-      async close() {
-        if (closed) {
-          return;
+      close() {
+        if (!closePromise) {
+          closePromise = closeSession({ browser, child, stdout, stderr }, dependencies)
+            .catch((error) => {
+              closePromise = undefined;
+              throw error;
+            });
         }
-        closed = true;
-        await closeSession({ browser, child, stdout, stderr }, dependencies);
+        return closePromise;
       },
     };
   } catch (error) {

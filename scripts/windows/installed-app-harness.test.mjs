@@ -9,6 +9,14 @@ import { createInstalledAppHarness, InstalledAppLifecycleError } from './install
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
+function deferred() {
+  let resolvePromise;
+  const promise = new Promise((resolve) => {
+    resolvePromise = resolve;
+  });
+  return { promise, resolve: resolvePromise };
+}
+
 function fakePortServer(port, events = []) {
   return {
     once() {},
@@ -37,7 +45,7 @@ function fakeStream(events, label) {
   };
 }
 
-function successfulLaunchDependencies(events, child) {
+function successfulLaunchDependencies(events, child, options = {}) {
   const page = {
     getByTestId() {
       return { waitFor: async () => undefined };
@@ -46,7 +54,7 @@ function successfulLaunchDependencies(events, child) {
   return {
     chromium: {
       connectOverCDP: async () => ({
-        close: async () => { events.push('browser'); },
+        close: options.closeBrowser ?? (async () => { events.push('browser'); }),
         contexts: () => [{ pages: () => [page] }],
       }),
     },
@@ -147,6 +155,23 @@ test('removes an already-missing path only under a registered temporary run root
   await harness.removeOwnedPath(runRoot, join(runRoot, 'already-missing'));
 });
 
+test('rejects an already-missing contained path under an unregistered run root', async (t) => {
+  const runRoot = await mkdtemp(join(tmpdir(), 'installed-app-harness-'));
+  t.after(() => rm(runRoot, { recursive: true, force: true }));
+  let removeCalls = 0;
+  const harness = createInstalledAppHarness({
+    remove: async () => { removeCalls += 1; },
+  });
+
+  await assert.rejects(
+    harness.removeOwnedPath(runRoot, join(runRoot, 'already-missing')),
+    (error) => error instanceof InstalledAppLifecycleError
+      && error.stage === 'cleanup'
+      && /unregistered run root/i.test(error.message),
+  );
+  assert.equal(removeCalls, 0);
+});
+
 test('records a cleanup failure without replacing a connection deadline', async () => {
   const events = [];
   const child = Object.assign(new EventEmitter(), {
@@ -241,6 +266,88 @@ test('close is idempotent and closes browser, process, then streams', async () =
   await session.close();
 
   assert.deepEqual(events, ['browser', 'process', 'stdout', 'stderr']);
+});
+
+test('concurrent close callers share the same pending cleanup', async () => {
+  const events = [];
+  const browserClose = deferred();
+  const child = Object.assign(new EventEmitter(), {
+    exitCode: null,
+    signalCode: null,
+    pid: 6789,
+    kill() {
+      events.push('process');
+      this.exitCode = 0;
+      this.emit('exit');
+    },
+    stderr: { pipe() {} },
+    stdout: { pipe() {} },
+  });
+  const harness = createInstalledAppHarness(successfulLaunchDependencies(events, child, {
+    closeBrowser: () => {
+      events.push('browser');
+      return browserClose.promise;
+    },
+  }));
+  const session = await harness.launchApp({
+    evidenceDirectory: 'C:\\safe-evidence',
+    executable: 'C:\\safe-app\\Tactile Reader.exe',
+    label: 'concurrent-close',
+    timeoutMs: 1,
+  });
+
+  const firstClose = session.close();
+  const concurrentClose = session.close();
+
+  assert.strictEqual(concurrentClose, firstClose);
+  assert.deepEqual(events, ['browser']);
+  browserClose.resolve();
+  await Promise.all([firstClose, concurrentClose]);
+  assert.deepEqual(events, ['browser', 'process', 'stdout', 'stderr']);
+});
+
+test('concurrent close callers share a cleanup error and a later call retries', async () => {
+  const events = [];
+  const cleanupFailure = new Error('browser cleanup failed');
+  let browserCloseAttempts = 0;
+  const child = Object.assign(new EventEmitter(), {
+    exitCode: null,
+    signalCode: null,
+    pid: 7890,
+    kill() {
+      events.push('process');
+      this.exitCode = 0;
+      this.emit('exit');
+    },
+    stderr: { pipe() {} },
+    stdout: { pipe() {} },
+  });
+  const harness = createInstalledAppHarness(successfulLaunchDependencies(events, child, {
+    closeBrowser: async () => {
+      browserCloseAttempts += 1;
+      events.push('browser-' + browserCloseAttempts);
+      if (browserCloseAttempts === 1) {
+        throw cleanupFailure;
+      }
+    },
+  }));
+  const session = await harness.launchApp({
+    evidenceDirectory: 'C:\\safe-evidence',
+    executable: 'C:\\safe-app\\Tactile Reader.exe',
+    label: 'retry-close',
+    timeoutMs: 1,
+  });
+
+  const firstClose = session.close();
+  const concurrentClose = session.close();
+
+  assert.strictEqual(concurrentClose, firstClose);
+  const outcomes = await Promise.allSettled([firstClose, concurrentClose]);
+  assert.deepEqual(outcomes.map(({ status }) => status), ['rejected', 'rejected']);
+  assert.equal(outcomes[0].reason.cause, cleanupFailure);
+  assert.equal(outcomes[1].reason, outcomes[0].reason);
+  await session.close();
+  assert.deepEqual(events, ['browser-1', 'process', 'stdout', 'stderr', 'browser-2']);
 });
 
 test('does not terminate an already-exited launched process', async () => {
