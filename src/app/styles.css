@@ -516,6 +516,11 @@ img {
   letter-spacing: 0.08em;
 }
 
+.library-focus-control:focus {
+  outline: 2px solid var(--copper-bright);
+  outline-offset: 4px;
+}
+
 .search-field input::placeholder {
   color: rgba(168, 185, 178, 0.58);
 }

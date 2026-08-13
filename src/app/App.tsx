@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createDemoPublication } from '../data/demo';
 import { canRunActionWhileSettingsOpen, InputMap } from '../domain/input';
-import { createPageSelectionCoordinator, selectLatestPage, type PageSelectionRequest } from '../domain/pageSelection';
+import { createPageSelectionCoordinator, preparePageSelection, selectLatestPage, type PageSelectionRequest } from '../domain/pageSelection';
 import { activeWorkingSetPageIds, calculateProgress, movePage, clamp } from '../domain/reader';
 import { nextBookmark, type LibrarySort } from '../domain/library';
 import {
@@ -525,13 +525,7 @@ export function App() {
         if (!nativeRuntime) {
           return null;
         }
-        const page = publication.pages[nextPage];
-        const protectedPageIds = activeWorkingSetPageIds(publication, profile, nextPage);
-        const preparedPage = await ensureNativePage(publication.id, page?.id ?? '', protectedPageIds);
-        if (!preparedPage) {
-          throw new Error('page-unavailable');
-        }
-        return preparedPage;
+        return preparePageSelection(publication, profile, nextPage, ensureNativePage);
       },
       onCommit,
       () => {

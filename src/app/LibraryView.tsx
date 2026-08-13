@@ -238,11 +238,11 @@ export function LibraryView({
         <div className="toolbar-controls">
           <label className="search-field">
             <span aria-hidden="true">⌕</span>
-            <input aria-label={t('library.searchAria')} value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder={t('library.search')} />
+            <input className="library-focus-control" aria-label={t('library.searchAria')} value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder={t('library.search')} />
           </label>
           <label className="sort-field">
             <span>{t('library.sort')}</span>
-            <select aria-label={t('library.sortAria')} value={sort} onChange={(event) => onSortChange(event.target.value as LibrarySort)}>
+            <select className="library-focus-control" aria-label={t('library.sortAria')} value={sort} onChange={(event) => onSortChange(event.target.value as LibrarySort)}>
               <option value="recent">{t('library.sortRecent')}</option>
               <option value="title">{t('library.sortTitle')}</option>
               <option value="added">{t('library.sortAdded')}</option>

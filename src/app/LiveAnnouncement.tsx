@@ -1,13 +1,12 @@
 interface LiveAnnouncementProps {
   message: string;
   testId?: string;
-  className?: string;
 }
 
-export function LiveAnnouncement({ message, testId, className = 'sr-only' }: LiveAnnouncementProps) {
+export function LiveAnnouncement({ message, testId }: LiveAnnouncementProps) {
   return (
     <p
-      className={className}
+      className="sr-only"
       role="status"
       aria-live="polite"
       aria-atomic="true"

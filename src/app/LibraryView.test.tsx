@@ -30,57 +30,41 @@ function publication(
   };
 }
 
-function renderLibrary(host: HTMLDivElement, publications: Publication[], overrides: Partial<React.ComponentProps<typeof LibraryView>> = {}) {
+type LibraryProps = React.ComponentProps<typeof LibraryView>;
+
+function libraryProps(overrides: Partial<LibraryProps> = {}): LibraryProps {
+  return {
+    publications: [],
+    query: '',
+    sort: 'recent',
+    isImporting: false,
+    isNativeRuntime: false,
+    onQueryChange: vi.fn(),
+    onSortChange: vi.fn(),
+    onOpen: vi.fn(),
+    onImport: vi.fn(),
+    onImportNative: vi.fn(),
+    onImportFolder: vi.fn(),
+    onOpenSettings: vi.fn(),
+    onToggleFavorite: vi.fn(),
+    onDelete: vi.fn(),
+    favoriteOnly: false,
+    onFavoriteOnlyChange: vi.fn(),
+    settingsTriggerRef: { current: null },
+    ...overrides,
+  };
+}
+
+function renderLibrary(host: HTMLDivElement, publications: Publication[], overrides: Partial<LibraryProps> = {}) {
   const root = createRoot(host);
-  act(() => root.render(
-    <LibraryView
-      publications={publications}
-      query=""
-      sort="recent"
-      isImporting={false}
-      isNativeRuntime={false}
-      onQueryChange={vi.fn()}
-      onSortChange={vi.fn()}
-      onOpen={vi.fn()}
-      onImport={vi.fn()}
-      onImportNative={vi.fn()}
-      onImportFolder={vi.fn()}
-      onOpenSettings={vi.fn()}
-      onToggleFavorite={vi.fn()}
-      onDelete={vi.fn()}
-      favoriteOnly={false}
-      onFavoriteOnlyChange={vi.fn()}
-      settingsTriggerRef={{ current: null }}
-      {...overrides}
-    />,
-  ));
+  act(() => root.render(<LibraryView {...libraryProps({ publications, ...overrides })} />));
   return root;
 }
 
 function ControlledLibrary({ publications }: { publications: Publication[] }) {
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<LibrarySort>('recent');
-  return (
-    <LibraryView
-      publications={publications}
-      query={query}
-      sort={sort}
-      isImporting={false}
-      isNativeRuntime={false}
-      onQueryChange={setQuery}
-      onSortChange={setSort}
-      onOpen={vi.fn()}
-      onImport={vi.fn()}
-      onImportNative={vi.fn()}
-      onImportFolder={vi.fn()}
-      onOpenSettings={vi.fn()}
-      onToggleFavorite={vi.fn()}
-      onDelete={vi.fn()}
-      favoriteOnly={false}
-      onFavoriteOnlyChange={vi.fn()}
-      settingsTriggerRef={{ current: null }}
-    />
-  );
+  return <LibraryView {...libraryProps({ publications, query, sort, onQueryChange: setQuery, onSortChange: setSort })} />;
 }
 
 function setInputValue(input: HTMLInputElement, value: string) {
@@ -89,10 +73,26 @@ function setInputValue(input: HTMLInputElement, value: string) {
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+function typeIntoInput(input: HTMLInputElement, value: string) {
+  let typed = '';
+  for (const key of value) {
+    input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+    typed += key;
+    setInputValue(input, typed);
+    input.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true }));
+  }
+}
+
 function setSelectValue(select: HTMLSelectElement, value: LibrarySort) {
   const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
   setter?.call(select, value);
   select.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function chooseSortWithKeyboard(select: HTMLSelectElement, value: LibrarySort) {
+  select.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+  setSelectValue(select, value);
+  select.dispatchEvent(new KeyboardEvent('keyup', { key: 'ArrowDown', bubbles: true }));
 }
 
 describe('LibraryView favorites and safe deletion', () => {
@@ -142,9 +142,30 @@ describe('LibraryView favorites and safe deletion', () => {
     });
 
     expect(document.activeElement).toBe(search);
+    expect(search?.classList.contains('library-focus-control')).toBe(true);
     expect(host.textContent).toContain('Untitled');
     expect(host.textContent).toContain('chapter-07.cbz');
     expect(host.textContent).not.toContain('C:\\private');
+  });
+
+  it('searches by title through keyboard events', () => {
+    const books = [
+      publication('atlas', 'Atlas of Ink', false),
+      publication('botany', 'Botany Notes', false),
+    ];
+    root = createRoot(host);
+    act(() => root.render(<ControlledLibrary publications={books} />));
+    const search = host.querySelector<HTMLInputElement>('input[aria-label="Search your shelf"]');
+
+    act(() => {
+      search?.focus();
+      if (search) {
+        typeIntoInput(search, 'Atlas');
+      }
+    });
+
+    expect([...host.querySelectorAll('.publication-card h2')].map((node) => node.textContent))
+      .toEqual(['Atlas of Ink']);
   });
 
   it('sorts rendered publications through the accessible selector', () => {
@@ -171,9 +192,10 @@ describe('LibraryView favorites and safe deletion', () => {
     act(() => sort?.focus());
     expect(document.activeElement).toBe(sort);
     expect(renderedTitles()).toEqual(['Charlie', 'Bravo', 'Alpha']);
-    act(() => sort && setSelectValue(sort, 'title'));
+    expect(sort?.classList.contains('library-focus-control')).toBe(true);
+    act(() => sort && chooseSortWithKeyboard(sort, 'title'));
     expect(renderedTitles()).toEqual(['Alpha', 'Bravo', 'Charlie']);
-    act(() => sort && setSelectValue(sort, 'added'));
+    act(() => sort && chooseSortWithKeyboard(sort, 'added'));
     expect(renderedTitles()).toEqual(['Alpha', 'Bravo', 'Charlie']);
   });
 
