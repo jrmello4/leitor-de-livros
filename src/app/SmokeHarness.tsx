@@ -3,9 +3,10 @@ import { useState, type FormEvent } from 'react';
 export interface SmokeHarnessProps {
   onImportPath: (path: string) => Promise<void>;
   diagnostic: string | null;
+  importSequence?: number;
 }
 
-export function SmokeHarness({ onImportPath, diagnostic }: SmokeHarnessProps) {
+export function SmokeHarness({ onImportPath, diagnostic, importSequence = 0 }: SmokeHarnessProps) {
   const [path, setPath] = useState('');
   const [status, setStatus] = useState('Ready');
 
@@ -44,6 +45,7 @@ export function SmokeHarness({ onImportPath, diagnostic }: SmokeHarnessProps) {
         </button>
       </form>
       <p data-testid="smoke-status" role="status" aria-live="polite">{status}</p>
+      <span className="sr-only" data-testid="smoke-import-complete" data-sequence={importSequence} />
       <p data-testid="smoke-diagnostic" role="alert">{diagnostic ?? ''}</p>
     </aside>
   );

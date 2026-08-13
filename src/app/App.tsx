@@ -131,6 +131,7 @@ export function App() {
   const [readerStates, setReaderStates] = useState<Record<string, ReaderState>>({});
   const [cacheInfo, setCacheInfo] = useState<CacheInfo>(DEFAULT_CACHE_INFO);
   const [isImporting, setIsImporting] = useState(false);
+  const [smokeImportSequence, setSmokeImportSequence] = useState(0);
   const [nativeLibraryReady, setNativeLibraryReady] = useState(!nativeRuntime);
   const [diagnostic, setDiagnostic] = useState<string | undefined>();
   const [announcement, setAnnouncement] = useState(() => t('app.libraryReady'));
@@ -1097,6 +1098,7 @@ export function App() {
     setDiagnostic(undefined);
     try {
       const result = await importNativePaths(paths, profile.direction);
+      setSmokeImportSequence((current) => current + 1);
       const diagnosticMessage = result.diagnostics.length > 0 ? result.diagnostics.join(' ') : undefined;
       setDiagnostic(diagnosticMessage);
       if (result.publications.length === 0) {
@@ -1249,6 +1251,7 @@ export function App() {
             }
           }}
           diagnostic={diagnostic ?? null}
+          importSequence={smokeImportSequence}
         />
       )}
 

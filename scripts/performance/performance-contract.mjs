@@ -35,13 +35,30 @@ export function percentile(values, percentileRank) {
 
 export function evaluateScenarioMetrics(metrics, thresholds = PERFORMANCE_THRESHOLDS) {
   const failures = [];
+  for (const [name, value] of Object.entries({
+    firstFrameMs: metrics.firstFrameMs,
+    frameTimeP95Ms: metrics.frameTimeP95Ms,
+  })) {
+    if (!Number.isFinite(value)) {
+      failures.push(`${name} is not a finite measurement`);
+    }
+  }
+  if (metrics.requireFrameSamples && (!(metrics.frameSampleCount > 0) || !Number.isFinite(metrics.frameSampleCount))) {
+    failures.push('frame sampler produced no valid samples');
+  }
+  if (metrics.requireQualitySamples && (!(metrics.qualitySampleCount > 0) || !Number.isFinite(metrics.qualitySampleCount))) {
+    failures.push('quality sampler produced no valid samples');
+  }
+  if (metrics.requireMemorySamples && (!(metrics.memorySampleCount > 1) || !Number.isFinite(metrics.memorySampleCount))) {
+    failures.push('memory sampler produced fewer than two valid samples');
+  }
   if (metrics.firstFrameMs > thresholds.firstFrameMs) {
     failures.push(`first-frame latency ${metrics.firstFrameMs}ms exceeds ${thresholds.firstFrameMs}ms`);
   }
   if (metrics.frameTimeP95Ms > thresholds.navigationFrameTimeP95Ms) {
     failures.push(`frame-time p95 ${metrics.frameTimeP95Ms}ms exceeds ${thresholds.navigationFrameTimeP95Ms}ms`);
   }
-  if (metrics.peakMemoryBytes - metrics.steadyMemoryBytes > thresholds.longSessionMemoryGrowthBytes) {
+  if (metrics.memoryGrowthBytes > thresholds.longSessionMemoryGrowthBytes) {
     failures.push('steady memory growth exceeds the long-session threshold');
   }
   if (metrics.cacheGrowthBytes > thresholds.longSessionCacheGrowthBytes) {
@@ -61,11 +78,16 @@ export function validatePerformanceReport(report) {
   if (!report?.hardware?.gpuClass || !GPU_CLASSES.includes(report.hardware.gpuClass)) {
     errors.push('hardware.gpuClass must be integrated or dedicated');
   }
-  if (!report?.build?.commit || !report?.build?.version) {
+  if (!report?.build?.commit || report.build.commit === 'unknown' || !report?.build?.version || report.build.version === 'unknown') {
     errors.push('build.commit and build.version are required');
   }
-  if (!report?.hardware?.os || !report?.hardware?.gpu || !report?.hardware?.memoryBytes) {
+  if (!report?.hardware?.os || report.hardware.os === 'unknown' || !report?.hardware?.gpu || report.hardware.gpu === 'unknown' || !(report?.hardware?.memoryBytes > 0)) {
     errors.push('hardware.os, hardware.gpu, and hardware.memoryBytes are required');
+  }
+  if (!report?.hardware?.gpuClassDetected || !GPU_CLASSES.includes(report.hardware.gpuClassDetected)) {
+    errors.push('hardware.gpuClassDetected must be integrated or dedicated');
+  } else if (report.hardware.gpuClass !== report.hardware.gpuClassDetected) {
+    errors.push('hardware.gpuClass does not match the detected GPU class');
   }
   const scenarios = report?.scenarios ?? {};
   for (const scenario of PERFORMANCE_SCENARIOS) {
@@ -84,6 +106,10 @@ export function comparePerformanceReports(reports) {
   const gpuClasses = new Set(reports.map((report) => report.hardware.gpuClass));
   if (!gpuClasses.has('integrated') || !gpuClasses.has('dedicated')) {
     return { status: 'invalid', errors: ['comparison requires one integrated and one dedicated GPU report'] };
+  }
+  const buildIdentities = new Set(reports.map((report) => `${report.build.commit}:${report.build.version}`));
+  if (buildIdentities.size !== 1) {
+    return { status: 'invalid', errors: ['comparison requires reports from the same build commit and version'] };
   }
   const qualityOrdering = reports.map((report) => ({
     gpuClass: report.hardware.gpuClass,

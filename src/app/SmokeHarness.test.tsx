@@ -28,6 +28,7 @@ describe('SmokeHarness', () => {
     expect(host.querySelector('[data-testid="smoke-source-path"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="smoke-status"]')?.textContent).toContain('Ready');
     expect(host.querySelector('[data-testid="smoke-diagnostic"]')?.textContent).toContain('PDFium runtime not found.');
+    expect(host.querySelector('[data-testid="smoke-import-complete"]')?.getAttribute('data-sequence')).toBe('0');
   });
 
   it('reports the async successful import', async () => {

@@ -40,7 +40,7 @@ Frame samples are browser `requestAnimationFrame` intervals. Memory is the priva
 | First frame | ≤ 1500 ms |
 | Navigation frame-time p95 | ≤ 33.4 ms |
 | Rapid-switch frame-time p95 | ≤ 50 ms |
-| Long-session peak minus steady memory | ≤ 256 MiB |
+| Long-session steady minus baseline memory | ≤ 256 MiB |
 | Long-session derived-cache growth | ≤ 512 MiB |
 
 Quality evidence records `data-quality` transitions from the existing adaptive renderer. A transition to a lower quality tier must precede the first frame over the interaction-stall threshold. If no transition is needed and no stall occurs, the report records that quality reduction was not required.
