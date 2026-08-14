@@ -269,7 +269,7 @@ export function ReaderView({
   };
 
   const onWheel = (event: WheelEvent<HTMLDivElement>) => {
-    if (event.target instanceof Element && event.target.closest('[data-reader-control]')) {
+    if (event.target instanceof Element && event.target.closest('[data-reader-control], [data-flow-control]')) {
       return;
     }
     if (Math.abs(event.deltaY) < 4) {
@@ -331,6 +331,19 @@ export function ReaderView({
       pageTurn.acknowledgeNavigation();
     }
   }, [pageTurn.acknowledgeNavigation, publication.currentPage]);
+
+  useEffect(() => {
+    if (!pageTurn.failure) {
+      return;
+    }
+
+    setRendererStatus((current) => ({
+      backend: 'static',
+      quality: current.quality,
+      fps: current.fps,
+      fallbackReason: pageTurn.failure?.diagnostic,
+    }));
+  }, [pageTurn.failure]);
 
   return (
     <main

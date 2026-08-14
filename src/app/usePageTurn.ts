@@ -13,6 +13,7 @@ type PointerLike = {
   clientY: number;
   button: number;
   pointerId: number;
+  isPrimary?: boolean;
   pointerType?: string;
   currentTarget: {
     setPointerCapture(pointerId: number): void;
@@ -100,6 +101,7 @@ export interface UsePageTurnResult {
   onFailure: (failure: PageTurnFailure) => void;
   pendingPointer?: PendingPointer;
   syntheticTrajectory?: SyntheticTrajectory;
+  failure?: PageTurnFailure;
 }
 
 const SURFACE_QUALITY: RenderQuality = 'balanced';
@@ -209,6 +211,7 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
   const [surfaceGeneration, setSurfaceGeneration] = useState<number | undefined>(undefined);
   const [pendingPointer, setPendingPointer] = useState<PendingPointer | undefined>(undefined);
   const [syntheticTrajectory, setSyntheticTrajectory] = useState<SyntheticTrajectory | undefined>(undefined);
+  const [failure, setFailure] = useState<PageTurnFailure | undefined>(undefined);
 
   onNextRef.current = options.onNext;
   onPreviousRef.current = options.onPrevious;
@@ -445,6 +448,8 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
       return;
     }
 
+    setFailure(undefined);
+
     const available = delta > 0 ? canNext : canPrevious;
     const callback = delta > 0 ? onNextRef.current : onPreviousRef.current;
 
@@ -524,21 +529,19 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
   }, [state, syncFromController]);
 
   const onFailure = useCallback((failure: PageTurnFailure) => {
-    const active = state.phase !== 'idle' && state.phase !== 'disabled' && 'generation' in state
-      ? plannedTurnsRef.current.get(state.generation)
-      : undefined;
     clearAnimation();
     releasePointerCapture(
       state.phase === 'dragging' ? state.pointerId : pendingPointer?.pointerId,
     );
+    setFailure(failure);
+    if (state.phase !== 'idle' && state.phase !== 'disabled' && 'generation' in state) {
+      plannedTurnsRef.current.delete(state.generation);
+    }
+    plannedTurnsRef.current.clear();
 
     controllerRef.current?.disable(failure.reason === 'backend' ? 'backend' : 'performance');
     syncFromController();
-
-    if (active?.kind === 'automatic') {
-      turnDirectionToCallback(active.direction, readingDirection, onNextRef.current, onPreviousRef.current)();
-    }
-  }, [clearAnimation, pendingPointer?.pointerId, readingDirection, releasePointerCapture, state, syncFromController]);
+  }, [clearAnimation, pendingPointer?.pointerId, releasePointerCapture, state, syncFromController]);
 
   const acknowledgeNavigation = useCallback((generation?: number) => {
     const acknowledged = generation ?? awaitingNavigationGenerationRef.current;
@@ -554,7 +557,7 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
 
   const edgeProps = useMemo<UsePageTurnResult['edgeProps']>(() => ({
     onPointerDown: (event) => {
-      if (event.button !== 0 || reducedMotion || state.phase !== 'idle' || !canNext) {
+      if (event.button !== 0 || event.isPrimary === false || reducedMotion || state.phase !== 'idle' || !canNext) {
         return;
       }
 
@@ -621,6 +624,9 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
       }
 
       if (state.phase === 'dragging') {
+        if (event.pointerId !== state.pointerId) {
+          return;
+        }
         const point = clientToPagePoint({ x: event.clientX, y: event.clientY }, frame, zoom);
         const normalizedPoint = { x: point.x, y: point.y };
         controllerRef.current?.movePointer(event.pointerId, normalizedPoint, performance.now());
@@ -668,7 +674,7 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
       });
     },
     onPointerUp: (event) => {
-      if (state.phase !== 'dragging') {
+      if (state.phase !== 'dragging' || event.pointerId !== state.pointerId) {
         return;
       }
 
@@ -771,5 +777,6 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
     onFailure,
     pendingPointer,
     syntheticTrajectory,
+    failure,
   };
 }

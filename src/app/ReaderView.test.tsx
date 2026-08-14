@@ -16,7 +16,7 @@ vi.mock('../flow/useAdaptiveFlow', () => ({
 
 vi.mock('./AdaptiveFlowOverlay', () => ({
   AdaptiveFlowOverlay() {
-    return null;
+    return <button type="button" data-testid="flow-control" data-flow-control>Flow</button>;
   },
 }));
 
@@ -212,5 +212,20 @@ describe('ReaderView physical page-turn integration', () => {
     expect(canvas).not.toBeNull();
     expect(canvas?.getAttribute('data-front-src')).toBe(`${format}://page-1`);
     expect(canvas?.getAttribute('data-verso-src')).toBe(`${format}://page-2`);
+  });
+
+  it('ignores wheel turns that originate from Adaptive Flow controls', async () => {
+    const onNext = vi.fn();
+    await renderReader({ onNext });
+
+    await act(async () => {
+      host.querySelector<HTMLElement>('[data-testid="flow-control"]')?.dispatchEvent(
+        new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 120 }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onNext).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-testid="page-turn-canvas"]')).toBeNull();
   });
 });

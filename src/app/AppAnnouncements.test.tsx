@@ -73,6 +73,13 @@ describe('application live-region wiring', () => {
       await flushReact(500);
     });
 
+    expect(host.querySelector('[data-testid="renderer-diagnostic"]')?.textContent).toContain('fallback=WebGL2 is not available.');
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[aria-label="Next page"]')?.click();
+      await flushReact(500);
+    });
+
     const statusMessages = [...host.querySelectorAll('[role="status"]')].map((node) => node.textContent ?? '');
     expect(statusMessages.some((message) => /^Integration page 2\/\d+$/.test(message))).toBe(true);
   });

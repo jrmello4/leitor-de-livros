@@ -103,6 +103,7 @@ function pointerEvent({
   pointerId = 4,
   pointerType = 'mouse',
   button = 0,
+  isPrimary = true,
   target,
   currentTarget,
 }: {
@@ -111,6 +112,7 @@ function pointerEvent({
   pointerId?: number;
   pointerType?: string;
   button?: number;
+  isPrimary?: boolean;
   target?: EventTarget | null;
   currentTarget?: ReturnType<typeof stageTarget>;
 }) {
@@ -120,6 +122,7 @@ function pointerEvent({
     pointerId,
     pointerType,
     button,
+    isPrimary,
     target: target ?? currentTarget ?? document.createElement('div'),
     currentTarget: currentTarget ?? stageTarget(),
     preventDefault: vi.fn(),
@@ -255,5 +258,46 @@ describe('usePageTurn', () => {
 
     expect(boundaryNext).toHaveBeenCalledTimes(1);
     expect(latest?.surfaceInput).toBeUndefined();
+  });
+
+  it('disables the generation on renderer failure without navigating the current automatic turn', async () => {
+    const onNext = vi.fn();
+    const result = await renderHook(createOptions({ onNext }));
+
+    act(() => {
+      result.requestTurn(1);
+    });
+
+    expect(latest?.state).toMatchObject({ phase: 'preparing', direction: 'forward' });
+
+    act(() => {
+      latest?.onFailure({ reason: 'backend', diagnostic: 'WebGL2 is not available.' });
+    });
+
+    expect(onNext).not.toHaveBeenCalled();
+    expect(latest?.state).toEqual({ phase: 'disabled', reason: 'backend' });
+    expect(latest?.surfaceInput).toBeUndefined();
+  });
+
+  it.each(['touch', 'pen'] as const)('ignores non-primary %s pointers before starting a turn', async (pointerType) => {
+    const result = await renderHook(createOptions());
+    const stage = stageTarget();
+
+    act(() => {
+      result.edgeProps.onPointerDown?.(
+        pointerEvent({
+          clientX: 598,
+          clientY: 390,
+          pointerId: 9,
+          pointerType,
+          isPrimary: false,
+          currentTarget: stage,
+        }) as never,
+      );
+    });
+
+    expect(stage.setPointerCapture).not.toHaveBeenCalled();
+    expect(latest?.state).toEqual({ phase: 'idle' });
+    expect(latest?.pendingPointer).toBeUndefined();
   });
 });
