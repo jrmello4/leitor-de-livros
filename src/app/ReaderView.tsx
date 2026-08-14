@@ -11,6 +11,7 @@ import { ReaderSurface } from '../rendering/ReaderSurface';
 import type { RenderFrame, RendererStatus } from '../rendering/contracts';
 import { rendererStatusMessage } from '../rendering/telemetry';
 import { AdaptiveFlowOverlay } from './AdaptiveFlowOverlay';
+import { LiveAnnouncement } from './LiveAnnouncement';
 import { PageNavigator } from './PageNavigator';
 import { ZoomControls } from './ZoomControls';
 
@@ -630,15 +631,10 @@ export function ReaderView({
             ? t('reader.reducedMotion')
             : rendererAnnouncement.message}
         </p>
-        <p
-          className="sr-only"
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-          data-testid="renderer-status-announcement"
-        >
-          {rendererAnnouncement.message}
-        </p>
+        <LiveAnnouncement
+          message={rendererAnnouncement.message}
+          testId="renderer-status-announcement"
+        />
         <p className="sr-only" data-testid="renderer-diagnostic">
           {rendererAnnouncement.diagnostic}
         </p>
