@@ -177,7 +177,10 @@ export function ReaderSurface({ frame, staticContent, ariaLabel, onStatus, inter
       data-quality={quality}
       aria-busy={backend === 'static' && failuresRef.current.length === 0}
     >
-      <div className={showStatic ? 'render-static' : 'render-static render-static--hidden'}>
+      <div
+        className={showStatic ? 'render-static' : 'render-static render-static--hidden'}
+        style={showStatic ? undefined : { opacity: 0, pointerEvents: 'none' }}
+      >
         {staticContent}
       </div>
       <canvas

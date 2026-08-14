@@ -15,29 +15,41 @@ describe('reader renderer contracts', () => {
     expect(backendCandidates(false, false)).toEqual(['static']);
   });
 
-  it('keeps page geometry centered and folds from the reading edge', () => {
-    const ltr = buildRenderPlan({
+  it('keeps idle page geometry centered without collapsing the turned sheet into the static DOM plan', () => {
+    const plan = buildRenderPlan({
       pages: [pages[0]],
       preloadPages: pages,
-      turningPageId: 'one',
       direction: 'ltr',
       mode: 'single',
-      turnProgress: 0.5,
-      reducedMotion: false,
-    }, 700, 1000);
-    const rtl = buildRenderPlan({
-      pages: [pages[0]],
-      preloadPages: pages,
-      turningPageId: 'one',
-      direction: 'rtl',
-      mode: 'single',
-      turnProgress: 0.5,
       reducedMotion: false,
     }, 700, 1000);
 
-    expect(ltr[0].width).toBeLessThan(700);
-    expect(ltr[0].x).toBeGreaterThan(rtl[0].x);
-    expect(ltr[0].shade).toBe(0.5);
+    expect(plan[0]).toMatchObject({
+      x: 0,
+      y: 0,
+      width: 700,
+      height: 1000,
+      shade: 0,
+    });
+  });
+
+  it('keeps the same full layout regardless of reduced motion because deformation belongs to PageTurnSurface', () => {
+    const animated = buildRenderPlan({
+      pages: [pages[0]],
+      preloadPages: pages,
+      direction: 'ltr',
+      mode: 'single',
+      reducedMotion: false,
+    }, 700, 1000);
+    const reduced = buildRenderPlan({
+      pages: [pages[0]],
+      preloadPages: pages,
+      direction: 'ltr',
+      mode: 'single',
+      reducedMotion: true,
+    }, 700, 1000);
+
+    expect(animated).toEqual(reduced);
   });
 
   it('reduces quality before it accepts a sustained low frame rate', () => {

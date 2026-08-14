@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent, RefObject, WheelEvent } from 'react';
 import { t } from '../i18n/catalog';
-import { resolvePageTurn, type PageTurnPhase } from '../domain/pageTurn';
 import { clamp, clampPan, clampZoomScale, navigationAvailability, pageCounter, visiblePageIndexes } from '../domain/reader';
 import { defaultReaderState, normalizeReaderState } from '../domain/readerState';
 import type { Bookmark, PageDescriptor, Publication, ReaderState, ReadingProfile, ZoomMode } from '../domain/types';
@@ -9,10 +8,12 @@ import { touchNativePages } from '../services/nativeLibrary';
 import { useAdaptiveFlow } from '../flow/useAdaptiveFlow';
 import { ReaderSurface } from '../rendering/ReaderSurface';
 import type { RenderFrame, RendererStatus } from '../rendering/contracts';
+import { PageTurnSurface } from '../rendering/pageTurn/PageTurnSurface';
 import { rendererStatusMessage } from '../rendering/telemetry';
 import { AdaptiveFlowOverlay } from './AdaptiveFlowOverlay';
 import { LiveAnnouncement } from './LiveAnnouncement';
 import { PageNavigator } from './PageNavigator';
+import { usePageTurn } from './usePageTurn';
 import { ZoomControls } from './ZoomControls';
 
 interface ReaderViewProps {
@@ -85,13 +86,7 @@ export function ReaderView({
   onRegisterTurnRequest,
 }: ReaderViewProps) {
   const paperRef = useRef<HTMLDivElement>(null);
-  const turnTimerRef = useRef<number | undefined>(undefined);
-  const turnRequestRef = useRef<(delta: number) => void>(() => undefined);
   const previousPageRef = useRef(publication.currentPage);
-  const [dragProgress, setDragProgress] = useState(0);
-  const [dragging, setDragging] = useState(false);
-  const [turnPhase, setTurnPhase] = useState<PageTurnPhase>('idle');
-  const [pageChangeDirection, setPageChangeDirection] = useState<'forward' | 'backward' | null>(null);
   const [flowVisible, setFlowVisible] = useState(false);
   const [localReaderState, setLocalReaderState] = useState<ReaderState>(() => normalizeReaderState(readerState ?? defaultReaderState));
   const [panDragging, setPanDragging] = useState(false);
@@ -183,83 +178,32 @@ export function ReaderView({
     nativeRuntime,
   });
 
-  useEffect(() => {
-    if (previousPageRef.current === publication.currentPage) {
-      return undefined;
-    }
-
-    const previousPage = previousPageRef.current;
-    previousPageRef.current = publication.currentPage;
-    const movedForward = profile.direction === 'rtl'
-      ? publication.currentPage < previousPage
-      : publication.currentPage > previousPage;
-    setPageChangeDirection(movedForward ? 'forward' : 'backward');
-    const timer = window.setTimeout(() => setPageChangeDirection(null), 280);
-    return () => window.clearTimeout(timer);
-  }, [profile.direction, publication.currentPage]);
-
-  useEffect(() => () => {
-    if (turnTimerRef.current !== undefined) {
-      window.clearTimeout(turnTimerRef.current);
-    }
-  }, []);
-
   const isFlowInteraction = (event: PointerEvent<HTMLDivElement>) => (
     event.target instanceof Element && Boolean(event.target.closest('[data-flow-control], [data-reader-control]'))
   );
-
-  const turnRect = () => {
-    const bounds = paperRef.current?.getBoundingClientRect();
-    if (!bounds) {
-      return undefined;
-    }
-
-    const slotWidth = bounds.width / pageSlotCount;
-    const left = bounds.left + currentPageSlot * slotWidth;
-    return {
-      left,
-      right: left + slotWidth,
-      top: bounds.top,
-      bottom: bounds.bottom,
-      width: slotWidth,
-      height: bounds.height,
-    };
-  };
-
-  const isTurnCorner = (event: PointerEvent<HTMLDivElement>) => {
-    const rect = turnRect();
-    if (!rect) {
-      return false;
-    }
-
-    const edgeReach = Math.min(150, Math.max(72, rect.width * 0.22));
-    const bottomReach = Math.min(180, Math.max(90, rect.height * 0.22));
-    const fromReadingEdge = profile.direction === 'rtl'
-      ? event.clientX - rect.left
-      : rect.right - event.clientX;
-    const fromBottom = rect.bottom - event.clientY;
-    return fromReadingEdge >= -8
-      && fromReadingEdge <= edgeReach
-      && fromBottom >= -8
-      && fromBottom <= bottomReach;
-  };
-
-  const progressFromPointer = (event: PointerEvent<HTMLDivElement>) => {
-    const rect = turnRect();
-    if (!rect) {
-      return 0;
-    }
-
-    const distance = profile.direction === 'rtl' ? event.clientX - rect.left : rect.right - event.clientX;
-    return clamp(distance / Math.max(rect.width * 0.72, 1), 0, 1);
-  };
+  const pageTurn = usePageTurn({
+    publication,
+    mode: profile.mode,
+    readingDirection: profile.direction,
+    reducedMotion: profile.reducedMotion,
+    transformedPage: paperRef,
+    zoom: {
+      scale: effectiveScale,
+      panX: safeReaderState.panX,
+      panY: safeReaderState.panY,
+    },
+    canNext,
+    canPrevious,
+    onNext,
+    onPrevious,
+  });
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (isFlowInteraction(event)) {
       return;
     }
 
-    if (event.button === 0 && canPan && spaceHeldRef.current && turnPhase === 'idle') {
+    if (event.button === 0 && canPan && spaceHeldRef.current && pageTurn.state.phase === 'idle') {
       event.currentTarget.setPointerCapture(event.pointerId);
       panStartRef.current = {
         x: event.clientX,
@@ -273,17 +217,13 @@ export function ReaderView({
 
     if (
       event.button !== 0
-      || turnPhase !== 'idle'
-      || isFlowInteraction(event)
-      || !isTurnCorner(event)
+      || pageTurn.state.phase === 'dragging'
+      || pageTurn.state.phase === 'disabled'
     ) {
       return;
     }
 
-    event.currentTarget.setPointerCapture(event.pointerId);
-    setDragging(true);
-    setTurnPhase('dragging');
-    setDragProgress(progressFromPointer(event));
+    pageTurn.edgeProps.onPointerDown?.(event as never);
   };
 
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
@@ -300,103 +240,21 @@ export function ReaderView({
       return;
     }
 
-    if (turnPhase !== 'dragging' || !dragging || isFlowInteraction(event)) {
+    if (isFlowInteraction(event)) {
       return;
     }
 
-    setDragProgress(progressFromPointer(event));
+    pageTurn.edgeProps.onPointerMove?.(event as never);
   };
-
-  const requestTurn = (delta: number, phaseOverride?: PageTurnPhase, notifyBoundary = true) => {
-    if (delta === 0) {
-      return;
-    }
-
-    const available = delta > 0 ? canNext : canPrevious;
-    const decision = resolvePageTurn(
-      phaseOverride ?? turnPhase,
-      available,
-      profile.reducedMotion,
-      profile.pageTurnDuration,
-    );
-    if (decision.kind === 'ignored') {
-      return;
-    }
-
-    const callback = delta > 0 ? onNext : onPrevious;
-    const shouldNotify = decision.kind === 'commit' || (notifyBoundary && !available);
-    const finish = () => {
-      if (shouldNotify) {
-        callback();
-      }
-      setTurnPhase('idle');
-      setDragProgress(0);
-      turnTimerRef.current = undefined;
-    };
-
-    if (turnTimerRef.current !== undefined) {
-      window.clearTimeout(turnTimerRef.current);
-      turnTimerRef.current = undefined;
-    }
-
-    setDragging(false);
-    setTurnPhase(decision.kind === 'commit' ? 'committing' : 'cancelling');
-    setDragProgress(decision.kind === 'commit' ? 1 : 0);
-    if (decision.immediate) {
-      finish();
-      return;
-    }
-
-    turnTimerRef.current = window.setTimeout(finish, decision.duration);
-  };
-
-  turnRequestRef.current = (delta: number) => requestTurn(delta);
 
   useEffect(() => {
     if (!onRegisterTurnRequest) {
       return undefined;
     }
 
-    onRegisterTurnRequest((delta) => turnRequestRef.current(delta));
+    onRegisterTurnRequest((delta) => pageTurn.requestTurn(delta));
     return () => onRegisterTurnRequest(null);
-  }, [onRegisterTurnRequest]);
-
-  const finishDrag = (commit: boolean) => {
-    if (turnPhase !== 'dragging') {
-      return;
-    }
-
-    if (turnTimerRef.current !== undefined) {
-      window.clearTimeout(turnTimerRef.current);
-    }
-    const shouldCommit = commit && canNext;
-    setDragging(false);
-
-    if (shouldCommit) {
-      setTurnPhase('idle');
-      setDragProgress(0);
-      requestTurn(1, 'idle', false);
-      return;
-    }
-
-    if (commit && !canNext) {
-      requestTurn(1, 'idle');
-      return;
-    }
-
-    setTurnPhase(shouldCommit ? 'committing' : 'cancelling');
-    setDragProgress(shouldCommit ? 1 : 0);
-    if (profile.reducedMotion) {
-      setTurnPhase('idle');
-      setDragProgress(0);
-      return;
-    }
-    turnTimerRef.current = window.setTimeout(() => {
-      setTurnPhase('idle');
-      setDragProgress(0);
-      turnTimerRef.current = undefined;
-    }, Math.max(profile.pageTurnDuration, 160));
-  };
+  }, [onRegisterTurnRequest, pageTurn.requestTurn]);
 
   const onPointerUp = (event: PointerEvent<HTMLDivElement>) => {
     if (panDragging) {
@@ -407,15 +265,7 @@ export function ReaderView({
       return;
     }
 
-    if (!dragging) {
-      return;
-    }
-
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    const commit = dragProgress >= 0.42;
-    finishDrag(commit);
+    pageTurn.edgeProps.onPointerUp?.(event as never);
   };
 
   const onWheel = (event: WheelEvent<HTMLDivElement>) => {
@@ -427,7 +277,7 @@ export function ReaderView({
     }
 
     event.preventDefault();
-    requestTurn(event.deltaY > 0 ? 1 : -1);
+    pageTurn.requestTurn(event.deltaY > 0 ? 1 : -1);
   };
 
   const changeZoomMode = (mode: ZoomMode) => {
@@ -450,12 +300,6 @@ export function ReaderView({
 
   const resetPan = () => setLocalReaderState((current) => ({ ...current, panX: 0, panY: 0 }));
 
-  const curlStyle = {
-    '--turn-progress': dragProgress,
-    '--turn-duration': `${profile.pageTurnDuration}ms`,
-    '--turn-left': `${currentPageSlot * pageSlotWidth}%`,
-    '--turn-width': `${pageSlotWidth}%`,
-  } as CSSProperties;
   const turnHintStyle = {
     '--turn-hint-left': profile.direction === 'rtl' ? `${currentPageSlot * pageSlotWidth}%` : 'auto',
     '--turn-hint-right': profile.direction === 'ltr'
@@ -465,10 +309,8 @@ export function ReaderView({
   const rendererFrame: RenderFrame = {
     pages: visiblePages,
     preloadPages,
-    turningPageId: currentPage?.id,
     direction: profile.direction,
     mode: profile.mode,
-    turnProgress: dragProgress,
     reducedMotion: profile.reducedMotion,
   };
   const correctFlowOrder = (firstId: string, secondId: string) => {
@@ -482,6 +324,13 @@ export function ReaderView({
   const contentTransformStyle = {
     transform: `translate(${safeReaderState.panX}px, ${safeReaderState.panY}px) scale(${effectiveScale})`,
   } as CSSProperties;
+
+  useEffect(() => {
+    if (previousPageRef.current !== publication.currentPage) {
+      previousPageRef.current = publication.currentPage;
+      pageTurn.acknowledgeNavigation();
+    }
+  }, [pageTurn.acknowledgeNavigation, publication.currentPage]);
 
   return (
     <main
@@ -558,7 +407,7 @@ export function ReaderView({
       )}
 
       <section
-        className={`reading-stage reading-stage--${profile.mode} ${dragging ? 'reading-stage--dragging' : ''} ${turnPhase !== 'idle' ? `reading-stage--turn-${turnPhase}` : ''}`}
+        className={`reading-stage reading-stage--${profile.mode} ${pageTurn.state.phase === 'dragging' ? 'reading-stage--dragging' : ''} ${pageTurn.state.phase !== 'idle' ? `reading-stage--turn-${pageTurn.state.phase}` : ''}`}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -566,14 +415,14 @@ export function ReaderView({
           if (panDragging) {
             setPanDragging(false);
           } else {
-            finishDrag(false);
+            pageTurn.edgeProps.onPointerCancel?.();
           }
         }}
         onWheel={onWheel}
         data-testid="reader-stage"
-        data-turn-phase={turnPhase}
+        data-turn-phase={pageTurn.state.phase}
         data-turn-direction={profile.direction}
-        data-turn-progress={dragProgress}
+        data-turn-progress={pageTurn.surfaceInput?.progress ?? 0}
         aria-label={t('reader.canvas')}
       >
         <div className="stage-caption stage-caption--left">{profile.direction === 'rtl' ? t('reader.rightToLeft') : t('reader.leftToRight')}</div>
@@ -588,7 +437,7 @@ export function ReaderView({
         />
 
         <div
-          className={`paper-spread paper-spread--${profile.mode} ${pageChangeDirection ? `paper-spread--page-enter-${pageChangeDirection}` : ''}`}
+          className={`paper-spread paper-spread--${profile.mode}`}
           ref={paperRef}
           style={{ '--spread-aspect': spreadAspect } as CSSProperties}
         >
@@ -597,23 +446,21 @@ export function ReaderView({
               frame={rendererFrame}
               ariaLabel={t('reader.pageReady', { counter: readerCounter })}
               onStatus={setRendererStatus}
-              interactionActive={turnPhase !== 'idle'}
+              interactionActive={pageTurn.state.phase !== 'idle'}
               staticContent={(
                 <>
                   {visiblePages.map((page) => <PageSheet page={page} key={page.id} />)}
-                  {currentPage && turnPhase !== 'idle' && (
-                    <div
-                      className={`curl-layer curl-layer--${profile.direction}`}
-                      style={curlStyle}
-                      aria-hidden="true"
-                    >
-                      <PageSheet page={currentPage} />
-                      <span className="curl-glint" />
-                    </div>
-                  )}
                 </>
               )}
             />
+            {pageTurn.surfaceInput && (
+              <PageTurnSurface
+                {...pageTurn.surfaceInput}
+                onReady={pageTurn.onTexturesAndBackendReady}
+                onSettled={pageTurn.onSettled}
+                onFailure={pageTurn.onFailure}
+              />
+            )}
             <AdaptiveFlowOverlay
               graph={flowGraph}
               isAnalyzing={flowState === 'analyzing'}
@@ -648,12 +495,12 @@ export function ReaderView({
       </section>
 
       <footer className="reader-controls">
-        <button className="nav-button" data-testid="reader-previous" onClick={() => requestTurn(-1)} aria-disabled={!canPrevious} aria-label={t('reader.previousAria')}>← <span>{t('reader.previous')}</span></button>
+        <button className="nav-button" data-testid="reader-previous" onClick={() => pageTurn.requestTurn(-1)} aria-disabled={!canPrevious} aria-label={t('reader.previousAria')}>← <span>{t('reader.previous')}</span></button>
         <div className="reader-progress" aria-label={t('reader.percentRead', { percent: Math.round(publication.progress * 100) })}>
           <div className="progress-track"><span style={{ width: `${publication.progress * 100}%` }} /></div>
           <span>{t('reader.percentComplete', { percent: Math.round(publication.progress * 100) })}</span>
         </div>
-        <button className="nav-button nav-button--forward" data-testid="reader-next" onClick={() => requestTurn(1)} aria-disabled={!canNext} aria-label={t('reader.nextAria')}><span>{t('reader.next')}</span> →</button>
+        <button className="nav-button nav-button--forward" data-testid="reader-next" onClick={() => pageTurn.requestTurn(1)} aria-disabled={!canNext} aria-label={t('reader.nextAria')}><span>{t('reader.next')}</span> →</button>
       </footer>
 
       <p className="reader-announcement" data-testid="reader-announcement" aria-hidden="true">{announcement}</p>

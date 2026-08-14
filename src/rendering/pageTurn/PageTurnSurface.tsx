@@ -70,9 +70,19 @@ export function PageTurnSurface({
 
     let cancelled = false;
     let failed = false;
-    const backend = backendRef.current ?? createPageTurnWebGl2(canvas);
-    backendRef.current = backend;
-    setBackendKind(backend.kind);
+    let backend: PageTurnBackend | undefined;
+
+    try {
+      backend = backendRef.current ?? createPageTurnWebGl2(canvas);
+      backendRef.current = backend;
+      setBackendKind(backend.kind);
+    } catch (error: unknown) {
+      onFailure({
+        reason: 'backend',
+        diagnostic: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
 
     const fail = (failure: PageTurnFailure) => {
       if (failed) {
@@ -82,7 +92,7 @@ export function PageTurnSurface({
       failed = true;
       cancelled = true;
       cancelAnimationFrameSafe(rafRef.current);
-      backend.disposeScene();
+      backendRef.current?.disposeScene();
       configuredViewportRef.current = undefined;
       textureMetaRef.current = { count: 0, bytes: 0 };
       textureCache.releaseGeneration(generation);
