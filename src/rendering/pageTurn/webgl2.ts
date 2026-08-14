@@ -5,6 +5,7 @@ import {
   PAGE_TURN_LUMINANCE_BOUNDS,
   type PageTurnBackend,
   type PageTurnRenderFrame,
+  type PageTurnViewport,
 } from './contracts';
 import type { PreparedPageImage, PreparedPageTurnTextures } from './textures';
 import { PAGE_TURN_WEBGL2_FRAGMENT_SHADER, PAGE_TURN_WEBGL2_VERTEX_SHADER } from './webgl2Shaders';
@@ -22,6 +23,11 @@ interface SharedMeshResources {
 interface RoleTexture {
   texture: WebGLTexture;
   role: SemanticRole;
+}
+
+interface SurfaceSize {
+  width: number;
+  height: number;
 }
 
 interface ProgramUniforms {
@@ -65,6 +71,11 @@ export function createPageTurnWebGl2(canvas: HTMLCanvasElement): PageTurnBackend
   const sceneTextures = new Map<SemanticRole, RoleTexture>();
   let shadowTexture: WebGLTexture | undefined;
   let shadowFramebuffer: WebGLFramebuffer | undefined;
+  let surfaceSize = resolveSurfaceSize({
+    width: canvas.width || canvas.clientWidth || 1,
+    height: canvas.height || canvas.clientHeight || 1,
+    dpr: 1,
+  });
 
   function ensureProgram(): void {
     if (program && uniforms) {
@@ -149,13 +160,38 @@ export function createPageTurnWebGl2(canvas: HTMLCanvasElement): PageTurnBackend
     }
   }
 
-  function ensureShadowResources(): void {
-    if (shadowTexture && shadowFramebuffer) {
+  function resize(viewport: PageTurnViewport): void {
+    if (disposed) {
       return;
     }
 
-    const width = Math.max(1, canvas.width || canvas.clientWidth || 1);
-    const height = Math.max(1, canvas.height || canvas.clientHeight || 1);
+    const nextSize = resolveSurfaceSize(viewport);
+    if (surfaceSize.width === nextSize.width && surfaceSize.height === nextSize.height) {
+      return;
+    }
+
+    surfaceSize = nextSize;
+    if (canvas.width !== nextSize.width) {
+      canvas.width = nextSize.width;
+    }
+    if (canvas.height !== nextSize.height) {
+      canvas.height = nextSize.height;
+    }
+
+    recreateShadowResources(nextSize);
+  }
+
+  function recreateShadowResources(nextSize: SurfaceSize): void {
+    if (shadowFramebuffer) {
+      gl.deleteFramebuffer(shadowFramebuffer);
+      shadowFramebuffer = undefined;
+    }
+
+    if (shadowTexture) {
+      gl.deleteTexture(shadowTexture);
+      shadowTexture = undefined;
+    }
+
     shadowTexture = required(gl.createTexture(), 'WebGL2 could not allocate the page-turn shadow texture.');
     shadowFramebuffer = required(gl.createFramebuffer(), 'WebGL2 could not allocate the page-turn shadow framebuffer.');
 
@@ -164,7 +200,7 @@ export function createPageTurnWebGl2(canvas: HTMLCanvasElement): PageTurnBackend
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, nextSize.width, nextSize.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFramebuffer);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, shadowTexture, 0);
@@ -178,7 +214,6 @@ export function createPageTurnWebGl2(canvas: HTMLCanvasElement): PageTurnBackend
 
     ensureProgram();
     ensureMeshResources();
-    ensureShadowResources();
     disposeScene();
 
     preparedScene = scene;
@@ -207,16 +242,7 @@ export function createPageTurnWebGl2(canvas: HTMLCanvasElement): PageTurnBackend
 
     const mesh = required(meshResources.get(frame.quality), 'WebGL2 mesh resources were not prepared.');
     const topology = QUALITY_TOPOLOGY[frame.quality];
-    const width = Math.max(1, Math.round(frame.viewport.width * Math.max(frame.viewport.dpr, 1)));
-    const height = Math.max(1, Math.round(frame.viewport.height * Math.max(frame.viewport.dpr, 1)));
-    if (canvas.width !== width) {
-      canvas.width = width;
-    }
-    if (canvas.height !== height) {
-      canvas.height = height;
-    }
-
-    gl.viewport(0, 0, width, height);
+    gl.viewport(0, 0, surfaceSize.width, surfaceSize.height);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(program);
@@ -308,6 +334,7 @@ export function createPageTurnWebGl2(canvas: HTMLCanvasElement): PageTurnBackend
   return {
     kind: 'webgl2',
     prepare,
+    resize,
     render,
     disposeScene,
     dispose,
@@ -392,4 +419,11 @@ function required<T>(value: T | null | undefined, message: string): T {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function resolveSurfaceSize(viewport: PageTurnViewport): SurfaceSize {
+  return {
+    width: Math.max(1, Math.round(viewport.width * Math.max(viewport.dpr, 1))),
+    height: Math.max(1, Math.round(viewport.height * Math.max(viewport.dpr, 1))),
+  };
 }

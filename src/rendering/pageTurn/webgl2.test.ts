@@ -62,8 +62,10 @@ function frameWithMidFold(): PageTurnRenderFrame {
 describe('createPageTurnWebGl2', () => {
   it('binds front, readable verso, under-page, and stationary textures before drawing', async () => {
     const gl = createRecordingWebGl2Context();
-    const renderer = createPageTurnWebGl2(canvasWith(gl));
+    const canvas = canvasWith(gl);
+    const renderer = createPageTurnWebGl2(canvas);
 
+    renderer.resize({ width: 960, height: 1280, dpr: 1.5 });
     await renderer.prepare(createScene(), createPreparedTextures());
     const allocationsAtPrepare = gl.totalAllocations();
 
@@ -78,6 +80,7 @@ describe('createPageTurnWebGl2', () => {
     const gl = createRecordingWebGl2Context();
     const renderer = createPageTurnWebGl2(canvasWith(gl));
 
+    renderer.resize({ width: 960, height: 1280, dpr: 1.5 });
     await renderer.prepare(createScene(), createPreparedTextures());
     renderer.render(frameWithMidFold());
 
@@ -90,6 +93,7 @@ describe('createPageTurnWebGl2', () => {
     const gl = createRecordingWebGl2Context();
     const renderer = createPageTurnWebGl2(canvasWith(gl));
 
+    renderer.resize({ width: 960, height: 1280, dpr: 1.5 });
     await renderer.prepare(createScene(), createPreparedTextures());
     const sharedAllocations = gl.sharedAllocationCount();
 
@@ -98,17 +102,54 @@ describe('createPageTurnWebGl2', () => {
     expect(gl.deletedTextureRoles()).toEqual(['front', 'verso', 'under', 'stationary']);
     expect(gl.liveSharedAllocationCount()).toBe(sharedAllocations);
   });
+
+  it('resizes through an explicit path and does not mutate canvas dimensions or framebuffer-sized resources in render', async () => {
+    const gl = createRecordingWebGl2Context();
+    const canvas = canvasWith(gl, { width: 1, height: 1, clientWidth: 960, clientHeight: 1280 });
+    const renderer = createPageTurnWebGl2(canvas);
+
+    renderer.resize({ width: 960, height: 1280, dpr: 1.5 });
+    await renderer.prepare(createScene(), createPreparedTextures());
+    const assignmentsAfterResize = canvas.dimensionAssignments();
+    const framebufferAllocsAfterResize = gl.framebufferSizedAllocations();
+
+    renderer.render(frameWithMidFold());
+
+    expect(canvas.dimensionAssignments()).toEqual(assignmentsAfterResize);
+    expect(gl.framebufferSizedAllocations()).toBe(framebufferAllocsAfterResize);
+  });
 });
 
-function canvasWith(gl: RecordingWebGl2Context): HTMLCanvasElement {
+function canvasWith(
+  gl: RecordingWebGl2Context,
+  options?: { width?: number; height?: number; clientWidth?: number; clientHeight?: number },
+): HTMLCanvasElement & { dimensionAssignments(): { width: number; height: number } } {
+  let width = options?.width ?? 960;
+  let height = options?.height ?? 1280;
+  const clientWidth = options?.clientWidth ?? width;
+  const clientHeight = options?.clientHeight ?? height;
+  const assignments = { width: 0, height: 0 };
   return {
-    width: 960,
-    height: 1280,
-    clientWidth: 960,
-    clientHeight: 1280,
-    getBoundingClientRect: () => ({ width: 960, height: 1280 }),
+    get width() {
+      return width;
+    },
+    set width(value: number) {
+      assignments.width += 1;
+      width = value;
+    },
+    get height() {
+      return height;
+    },
+    set height(value: number) {
+      assignments.height += 1;
+      height = value;
+    },
+    clientWidth,
+    clientHeight,
+    getBoundingClientRect: () => ({ width: clientWidth, height: clientHeight }),
     getContext: (kind: string) => kind === 'webgl2' ? gl : null,
-  } as unknown as HTMLCanvasElement;
+    dimensionAssignments: () => ({ ...assignments }),
+  } as unknown as HTMLCanvasElement & { dimensionAssignments(): { width: number; height: number } };
 }
 
 type NamedHandle = { id: number; role?: string; kind: string };
@@ -118,6 +159,7 @@ interface RecordingWebGl2Context extends WebGL2RenderingContext {
   totalAllocations(): number;
   sharedAllocationCount(): number;
   liveSharedAllocationCount(): number;
+  framebufferSizedAllocations(): number;
   textureRoles(): string[];
   deletedTextureRoles(): string[];
   drawPasses(): string[];
@@ -137,6 +179,7 @@ function createRecordingWebGl2Context(): RecordingWebGl2Context {
   const drawPasses: string[] = [];
   const uniformValues = new Map<string, number>();
   const readPixels = vi.fn();
+  let framebufferSizedAllocs = 0;
 
   const context = {
     VERTEX_SHADER: 0x8b31,
@@ -211,7 +254,12 @@ function createRecordingWebGl2Context(): RecordingWebGl2Context {
       }
     },
     texParameteri: () => undefined,
-    texImage2D: () => undefined,
+    texImage2D: (...args: unknown[]) => {
+      if (args.length >= 9 && args[8] === null) {
+        framebufferSizedAllocs += 1;
+      }
+      return undefined;
+    },
     activeTexture: (unit: number) => {
       currentTextureUnit = unit - 0x84c0;
     },
@@ -260,6 +308,7 @@ function createRecordingWebGl2Context(): RecordingWebGl2Context {
     totalAllocations: () => allocations.buffers + allocations.textures + allocations.framebuffers + allocations.vaos + allocations.programs,
     sharedAllocationCount: () => allocations.buffers + allocations.framebuffers + allocations.vaos + allocations.programs,
     liveSharedAllocationCount: () => liveShared.size + 1,
+    framebufferSizedAllocations: () => framebufferSizedAllocs,
     textureRoles: () => seenTextureRoles.slice(),
     deletedTextureRoles: () => deletedTextureRoles.slice(),
     drawPasses: () => drawPasses.slice(),

@@ -30,6 +30,7 @@ export interface PageTurnRenderFrame {
 export interface PageTurnBackend {
   readonly kind: 'webgl2' | 'webgpu';
   prepare(scene: PageTurnScene, textures: PreparedPageTurnTextures<PreparedPageImage>): Promise<void>;
+  resize(viewport: PageTurnViewport): void;
   render(frame: PageTurnRenderFrame): void;
   disposeScene(): void;
   dispose(): void;

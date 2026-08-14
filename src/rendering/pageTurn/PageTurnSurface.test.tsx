@@ -12,6 +12,7 @@ import { PageTurnSurface, type PageTurnSurfaceState } from './PageTurnSurface';
 const backend = {
   kind: 'webgl2' as const,
   prepare: vi.fn(async () => undefined),
+  resize: vi.fn(() => undefined),
   render: vi.fn(() => undefined),
   disposeScene: vi.fn(() => undefined),
   dispose: vi.fn(() => undefined),
@@ -82,6 +83,16 @@ function readyFrame(direction: ReadingDirection, progress: number, invalidReason
   };
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 function idleState(): PageTurnSurfaceState {
   return { phase: 'idle' };
 }
@@ -115,6 +126,7 @@ describe('PageTurnSurface', () => {
 
   beforeEach(() => {
     backend.prepare.mockClear();
+    backend.resize.mockClear();
     backend.render.mockClear();
     backend.disposeScene.mockClear();
     backend.dispose.mockClear();
@@ -217,10 +229,54 @@ describe('PageTurnSurface', () => {
     await settleAsyncEffects();
     await flushAnimationFrame(rafQueue, 16.7);
     const event = new Event('webglcontextlost', { cancelable: true });
-    view.canvas()?.dispatchEvent(event);
+    await act(async () => {
+      view.canvas()?.dispatchEvent(event);
+    });
 
     expect(onFailure).toHaveBeenCalledWith(expect.objectContaining({ reason: 'backend' }));
     expect(backend.disposeScene).toHaveBeenCalled();
+  });
+
+  it('ignores a late backend prepare resolution after context loss', async () => {
+    const deferred = createDeferred<void>();
+    backend.prepare.mockImplementationOnce(async () => {
+      await deferred.promise;
+      return undefined;
+    });
+    const onReady = vi.fn();
+    const onFailure = vi.fn();
+    const onMetrics = vi.fn();
+    const view = renderSurface(root, container, {
+      scene: scene(),
+      generation: 10,
+      state: draggingState(0.4),
+      quality: 'essential',
+      onReady,
+      onSettled: vi.fn(),
+      onFailure,
+      onMetrics,
+    });
+
+    await settleAsyncEffects();
+    expect(backend.prepare).toHaveBeenCalledTimes(1);
+    expect(onReady).not.toHaveBeenCalled();
+
+    const event = new Event('webglcontextlost', { cancelable: true });
+    await act(async () => {
+      view.canvas()?.dispatchEvent(event);
+    });
+
+    expect(onFailure).toHaveBeenCalledTimes(1);
+    expect(onReady).not.toHaveBeenCalled();
+
+    deferred.resolve();
+    await settleAsyncEffects();
+    await flushAnimationFrame(rafQueue, 16.7);
+
+    expect(onFailure).toHaveBeenCalledTimes(1);
+    expect(onReady).not.toHaveBeenCalled();
+    expect(backend.render).not.toHaveBeenCalled();
+    expect(onMetrics).not.toHaveBeenCalled();
   });
 
   it('reports solver failure when the provided frame becomes invalid', async () => {

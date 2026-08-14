@@ -271,3 +271,140 @@ I preserved the prior implementer's new renderer files and kept their existing g
 - The current Task 6 renderer is intentionally WebGL2-only and milestone-scoped; later tasks still need the planned WebGPU adapter, deeper flex/PBD layer, and reader integration.
 - The worktree required elevated test/build execution in this environment because sandboxed runs could not resolve Vite/worktree paths reliably.
 - Git emitted benign warnings about inaccessible global ignore config under the sandboxed user, but this did not affect repository content or verification results.
+
+## Fix round 1: review findings
+
+### Fix summary
+
+Addressed both important findings and the related cleanup in the same touched code:
+
+- `PageTurnSurface` now invalidates the active async chain on `webglcontextlost`, releases the active generation, clears prepared state, disposes scene resources, and routes failure through a single-shot failure path so late `backend.prepare` resolution cannot call `onReady`, emit metrics, or draw.
+- `PageTurnBackend` now has an explicit `resize(viewport)` path, and `createPageTurnWebGl2()` moved canvas drawing-buffer sizing plus shadow framebuffer/texture reallocation out of `render()` and into that explicit resize path.
+- `PageTurnSurface` now synthesizes the fallback solver frame only once per RAF tick and passes it through to frame construction.
+
+### RED: new regression tests
+
+Added:
+
+- `PageTurnSurface > ignores a late backend prepare resolution after context loss`
+- `createPageTurnWebGl2 > resizes through an explicit path and does not mutate canvas dimensions or framebuffer-sized resources in render`
+
+Command:
+
+```powershell
+npm.cmd test -- src/rendering/pageTurn/PageTurnSurface.test.tsx src/rendering/pageTurn/webgl2.test.ts
+```
+
+Output:
+
+```text
+> tactile-reader@0.1.0 test
+> vitest run src/rendering/pageTurn/PageTurnSurface.test.tsx src/rendering/pageTurn/webgl2.test.ts
+
+ RUN  v3.2.7 C:/Users/adenilson.j/Documents/ChatGPT/leitor/.worktrees/physical-page-curl-design
+
+ ❯ src/rendering/pageTurn/webgl2.test.ts (4 tests | 4 failed) 8ms
+   × createPageTurnWebGl2 > binds front, readable verso, under-page, and stationary textures before drawing 5ms
+     → renderer.resize is not a function
+   × createPageTurnWebGl2 > keeps lighting within 0.72..1.08 and draws a projected shadow before the deforming sheet 1ms
+     → renderer.resize is not a function
+   × createPageTurnWebGl2 > disposes scene textures without dropping shared mesh resources 0ms
+     → renderer.resize is not a function
+   × createPageTurnWebGl2 > resizes through an explicit path and does not mutate canvas dimensions or framebuffer-sized resources in render 0ms
+     → renderer.resize is not a function
+ ❯ src/rendering/pageTurn/PageTurnSurface.test.tsx (6 tests | 1 failed) 43ms
+   × PageTurnSurface > ignores a late backend prepare resolution after context loss 7ms
+     → expected "spy" to not be called at all, but actually been called 1 times
+
+ Test Files  2 failed (2)
+      Tests  5 failed | 5 passed (10)
+   Duration  950ms
+```
+
+### GREEN: focused regressions pass cleanly
+
+Final focused command:
+
+```powershell
+npm.cmd test -- src/rendering/pageTurn/PageTurnSurface.test.tsx src/rendering/pageTurn/webgl2.test.ts
+```
+
+Output:
+
+```text
+> tactile-reader@0.1.0 test
+> vitest run src/rendering/pageTurn/PageTurnSurface.test.tsx src/rendering/pageTurn/webgl2.test.ts
+
+ RUN  v3.2.7 C:/Users/adenilson.j/Documents/ChatGPT/leitor/.worktrees/physical-page-curl-design
+
+ ✓ src/rendering/pageTurn/webgl2.test.ts (4 tests) 10ms
+ ✓ src/rendering/pageTurn/PageTurnSurface.test.tsx (6 tests) 42ms
+
+ Test Files  2 passed (2)
+      Tests  10 passed (10)
+   Duration  936ms
+```
+
+### Build verification
+
+Intermediate build caught a test-typing issue introduced in the new deferred-prepare regression:
+
+Command:
+
+```powershell
+npm.cmd run build
+```
+
+Output:
+
+```text
+> tactile-reader@0.1.0 build
+> tsc -b && vite build
+
+src/rendering/pageTurn/PageTurnSurface.test.tsx(242,50): error TS2322: Type 'Promise<void>' is not assignable to type 'Promise<undefined>'.
+  Type 'void' is not assignable to type 'undefined'.
+```
+
+Final build command:
+
+```powershell
+npm.cmd run build
+```
+
+Output:
+
+```text
+> tactile-reader@0.1.0 build
+> tsc -b && vite build
+
+vite v7.3.6 building client environment for production...
+transforming...
+✓ 67 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.58 kB │ gzip:  0.34 kB
+dist/assets/index-BEkHeHK6.css   32.29 kB │ gzip:  7.24 kB
+dist/assets/index-B2yrrsqK.js   321.15 kB │ gzip: 99.89 kB
+✓ built in 977ms
+```
+
+### Full suite verification
+
+Command:
+
+```powershell
+npm.cmd test
+```
+
+Output:
+
+```text
+> tactile-reader@0.1.0 test
+> vitest run
+
+ RUN  v3.2.7 C:/Users/adenilson.j/Documents/ChatGPT/leitor/.worktrees/physical-page-curl-design
+
+ Test Files  34 passed (34)
+      Tests  181 passed (181)
+   Duration  4.31s
+```

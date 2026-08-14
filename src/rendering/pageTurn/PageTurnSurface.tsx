@@ -3,7 +3,7 @@ import type { PageTurnScene } from '../../domain/pageTurnScene';
 import type { ReadingDirection } from '../../domain/types';
 import type { RenderQuality } from '../contracts';
 import { PAGE_TURN_MESH_VERSION } from './mesh';
-import { PaperPhysicsSolver } from './physics';
+import { PaperPhysicsSolver, type PageTurnPhysicsFrame } from './physics';
 import {
   PAGE_TURN_LUMINANCE_BOUNDS,
   type PageTurnBackend,
@@ -41,7 +41,7 @@ export function PageTurnSurface({
 }: PageTurnSurfaceProps) {
   const active = state.phase !== 'idle';
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const backendRef = useRef<ReturnType<typeof createPageTurnWebGl2> | undefined>(undefined);
+  const backendRef = useRef<PageTurnBackend | undefined>(undefined);
   const frameRef = useRef<PageTurnRenderFrame | undefined>(undefined);
   const rafRef = useRef<number | undefined>(undefined);
   const textureMetaRef = useRef({ count: 0, bytes: 0 });
@@ -66,15 +66,29 @@ export function PageTurnSurface({
     }
 
     let cancelled = false;
+    let failed = false;
     const backend = backendRef.current ?? createPageTurnWebGl2(canvas);
     backendRef.current = backend;
     setBackendKind(backend.kind);
 
-    const handleContextLoss = (event: Event) => {
-      event.preventDefault?.();
+    const fail = (failure: PageTurnFailure) => {
+      if (failed) {
+        return;
+      }
+
+      failed = true;
+      cancelled = true;
       cancelAnimationFrameSafe(rafRef.current);
       backend.disposeScene();
-      onFailure({
+      textureMetaRef.current = { count: 0, bytes: 0 };
+      textureCache.releaseGeneration(generation);
+      setPreparedGeneration((current) => (current === generation ? undefined : current));
+      onFailure(failure);
+    };
+
+    const handleContextLoss = (event: Event) => {
+      event.preventDefault?.();
+      fail({
         reason: 'backend',
         diagnostic: 'WebGL2 context lost during physical page turn.',
       });
@@ -89,7 +103,7 @@ export function PageTurnSurface({
       }
 
       if (preparation.kind !== 'ready') {
-        onFailure({
+        fail({
           reason: 'backend',
           diagnostic: preparation.kind === 'error'
             ? preparation.message
@@ -102,6 +116,10 @@ export function PageTurnSurface({
       if (cancelled) {
         return;
       }
+      backend.resize(viewportForCanvas(canvas));
+      if (cancelled) {
+        return;
+      }
 
       textureMetaRef.current = {
         count: preparation.textures.count,
@@ -111,7 +129,7 @@ export function PageTurnSurface({
       onReady(generation);
     })().catch((error: unknown) => {
       if (!cancelled) {
-        onFailure({
+        fail({
           reason: 'backend',
           diagnostic: error instanceof Error ? error.message : String(error),
         });
@@ -140,9 +158,9 @@ export function PageTurnSurface({
         return;
       }
 
-      const frame = buildFrame(state, quality, canvasRef.current);
-      frameRef.current = frame;
       const physicsFrame = state.frame ?? syntheticPhysicsFrame(state.direction, quality, state.progress);
+      const frame = buildFrame(state, quality, canvasRef.current, physicsFrame);
+      frameRef.current = frame;
 
       if (physicsFrame?.invalidReason) {
         backendRef.current.disposeScene();
@@ -197,7 +215,12 @@ export function PageTurnSurface({
   ) : null;
 }
 
-function buildFrame(state: PageTurnSurfaceState, quality: RenderQuality, canvas: HTMLCanvasElement): PageTurnRenderFrame {
+function buildFrame(
+  state: PageTurnSurfaceState,
+  quality: RenderQuality,
+  canvas: HTMLCanvasElement,
+  physics?: PageTurnPhysicsFrame,
+): PageTurnRenderFrame {
   if (state.phase === 'idle') {
     return {
       meshVersion: PAGE_TURN_MESH_VERSION,
@@ -210,13 +233,13 @@ function buildFrame(state: PageTurnSurfaceState, quality: RenderQuality, canvas:
     };
   }
 
-  const physics = state.frame ?? syntheticPhysicsFrame(state.direction, quality, state.progress);
+  const resolvedPhysics = physics ?? state.frame ?? syntheticPhysicsFrame(state.direction, quality, state.progress);
 
   return {
     meshVersion: PAGE_TURN_MESH_VERSION,
-    controlPoints: physics.controlPoints,
+    controlPoints: resolvedPhysics.controlPoints,
     progress: state.progress,
-    grabPoint: physics.grabPoint,
+    grabPoint: resolvedPhysics.grabPoint,
     viewport: viewportForCanvas(canvas),
     luminance: PAGE_TURN_LUMINANCE_BOUNDS,
     quality,
