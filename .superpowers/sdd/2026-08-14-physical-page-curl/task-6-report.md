@@ -404,7 +404,121 @@ Output:
 
  RUN  v3.2.7 C:/Users/adenilson.j/Documents/ChatGPT/leitor/.worktrees/physical-page-curl-design
 
- Test Files  34 passed (34)
+Test Files  34 passed (34)
       Tests  181 passed (181)
    Duration  4.31s
+```
+
+## Fix round 2: scoped re-review findings
+
+### Fix summary
+
+Addressed only the scoped resize regressions from the re-review:
+
+- `PageTurnSurface` now re-invokes the explicit backend `resize(viewport)` path during an active turn whenever viewport width, height, or DPR changes.
+- `createPageTurnWebGl2().resize()` now initializes shadow framebuffer/texture resources on first setup even when the requested logical size matches the cached surface size.
+- `render()` remains free of canvas dimension writes and framebuffer-sized allocation.
+- The previously fixed context-loss cancellation and single fallback-frame synthesis paths were preserved unchanged.
+
+### RED: new focused regressions
+
+Added:
+
+- `PageTurnSurface > propagates active viewport and dpr changes through the explicit resize path`
+- `createPageTurnWebGl2 > creates initial shadow resources even when resize is called with the cached logical size`
+
+Command:
+
+```powershell
+npm.cmd test -- src/rendering/pageTurn/PageTurnSurface.test.tsx src/rendering/pageTurn/webgl2.test.ts
+```
+
+Output:
+
+```text
+> tactile-reader@0.1.0 test
+> vitest run src/rendering/pageTurn/PageTurnSurface.test.tsx src/rendering/pageTurn/webgl2.test.ts
+
+ RUN  v3.2.7 C:/Users/adenilson.j/Documents/ChatGPT/leitor/.worktrees/physical-page-curl-design
+
+ ❯ src/rendering/pageTurn/webgl2.test.ts (5 tests | 1 failed) 15ms
+   × createPageTurnWebGl2 > creates initial shadow resources even when resize is called with the cached logical size 6ms
+     → expected +0 to be 1 // Object.is equality
+ ❯ src/rendering/pageTurn/PageTurnSurface.test.tsx (7 tests | 1 failed) 43ms
+   × PageTurnSurface > propagates active viewport and dpr changes through the explicit resize path 5ms
+     → expected "spy" to be called 2 times, but got 1 times
+
+ Test Files  2 failed (2)
+      Tests  2 failed | 10 passed (12)
+   Duration  903ms
+```
+
+### GREEN: focused regressions pass
+
+Command:
+
+```powershell
+npm.cmd test -- src/rendering/pageTurn/PageTurnSurface.test.tsx src/rendering/pageTurn/webgl2.test.ts
+```
+
+Output:
+
+```text
+> tactile-reader@0.1.0 test
+> vitest run src/rendering/pageTurn/PageTurnSurface.test.tsx src/rendering/pageTurn/webgl2.test.ts
+
+ RUN  v3.2.7 C:/Users/adenilson.j/Documents/ChatGPT/leitor/.worktrees/physical-page-curl-design
+
+ ✓ src/rendering/pageTurn/webgl2.test.ts (5 tests) 9ms
+ ✓ src/rendering/pageTurn/PageTurnSurface.test.tsx (7 tests) 40ms
+
+ Test Files  2 passed (2)
+      Tests  12 passed (12)
+   Duration  913ms
+```
+
+### Build verification
+
+Command:
+
+```powershell
+npm.cmd run build
+```
+
+Output:
+
+```text
+> tactile-reader@0.1.0 build
+> tsc -b && vite build
+
+vite v7.3.6 building client environment for production...
+transforming...
+✓ 67 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.58 kB │ gzip:  0.34 kB
+dist/assets/index-BEkHeHK6.css   32.29 kB │ gzip:  7.24 kB
+dist/assets/index-B2yrrsqK.js   321.15 kB │ gzip: 99.89 kB
+✓ built in 1.38s
+```
+
+### Full suite verification
+
+Command:
+
+```powershell
+npm.cmd test
+```
+
+Output:
+
+```text
+> tactile-reader@0.1.0 test
+> vitest run
+
+ RUN  v3.2.7 C:/Users/adenilson.j/Documents/ChatGPT/leitor/.worktrees/physical-page-curl-design
+
+ Test Files  34 passed (34)
+      Tests  183 passed (183)
+   Duration  4.00s
 ```

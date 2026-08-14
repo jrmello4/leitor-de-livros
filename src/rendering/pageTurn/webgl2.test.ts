@@ -118,6 +118,18 @@ describe('createPageTurnWebGl2', () => {
     expect(canvas.dimensionAssignments()).toEqual(assignmentsAfterResize);
     expect(gl.framebufferSizedAllocations()).toBe(framebufferAllocsAfterResize);
   });
+
+  it('creates initial shadow resources even when resize is called with the cached logical size', async () => {
+    const gl = createRecordingWebGl2Context();
+    const canvas = canvasWith(gl, { width: 960, height: 1280, clientWidth: 960, clientHeight: 1280 });
+    const renderer = createPageTurnWebGl2(canvas);
+
+    expect(gl.framebufferSizedAllocations()).toBe(0);
+
+    renderer.resize({ width: 960, height: 1280, dpr: 1 });
+
+    expect(gl.framebufferSizedAllocations()).toBe(1);
+  });
 });
 
 function canvasWith(

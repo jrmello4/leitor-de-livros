@@ -327,6 +327,37 @@ describe('PageTurnSurface', () => {
     expect(view.canvas()).toBeNull();
     expect(backend.disposeScene).toHaveBeenCalledTimes(1);
   });
+
+  it('propagates active viewport and dpr changes through the explicit resize path', async () => {
+    Object.defineProperty(window, 'devicePixelRatio', { value: 1, configurable: true });
+    renderSurface(root, container, {
+      scene: scene(),
+      generation: 13,
+      state: draggingState(0.44),
+      quality: 'balanced',
+      onReady: vi.fn(),
+      onSettled: vi.fn(),
+      onFailure: vi.fn(),
+      onMetrics: vi.fn(),
+    });
+
+    await settleAsyncEffects();
+    await flushAnimationFrame(rafQueue, 16.7);
+    const canvas = container.querySelector<HTMLCanvasElement>('[data-testid="page-turn-canvas"]');
+    expect(canvas).not.toBeNull();
+    expect(backend.resize).toHaveBeenCalledTimes(1);
+
+    Object.defineProperty(canvas!, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ width: 720, height: 960 }),
+    });
+    Object.defineProperty(window, 'devicePixelRatio', { value: 2, configurable: true });
+
+    await flushAnimationFrame(rafQueue, 33.4);
+
+    expect(backend.resize).toHaveBeenCalledTimes(2);
+    expect(backend.resize).toHaveBeenLastCalledWith({ width: 720, height: 960, dpr: 2 });
+  });
 });
 
 function renderSurface(root: Root, container: HTMLDivElement, props: ComponentProps<typeof PageTurnSurface>) {

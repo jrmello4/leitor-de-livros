@@ -166,9 +166,7 @@ export function createPageTurnWebGl2(canvas: HTMLCanvasElement): PageTurnBackend
     }
 
     const nextSize = resolveSurfaceSize(viewport);
-    if (surfaceSize.width === nextSize.width && surfaceSize.height === nextSize.height) {
-      return;
-    }
+    const sameSize = surfaceSize.width === nextSize.width && surfaceSize.height === nextSize.height;
 
     surfaceSize = nextSize;
     if (canvas.width !== nextSize.width) {
@@ -178,7 +176,9 @@ export function createPageTurnWebGl2(canvas: HTMLCanvasElement): PageTurnBackend
       canvas.height = nextSize.height;
     }
 
-    recreateShadowResources(nextSize);
+    if (!sameSize || !shadowTexture || !shadowFramebuffer) {
+      recreateShadowResources(nextSize);
+    }
   }
 
   function recreateShadowResources(nextSize: SurfaceSize): void {

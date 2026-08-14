@@ -12,6 +12,7 @@ import {
   type PageTurnRenderFrame,
   type PageTurnSettled,
   type PageTurnSurfaceState,
+  type PageTurnViewport,
 } from './contracts';
 import { PageTurnTextureCache, type PreparedPageImage } from './textures';
 import { createPageTurnWebGl2 } from './webgl2';
@@ -44,6 +45,7 @@ export function PageTurnSurface({
   const backendRef = useRef<PageTurnBackend | undefined>(undefined);
   const frameRef = useRef<PageTurnRenderFrame | undefined>(undefined);
   const rafRef = useRef<number | undefined>(undefined);
+  const configuredViewportRef = useRef<PageTurnViewport | undefined>(undefined);
   const textureMetaRef = useRef({ count: 0, bytes: 0 });
   const settledRef = useRef<string | undefined>(undefined);
   const [backendKind, setBackendKind] = useState<PageTurnBackend['kind']>('webgl2');
@@ -61,6 +63,7 @@ export function PageTurnSurface({
       if (!active) {
         setPreparedGeneration(undefined);
         settledRef.current = undefined;
+        configuredViewportRef.current = undefined;
       }
       return undefined;
     }
@@ -80,6 +83,7 @@ export function PageTurnSurface({
       cancelled = true;
       cancelAnimationFrameSafe(rafRef.current);
       backend.disposeScene();
+      configuredViewportRef.current = undefined;
       textureMetaRef.current = { count: 0, bytes: 0 };
       textureCache.releaseGeneration(generation);
       setPreparedGeneration((current) => (current === generation ? undefined : current));
@@ -116,7 +120,7 @@ export function PageTurnSurface({
       if (cancelled) {
         return;
       }
-      backend.resize(viewportForCanvas(canvas));
+      ensureConfiguredViewport(backend, viewportForCanvas(canvas), configuredViewportRef);
       if (cancelled) {
         return;
       }
@@ -139,6 +143,7 @@ export function PageTurnSurface({
     return () => {
       cancelled = true;
       backend.disposeScene();
+      configuredViewportRef.current = undefined;
       textureMetaRef.current = { count: 0, bytes: 0 };
       textureCache.releaseGeneration(generation);
       canvas.removeEventListener('webglcontextlost', handleContextLoss);
@@ -158,8 +163,10 @@ export function PageTurnSurface({
         return;
       }
 
+      const viewport = viewportForCanvas(canvasRef.current);
+      ensureConfiguredViewport(backendRef.current, viewport, configuredViewportRef);
       const physicsFrame = state.frame ?? syntheticPhysicsFrame(state.direction, quality, state.progress);
-      const frame = buildFrame(state, quality, canvasRef.current, physicsFrame);
+      const frame = buildFrame(state, quality, viewport, physicsFrame);
       frameRef.current = frame;
 
       if (physicsFrame?.invalidReason) {
@@ -218,7 +225,7 @@ export function PageTurnSurface({
 function buildFrame(
   state: PageTurnSurfaceState,
   quality: RenderQuality,
-  canvas: HTMLCanvasElement,
+  viewport: PageTurnViewport,
   physics?: PageTurnPhysicsFrame,
 ): PageTurnRenderFrame {
   if (state.phase === 'idle') {
@@ -227,7 +234,7 @@ function buildFrame(
       controlPoints: new Float32Array(0),
       progress: 0,
       grabPoint: { x: 1, y: 0.5 },
-      viewport: viewportForCanvas(canvas),
+      viewport,
       luminance: PAGE_TURN_LUMINANCE_BOUNDS,
       quality,
     };
@@ -240,7 +247,7 @@ function buildFrame(
     controlPoints: resolvedPhysics.controlPoints,
     progress: state.progress,
     grabPoint: resolvedPhysics.grabPoint,
-    viewport: viewportForCanvas(canvas),
+    viewport,
     luminance: PAGE_TURN_LUMINANCE_BOUNDS,
     quality,
   };
@@ -312,4 +319,23 @@ function cancelAnimationFrameSafe(id: number | undefined): void {
   if (id !== undefined && typeof globalThis.cancelAnimationFrame === 'function') {
     globalThis.cancelAnimationFrame(id);
   }
+}
+
+function ensureConfiguredViewport(
+  backend: PageTurnBackend,
+  viewport: PageTurnViewport,
+  ref: { current: PageTurnViewport | undefined },
+): void {
+  if (sameViewport(ref.current, viewport)) {
+    return;
+  }
+
+  backend.resize(viewport);
+  ref.current = viewport;
+}
+
+function sameViewport(left: PageTurnViewport | undefined, right: PageTurnViewport): boolean {
+  return left?.width === right.width
+    && left?.height === right.height
+    && left?.dpr === right.dpr;
 }
