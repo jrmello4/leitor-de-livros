@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { mostRecentPublication, safeSourceName, visiblePublications as getVisiblePublications, type LibrarySort } from '../domain/library';
+import { publicationCoverSrc } from '../domain/covers';
 import type { Publication } from '../domain/types';
 import { t } from '../i18n/catalog';
 
@@ -19,6 +20,10 @@ interface LibraryViewProps {
   onOpenSettings: () => void;
   onToggleFavorite: (publication: Publication) => void | Promise<void>;
   onDelete: (publication: Publication) => void | Promise<void>;
+  onReplaceCover: (publication: Publication, file: File) => void | Promise<void>;
+  onCoverError?: (publication: Publication) => void;
+  onChooseNativeCover: (publication: Publication) => void | Promise<void>;
+  onResetCover: (publication: Publication) => void | Promise<void>;
   favoriteOnly: boolean;
   onFavoriteOnlyChange: (favoriteOnly: boolean) => void;
   settingsTriggerRef: RefObject<HTMLButtonElement | null>;
@@ -44,6 +49,10 @@ export function LibraryView({
   onOpenSettings,
   onToggleFavorite,
   onDelete,
+  onReplaceCover,
+  onCoverError = () => undefined,
+  onChooseNativeCover,
+  onResetCover,
   favoriteOnly,
   onFavoriteOnlyChange,
   settingsTriggerRef,
@@ -126,6 +135,14 @@ export function LibraryView({
   const onFileInput = (event: React.ChangeEvent<HTMLInputElement>) => {
     onImport(Array.from(event.target.files ?? []));
     event.target.value = '';
+  };
+
+  const onCoverFile = (publication: Publication, event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (file) {
+      void onReplaceCover(publication, file);
+    }
   };
 
   const onDrop = (event: React.DragEvent<HTMLElement>) => {
@@ -265,9 +282,26 @@ export function LibraryView({
       {visiblePublications.length > 0 ? (
         <section className="publication-grid" aria-label={t('library.publicationsAria')}>
           {visiblePublications.map((publication) => (
-            <article className="publication-card" key={publication.id}>
+            <article
+              className="publication-card"
+              key={publication.id}
+              data-testid="library-publication-card"
+              data-publication-id={publication.id}
+              data-publication-format={publication.format}
+              data-publication-source={publication.sourceLabel}
+            >
               <button className="cover-button" type="button" onClick={() => onOpen(publication)} aria-label={t('library.open', { title: publication.title })}>
-                <img src={publication.pages[0]?.src} alt="" />
+                <img
+                  src={publicationCoverSrc(publication)}
+                  alt=""
+                  onError={(event) => {
+                    event.currentTarget.onerror = null;
+                    event.currentTarget.src = publication.pages[0]?.src ?? '';
+                    if (publication.customCover) {
+                      onCoverError(publication);
+                    }
+                  }}
+                />
                 <span className="cover-edge" aria-hidden="true" />
                 <span className="cover-stamp">{publication.format === 'demo' ? t('library.study') : publication.format.toUpperCase()}</span>
               </button>
@@ -289,6 +323,24 @@ export function LibraryView({
                   <button className="open-link" type="button" onClick={() => onOpen(publication)}>{t('library.openLabel')} <span aria-hidden="true">↗</span></button>
                 </div>
               </div>
+              <div className="cover-actions">
+                {isNativeRuntime ? (
+                  <button className="quiet-button" type="button" onClick={() => void onChooseNativeCover(publication)}>
+                    {publication.customCover ? t('library.replaceCover') : t('library.chooseCover')}
+                  </button>
+                ) : (
+                  <label className="quiet-button cover-file-button">
+                    {publication.customCover ? t('library.replaceCover') : t('library.chooseCover')}
+                    <input type="file" accept="image/avif,image/gif,image/jpeg,image/png,image/webp" onChange={(event) => onCoverFile(publication, event)} />
+                  </label>
+                )}
+                {(publication.customCover || publication.diagnostic?.toLowerCase().includes('custom cover')) && (
+                  <button className="quiet-button" type="button" aria-label={t('library.resetCover')} onClick={() => void onResetCover(publication)}>
+                    {t('library.resetCover')}
+                  </button>
+                )}
+              </div>
+              {publication.diagnostic && <p className="diagnostic-banner publication-diagnostic" role="alert">{publication.diagnostic}</p>}
               <div className="progress-line" aria-label={formatProgress(publication.progress)}>
                 <span style={{ width: `${publication.progress * 100}%` }} />
               </div>
@@ -298,6 +350,7 @@ export function LibraryView({
                 <button
                   className="delete-link"
                   type="button"
+                  data-testid="library-publication-remove"
                   aria-label={t('library.removeAria', { title: publication.title })}
                   onClick={(event) => {
                     deleteTriggerRef.current = event.currentTarget;
@@ -358,6 +411,7 @@ export function LibraryView({
               <button
                 className="primary-button"
                 type="button"
+                data-testid="library-remove-confirm"
                 disabled={isDeleting}
                 aria-label={t('library.removeConfirm', { title: pendingDelete.title })}
                 onClick={confirmDelete}

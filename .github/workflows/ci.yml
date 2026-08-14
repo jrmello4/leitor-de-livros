@@ -5,6 +5,19 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      performance_gpu_class:
+        description: 'Reference GPU class for the manual performance run'
+        required: true
+        type: choice
+        options:
+          - integrated
+          - dedicated
+      performance_runner:
+        description: 'Runner label or self-hosted runner name for the reference machine'
+        required: true
+        default: windows-latest
+        type: string
 
 permissions:
   contents: read
@@ -36,6 +49,18 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+
+      - name: Validate release scripts
+        run: npm run test:release-scripts
+
+      - name: Validate installed app harness
+        run: npm run test:installed-app-harness
+
+      - name: Validate performance contract
+        run: npm run test:performance-contract
+
+      - name: Validate workflow structure
+        run: npm run test:workflow
 
   native:
     name: Rust and Tauri Windows verification
@@ -79,3 +104,123 @@ jobs:
           path: src-tauri/target/release/bundle/**
           if-no-files-found: error
           retention-days: 14
+
+  visual:
+    name: Reader visual matrix evidence
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium
+
+      - name: Run visual matrix
+        run: npm run test:visual
+
+      - name: Upload visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tactile-reader-visual-evidence
+          path: |
+            artifacts/visual/**
+            test-results/visual/**
+          if-no-files-found: warn
+          retention-days: 14
+
+  installer-smoke:
+    name: Windows installer smoke evidence
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium
+
+      - name: Run installer smoke
+        env:
+          SMOKE_EVIDENCE_DIR: ${{ github.workspace }}/artifacts/installer-smoke
+        run: npm run test:installer-smoke
+
+      - name: Upload installer smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tactile-reader-installer-smoke-evidence
+          path: |
+            artifacts/installer-smoke/**
+            src-tauri/target/release/bundle/**
+          if-no-files-found: warn
+          retention-days: 14
+
+  performance:
+    name: Reference hardware performance evidence
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ${{ inputs.performance_runner }}
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium
+
+      - name: Validate performance contract
+        run: npm run test:performance-contract
+
+      - name: Run reference performance matrix
+        env:
+          PERFORMANCE_GPU_CLASS: ${{ inputs.performance_gpu_class }}
+          PERFORMANCE_RUNNER_LABEL: ${{ inputs.performance_runner }}
+          PERFORMANCE_REPORT_DIR: ${{ github.workspace }}/artifacts/performance
+        run: npm run test:performance
+
+      - name: Upload performance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tactile-reader-performance-${{ inputs.performance_gpu_class }}
+          path: |
+            artifacts/performance/**
+            src-tauri/target/release/bundle/**
+          if-no-files-found: warn
+          retention-days: 30

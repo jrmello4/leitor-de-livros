@@ -9,6 +9,9 @@ import {
   saveFavorite,
   saveReaderState,
   saveProfileStore,
+  loadCustomCover,
+  saveCustomCover,
+  clearCustomCover,
 } from './storage';
 import { createDefaultProfileStore } from '../domain/profiles';
 import { defaultReaderState } from '../domain/readerState';
@@ -94,5 +97,28 @@ describe('browser fallback storage', () => {
 
     expect(store.profiles[0]).toMatchObject({ name: 'Recovered profile', direction: 'rtl' });
     expect(JSON.parse(window.localStorage.getItem('tactile-reader/profiles/v2') ?? '{}').version).toBe(2);
+  });
+
+  it('round-trips and clears a custom cover without changing other publication metadata', () => {
+    const cover = { src: 'data:image/png;base64,AA==', sourceName: 'replacement.png' };
+    saveFavorite('book-a', true);
+    saveCustomCover('book-a', cover);
+
+    expect(loadCustomCover('book-a')).toEqual(cover);
+    expect(loadFavorites()).toEqual(['book-a']);
+
+    clearCustomCover('book-a');
+    expect(loadCustomCover('book-a')).toBeUndefined();
+    expect(loadFavorites()).toEqual(['book-a']);
+  });
+
+  it('keeps valid covers when another persisted cover is malformed', () => {
+    window.localStorage.setItem('tactile-reader/custom-covers/v1', JSON.stringify({
+      valid: { src: 'data:image/png;base64,AA==', sourceName: 'valid.png' },
+      invalid: { src: 'https://example.com/cover.png', sourceName: 'invalid.png' },
+    }));
+
+    expect(loadCustomCover('valid')).toEqual({ src: 'data:image/png;base64,AA==', sourceName: 'valid.png' });
+    expect(loadCustomCover('invalid')).toBeUndefined();
   });
 });

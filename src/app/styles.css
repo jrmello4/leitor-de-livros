@@ -818,6 +818,28 @@ img {
     #0a1319;
 }
 
+.cover-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.cover-file-button {
+  position: relative;
+  cursor: pointer;
+}
+
+.cover-file-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .reader-view[data-layout-zone="bottom"] {
   grid-template-rows: 1fr 82px 72px;
 }
@@ -1573,6 +1595,17 @@ html:fullscreen .reader-controls:focus-within {
   background: var(--copper);
 }
 
+.page-thumb__bookmark-label {
+  width: 100%;
+  margin-top: 6px;
+  padding: 4px 5px;
+  border: 1px solid var(--line);
+  background: var(--night-soft);
+  color: var(--mist);
+  font-family: var(--utility);
+  font-size: 9px;
+}
+
 .zoom-controls {
   position: absolute;
   z-index: 7;
@@ -1765,6 +1798,27 @@ html:fullscreen .reader-controls:focus-within {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
   margin-top: 14px;
+}
+
+.profile-transfer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.profile-import-button {
+  position: relative;
+  cursor: pointer;
+}
+
+.profile-import-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
 }
 
 .profile-actions button {

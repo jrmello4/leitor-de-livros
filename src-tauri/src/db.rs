@@ -4,6 +4,7 @@ use std::{
     sync::Mutex,
 };
 
+use image::{ImageFormat, ImageReader};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
@@ -21,7 +22,10 @@ const CACHE_MISSING_DIAGNOSTIC: &str =
 #[allow(dead_code)]
 const CACHE_UNREBUILDABLE_DIAGNOSTIC: &str =
     "The derived page cannot be reconstructed because its source reference is unavailable.";
-const MIGRATION_VERSION: i64 = 4;
+const CUSTOM_COVER_MISSING_DIAGNOSTIC: &str =
+    "The custom cover is unavailable; the original publication cover is shown.";
+const MIGRATION_VERSION: i64 = 5;
+const MAX_CUSTOM_COVER_BYTES: u64 = 10 * 1024 * 1024;
 
 pub struct LibraryDb {
     connection: Mutex<Connection>,
@@ -63,7 +67,8 @@ impl LibraryDb {
             .map_err(|_| CoreError::from("database lock poisoned"))?;
         let mut statement = connection.prepare(
             "SELECT id, title, source_label, format, cover_page_id, direction,
-                    added_at, updated_at, is_favorite, diagnostic
+                    added_at, updated_at, is_favorite, diagnostic,
+                    custom_cover_cache, custom_cover_name
                FROM publications
               ORDER BY updated_at DESC, title COLLATE NOCASE ASC",
         )?;
@@ -79,6 +84,8 @@ impl LibraryDb {
                 updated_at: row.get(7)?,
                 is_favorite: row.get::<_, i64>(8)? != 0,
                 diagnostic: row.get(9)?,
+                custom_cover_cache: row.get(10)?,
+                custom_cover_name: row.get(11)?,
             })
         })?;
 
@@ -97,7 +104,8 @@ impl LibraryDb {
         let row = connection
             .query_row(
                 "SELECT id, title, source_label, format, cover_page_id, direction,
-                        added_at, updated_at, is_favorite, diagnostic
+                        added_at, updated_at, is_favorite, diagnostic,
+                        custom_cover_cache, custom_cover_name
                    FROM publications
                   WHERE source_path = ?1",
                 [source_path],
@@ -113,6 +121,8 @@ impl LibraryDb {
                         updated_at: row.get(7)?,
                         is_favorite: row.get::<_, i64>(8)? != 0,
                         diagnostic: row.get(9)?,
+                        custom_cover_cache: row.get(10)?,
+                        custom_cover_name: row.get(11)?,
                     })
                 },
             )
@@ -135,8 +145,9 @@ impl LibraryDb {
         transaction.execute(
             "INSERT INTO publications
                 (id, title, source_label, format, source_path, cover_page_id,
-                 direction, added_at, updated_at, diagnostic)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                 direction, added_at, updated_at, diagnostic,
+                 custom_cover_source, custom_cover_cache, custom_cover_name)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, NULL, NULL)",
             params![
                 publication.id,
                 publication.title,
@@ -236,6 +247,186 @@ impl LibraryDb {
             "UPDATE publications SET is_favorite = ?1, updated_at = ?2 WHERE id = ?3",
             params![if is_favorite { 1 } else { 0 }, now(), publication_id],
         )?;
+        Ok(())
+    }
+
+    pub fn set_custom_cover(&self, publication_id: &str, source_path: &str) -> CoreResult<()> {
+        let source = Path::new(source_path)
+            .canonicalize()
+            .map_err(|_| CoreError::from("custom cover source is unavailable"))?;
+        let metadata = std::fs::metadata(&source)?;
+        if !metadata.is_file() {
+            return Err(CoreError::from("custom cover source is not a file"));
+        }
+        if metadata.len() == 0 || metadata.len() > MAX_CUSTOM_COVER_BYTES {
+            return Err(CoreError::from("custom cover exceeds the 10 MiB limit"));
+        }
+        let image = ImageReader::open(&source)?
+            .with_guessed_format()?
+            .decode()?;
+        let source_name = source
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| CoreError::from("custom cover name is invalid"))?;
+        let publication_cache_dir = self.publication_cache_dir(publication_id)?;
+        std::fs::create_dir_all(&publication_cache_dir)?;
+        let target = publication_cache_dir.join("custom-cover.png");
+        let temporary = publication_cache_dir.join(format!(".custom-cover.{}.tmp", now()));
+        image.save_with_format(&temporary, ImageFormat::Png)?;
+
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| CoreError::from("database lock poisoned"))?;
+        let exists = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM publications WHERE id = ?1)",
+            [publication_id],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !exists {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(CoreError::from("publication does not exist"));
+        }
+
+        let backup = publication_cache_dir.join(format!(".custom-cover.{}.bak", now()));
+        if target.exists() {
+            std::fs::rename(&target, &backup)?;
+        }
+        if let Err(error) = std::fs::rename(&temporary, &target) {
+            if backup.exists() {
+                let _ = std::fs::rename(&backup, &target);
+            }
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error.into());
+        }
+
+        let transaction_result = (|| -> CoreResult<()> {
+            let transaction = connection.transaction()?;
+            transaction.execute(
+                "UPDATE publications
+                    SET custom_cover_source = ?1,
+                        custom_cover_cache = ?2,
+                        custom_cover_name = ?3,
+                        updated_at = ?4
+                  WHERE id = ?5",
+                params![
+                    source.to_string_lossy().as_ref(),
+                    target.to_string_lossy().as_ref(),
+                    source_name,
+                    now(),
+                    publication_id,
+                ],
+            )?;
+            transaction.commit()?;
+            Ok(())
+        })();
+        if let Err(error) = transaction_result {
+            let _ = std::fs::remove_file(&target);
+            if backup.exists() {
+                let _ = std::fs::rename(&backup, &target);
+            }
+            return Err(error);
+        }
+        let _ = std::fs::remove_file(&backup);
+        Ok(())
+    }
+
+    pub fn clear_custom_cover(&self, publication_id: &str) -> CoreResult<()> {
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| CoreError::from("database lock poisoned"))?;
+        let (cache_path, source_path, source_name) = connection
+            .query_row(
+                "SELECT custom_cover_cache, custom_cover_source, custom_cover_name
+                   FROM publications WHERE id = ?1",
+                [publication_id],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or_else(|| CoreError::from("publication does not exist or has no custom cover"))?;
+        let cache_root = self.cache_dir.canonicalize()?;
+        let source_canonical = source_path
+            .as_deref()
+            .and_then(|path| Path::new(path).canonicalize().ok());
+        let cover_target = cache_path
+            .as_deref()
+            .and_then(|path| Path::new(path).canonicalize().ok())
+            .filter(|path| {
+                path.starts_with(&cache_root)
+                    && path.is_file()
+                    && source_canonical.as_ref() != Some(path)
+            });
+        let mut staged_cover: Option<(PathBuf, PathBuf)> = None;
+        if let Some(target) = cover_target {
+            let backup = target.with_file_name(format!(".custom-cover-clear-{}.bak", now()));
+            std::fs::rename(&target, &backup)?;
+            staged_cover = Some((target, backup));
+        }
+
+        let transaction_result = (|| -> CoreResult<()> {
+            let transaction = connection.transaction()?;
+            let changed = transaction.execute(
+                "UPDATE publications
+                    SET custom_cover_source = NULL,
+                        custom_cover_cache = NULL,
+                        custom_cover_name = NULL,
+                        updated_at = ?1
+                  WHERE id = ?2",
+                params![now(), publication_id],
+            )?;
+            if changed != 1 {
+                return Err(CoreError::from("publication does not exist"));
+            }
+            transaction.commit()?;
+            Ok(())
+        })();
+        if let Err(error) = transaction_result {
+            if let Some((target, backup)) = staged_cover.take() {
+                if let Err(restore_error) = std::fs::rename(backup, target) {
+                    return Err(format!(
+                        "custom cover reset failed: {error}; rollback failed: {restore_error}"
+                    )
+                    .into());
+                }
+            }
+            return Err(error);
+        }
+
+        if let Some((target, backup)) = staged_cover {
+            if let Err(error) = std::fs::remove_file(&backup) {
+                let restore_file = std::fs::rename(&backup, &target);
+                if let Err(restore_error) = restore_file {
+                    return Err(format!(
+                        "custom cover cleanup failed: {error}; file rollback failed: {restore_error}"
+                    )
+                    .into());
+                }
+                let restore_metadata = (|| -> CoreResult<()> {
+                    let transaction = connection.transaction()?;
+                    transaction.execute(
+                        "UPDATE publications
+                            SET custom_cover_source = ?1,
+                                custom_cover_cache = ?2,
+                                custom_cover_name = ?3,
+                                updated_at = ?4
+                          WHERE id = ?5",
+                        params![source_path, cache_path, source_name, now(), publication_id],
+                    )?;
+                    transaction.commit()?;
+                    Ok(())
+                })();
+                restore_metadata?;
+                return Err(error.into());
+            }
+        }
         Ok(())
     }
 
@@ -1093,6 +1284,22 @@ impl LibraryDb {
             vec![row.source_label.clone()]
         };
 
+        let custom_cover_path = row
+            .custom_cover_cache
+            .as_deref()
+            .and_then(|path| self.valid_custom_cover_path(path));
+        let mut diagnostic = row.diagnostic;
+        if row.custom_cover_cache.is_some() && custom_cover_path.is_none() {
+            diagnostic = Some(match diagnostic {
+                Some(existing) if !existing.contains(CUSTOM_COVER_MISSING_DIAGNOSTIC) => {
+                    format!("{existing} {CUSTOM_COVER_MISSING_DIAGNOSTIC}")
+                }
+                Some(existing) => existing,
+                None => CUSTOM_COVER_MISSING_DIAGNOSTIC.to_owned(),
+            });
+        }
+        let has_custom_cover_path = custom_cover_path.is_some();
+
         Ok(NativePublication {
             id: row.id,
             title: row.title,
@@ -1106,9 +1313,31 @@ impl LibraryDb {
             added_at: row.added_at,
             updated_at: row.updated_at,
             is_favorite: row.is_favorite,
-            diagnostic: row.diagnostic,
+            diagnostic,
+            custom_cover_path,
+            custom_cover_name: if has_custom_cover_path {
+                row.custom_cover_name
+            } else {
+                None
+            },
             pages,
         })
+    }
+
+    fn valid_custom_cover_path(&self, path: &str) -> Option<String> {
+        let candidate = Path::new(path);
+        let cache_root = self.cache_dir.canonicalize().ok()?;
+        let canonical = candidate.canonicalize().ok()?;
+        if !canonical.starts_with(cache_root) || !canonical.is_file() {
+            return None;
+        }
+        ImageReader::open(&canonical)
+            .ok()?
+            .with_guessed_format()
+            .ok()?
+            .decode()
+            .ok()?;
+        canonical.to_str().map(str::to_owned)
     }
 }
 
@@ -1124,6 +1353,8 @@ struct PublicationRow {
     updated_at: String,
     is_favorite: bool,
     diagnostic: Option<String>,
+    custom_cover_cache: Option<String>,
+    custom_cover_name: Option<String>,
 }
 
 fn migrate(connection: &mut Connection) -> CoreResult<()> {
@@ -1269,10 +1500,29 @@ fn migrate(connection: &mut Connection) -> CoreResult<()> {
         )?;
     }
 
-    if current_version < MIGRATION_VERSION {
+    if current_version < 4 {
         backfill_deterministic_source_refs(&transaction)?;
         transaction.execute(
             "INSERT INTO schema_migrations (version, applied_at) VALUES (4, ?1)",
+            params![now()],
+        )?;
+    }
+
+    if current_version < MIGRATION_VERSION {
+        for (column, definition) in [
+            ("custom_cover_source", "TEXT"),
+            ("custom_cover_cache", "TEXT"),
+            ("custom_cover_name", "TEXT"),
+        ] {
+            if !column_exists(&transaction, "publications", column)? {
+                transaction.execute(
+                    &format!("ALTER TABLE publications ADD COLUMN {column} {definition}"),
+                    [],
+                )?;
+            }
+        }
+        transaction.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (5, ?1)",
             params![now()],
         )?;
     }
@@ -1458,6 +1708,19 @@ fn canonical_origin_paths(connection: &Connection) -> CoreResult<HashSet<PathBuf
         source_paths
             .iter()
             .filter_map(|source_path| legacy_origin_path(source_path))
+            .filter_map(|path| path.canonicalize().ok()),
+    );
+    let mut statement = connection.prepare(
+        "SELECT custom_cover_source FROM publications
+          WHERE custom_cover_source IS NOT NULL AND custom_cover_source <> ''",
+    )?;
+    let custom_cover_sources = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    origin_paths.extend(
+        custom_cover_sources
+            .iter()
+            .map(Path::new)
             .filter_map(|path| path.canonicalize().ok()),
     );
     Ok(origin_paths)
@@ -1688,8 +1951,15 @@ fn validate_profile_object(
         "toggle_fullscreen",
         "toggle_settings",
         "toggle_spread",
+        "toggle_navigator",
+        "toggle_bookmark",
         "cancel",
     ] {
+        if bindings.get(action).is_none()
+            && matches!(action, "toggle_navigator" | "toggle_bookmark")
+        {
+            continue;
+        }
         let valid = bindings
             .get(action)
             .and_then(Value::as_array)
@@ -1889,6 +2159,63 @@ mod tests {
                 diagnostic: None,
             })
             .expect("insert publication");
+    }
+
+    fn write_test_png(path: &Path) {
+        use std::io::Cursor;
+
+        let mut bytes = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(3, 4)
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .expect("encode png");
+        std::fs::write(path, bytes.into_inner()).expect("write png");
+    }
+
+    #[test]
+    fn custom_cover_round_trip_preserves_original_and_cleans_derived_data() {
+        let root = temporary_root("custom-cover");
+        std::fs::create_dir_all(&root).expect("root");
+        let publication_source = root.join("publication.cbz");
+        let cover_source = root.join("replacement.png");
+        let original_bytes = b"original publication";
+        std::fs::write(&publication_source, original_bytes).expect("publication source");
+        write_test_png(&cover_source);
+        let database = LibraryDb::open(root.clone()).expect("database");
+        insert_test_publication(&database, &publication_source.to_string_lossy());
+
+        database
+            .set_custom_cover("publication-1", &cover_source.to_string_lossy())
+            .expect("set custom cover");
+        let publication = database
+            .list_publications()
+            .expect("publications")
+            .remove(0);
+        assert_eq!(
+            publication.custom_cover_name.as_deref(),
+            Some("replacement.png")
+        );
+        assert!(publication
+            .custom_cover_path
+            .as_deref()
+            .is_some_and(|path| Path::new(path).exists()));
+        assert_eq!(
+            std::fs::read(&publication_source).expect("source bytes"),
+            original_bytes
+        );
+
+        database
+            .clear_custom_cover("publication-1")
+            .expect("clear custom cover");
+        let cleared = database
+            .list_publications()
+            .expect("publications")
+            .remove(0);
+        assert!(cleared.custom_cover_path.is_none());
+        assert!(cleared.custom_cover_name.is_none());
+        assert!(cover_source.exists());
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
     }
 
     #[test]

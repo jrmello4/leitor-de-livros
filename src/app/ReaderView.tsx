@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent, RefObject, WheelEvent } from 'react';
 import { t } from '../i18n/catalog';
+import { resolvePageTurn, type PageTurnPhase } from '../domain/pageTurn';
 import { clamp, clampPan, clampZoomScale, navigationAvailability, pageCounter, visiblePageIndexes } from '../domain/reader';
 import { defaultReaderState, normalizeReaderState } from '../domain/readerState';
 import type { Bookmark, PageDescriptor, Publication, ReaderState, ReadingProfile, ZoomMode } from '../domain/types';
@@ -32,9 +33,13 @@ interface ReaderViewProps {
   onSaveReaderState: (state: ReaderState) => void;
   onSelectPage: (pageIndex: number) => void;
   onToggleBookmark: (pageId: string) => void;
+  onUpdateBookmarkLabel?: (pageId: string, label: string) => void;
+  navigatorVisible: boolean;
+  navigatorTriggerRef: RefObject<HTMLButtonElement | null>;
+  onToggleNavigator: () => void;
+  onCloseNavigator: () => void;
+  onRegisterTurnRequest?: (request: ((delta: number) => void) | null) => void;
 }
-
-type TurnPhase = 'idle' | 'dragging' | 'committing' | 'cancelling';
 
 function pageAspect(page?: PageDescriptor): number {
   if (!page || page.width <= 0 || page.height <= 0) {
@@ -72,16 +77,22 @@ export function ReaderView({
   onSaveReaderState,
   onSelectPage,
   onToggleBookmark,
+  onUpdateBookmarkLabel,
+  navigatorVisible,
+  navigatorTriggerRef,
+  onToggleNavigator,
+  onCloseNavigator,
+  onRegisterTurnRequest,
 }: ReaderViewProps) {
   const paperRef = useRef<HTMLDivElement>(null);
   const turnTimerRef = useRef<number | undefined>(undefined);
+  const turnRequestRef = useRef<(delta: number) => void>(() => undefined);
   const previousPageRef = useRef(publication.currentPage);
   const [dragProgress, setDragProgress] = useState(0);
   const [dragging, setDragging] = useState(false);
-  const [turnPhase, setTurnPhase] = useState<TurnPhase>('idle');
+  const [turnPhase, setTurnPhase] = useState<PageTurnPhase>('idle');
   const [pageChangeDirection, setPageChangeDirection] = useState<'forward' | 'backward' | null>(null);
   const [flowVisible, setFlowVisible] = useState(false);
-  const [navigatorVisible, setNavigatorVisible] = useState(false);
   const [localReaderState, setLocalReaderState] = useState<ReaderState>(() => normalizeReaderState(readerState ?? defaultReaderState));
   const [panDragging, setPanDragging] = useState(false);
   const spaceHeldRef = useRef(false);
@@ -262,7 +273,6 @@ export function ReaderView({
 
     if (
       event.button !== 0
-      || profile.reducedMotion
       || turnPhase !== 'idle'
       || isFlowInteraction(event)
       || !isTurnCorner(event)
@@ -297,6 +307,60 @@ export function ReaderView({
     setDragProgress(progressFromPointer(event));
   };
 
+  const requestTurn = (delta: number, phaseOverride?: PageTurnPhase, notifyBoundary = true) => {
+    if (delta === 0) {
+      return;
+    }
+
+    const available = delta > 0 ? canNext : canPrevious;
+    const decision = resolvePageTurn(
+      phaseOverride ?? turnPhase,
+      available,
+      profile.reducedMotion,
+      profile.pageTurnDuration,
+    );
+    if (decision.kind === 'ignored') {
+      return;
+    }
+
+    const callback = delta > 0 ? onNext : onPrevious;
+    const shouldNotify = decision.kind === 'commit' || (notifyBoundary && !available);
+    const finish = () => {
+      if (shouldNotify) {
+        callback();
+      }
+      setTurnPhase('idle');
+      setDragProgress(0);
+      turnTimerRef.current = undefined;
+    };
+
+    if (turnTimerRef.current !== undefined) {
+      window.clearTimeout(turnTimerRef.current);
+      turnTimerRef.current = undefined;
+    }
+
+    setDragging(false);
+    setTurnPhase(decision.kind === 'commit' ? 'committing' : 'cancelling');
+    setDragProgress(decision.kind === 'commit' ? 1 : 0);
+    if (decision.immediate) {
+      finish();
+      return;
+    }
+
+    turnTimerRef.current = window.setTimeout(finish, decision.duration);
+  };
+
+  turnRequestRef.current = (delta: number) => requestTurn(delta);
+
+  useEffect(() => {
+    if (!onRegisterTurnRequest) {
+      return undefined;
+    }
+
+    onRegisterTurnRequest((delta) => turnRequestRef.current(delta));
+    return () => onRegisterTurnRequest(null);
+  }, [onRegisterTurnRequest]);
+
   const finishDrag = (commit: boolean) => {
     if (turnPhase !== 'dragging') {
       return;
@@ -307,12 +371,27 @@ export function ReaderView({
     }
     const shouldCommit = commit && canNext;
     setDragging(false);
+
+    if (shouldCommit) {
+      setTurnPhase('idle');
+      setDragProgress(0);
+      requestTurn(1, 'idle', false);
+      return;
+    }
+
+    if (commit && !canNext) {
+      requestTurn(1, 'idle');
+      return;
+    }
+
     setTurnPhase(shouldCommit ? 'committing' : 'cancelling');
     setDragProgress(shouldCommit ? 1 : 0);
+    if (profile.reducedMotion) {
+      setTurnPhase('idle');
+      setDragProgress(0);
+      return;
+    }
     turnTimerRef.current = window.setTimeout(() => {
-      if (shouldCommit) {
-        onNext();
-      }
       setTurnPhase('idle');
       setDragProgress(0);
       turnTimerRef.current = undefined;
@@ -348,11 +427,7 @@ export function ReaderView({
     }
 
     event.preventDefault();
-    if (event.deltaY > 0) {
-      onNext();
-    } else {
-      onPrevious();
-    }
+    requestTurn(event.deltaY > 0 ? 1 : -1);
   };
 
   const changeZoomMode = (mode: ZoomMode) => {
@@ -415,7 +490,7 @@ export function ReaderView({
     >
       <header className="reader-topbar">
         <div className="reader-topbar-start">
-          <button className="reader-back" onClick={onBack} aria-label={t('reader.back')}>← <span>{t('reader.library')}</span></button>
+          <button className="reader-back" data-testid="reader-back" data-reader-control onClick={onBack} aria-label={t('reader.back')}>← <span>{t('reader.library')}</span></button>
           <span className="reader-divider" aria-hidden="true" />
           <div className="reader-title">
             <span className="eyebrow">{t('reader.nowReading')}</span>
@@ -423,13 +498,14 @@ export function ReaderView({
           </div>
         </div>
         <div className="reader-topbar-end">
-          <span className="reader-counter">{readerCounter}</span>
+          <span className="reader-counter" data-testid="reader-current-page" data-page-index={publication.currentPage}>{readerCounter}</span>
           <button
             className={`reader-tool reader-flow-toggle ${flowVisible ? 'reader-flow-toggle--active' : ''}`}
             type="button"
             onClick={() => setFlowVisible((current) => !current)}
             aria-pressed={flowVisible}
             aria-label={flowVisible ? t('reader.hideGuidance') : t('reader.showGuidance')}
+            data-reader-control
           >
             <span className="reader-tool-label">{t('reader.flow')}</span>
             <span className="reader-tool-symbol" aria-hidden="true">↘</span>
@@ -437,7 +513,8 @@ export function ReaderView({
           <button
             className={`reader-tool ${navigatorVisible ? 'reader-tool--active' : ''}`}
             type="button"
-            onClick={() => setNavigatorVisible((current) => !current)}
+            ref={navigatorTriggerRef}
+            onClick={onToggleNavigator}
             aria-pressed={navigatorVisible}
             aria-label={navigatorVisible ? t('reader.hideNavigator') : t('reader.showNavigator')}
             data-reader-control
@@ -456,11 +533,11 @@ export function ReaderView({
             <span className="reader-tool-label">{t('reader.bookmark')}</span>
             <span className="reader-tool-symbol" aria-hidden="true">{currentBookmarked ? '◆' : '◇'}</span>
           </button>
-          <button className="reader-tool" onClick={onToggleFullscreen} aria-label={t('reader.fullscreen')}>
+          <button className="reader-tool" data-testid="reader-fullscreen" data-reader-control onClick={onToggleFullscreen} aria-label={t('reader.fullscreen')}>
             <span className="reader-tool-label">{t('reader.fullscreen')}</span>
             <span className="reader-tool-symbol" aria-hidden="true">↗</span>
           </button>
-          <button ref={settingsTriggerRef} className="reader-tool" onClick={onToggleSettings} aria-label={t('reader.settings')}>
+          <button ref={settingsTriggerRef} className="reader-tool" data-reader-control onClick={onToggleSettings} aria-label={t('reader.settings')}>
             <span className="reader-tool-label">{t('reader.settings')}</span>
             <span className="reader-tool-symbol" aria-hidden="true">⌘</span>
           </button>
@@ -474,7 +551,9 @@ export function ReaderView({
           bookmarks={bookmarks}
           onSelectPage={onSelectPage}
           onToggleBookmark={onToggleBookmark}
-          onClose={() => setNavigatorVisible(false)}
+          onUpdateBookmarkLabel={onUpdateBookmarkLabel}
+          triggerRef={navigatorTriggerRef}
+          onClose={onCloseNavigator}
         />
       )}
 
@@ -491,6 +570,10 @@ export function ReaderView({
           }
         }}
         onWheel={onWheel}
+        data-testid="reader-stage"
+        data-turn-phase={turnPhase}
+        data-turn-direction={profile.direction}
+        data-turn-progress={dragProgress}
         aria-label={t('reader.canvas')}
       >
         <div className="stage-caption stage-caption--left">{profile.direction === 'rtl' ? t('reader.rightToLeft') : t('reader.leftToRight')}</div>
@@ -565,15 +648,15 @@ export function ReaderView({
       </section>
 
       <footer className="reader-controls">
-        <button className="nav-button" onClick={onPrevious} disabled={!canPrevious} aria-label={t('reader.previousAria')}>← <span>{t('reader.previous')}</span></button>
+        <button className="nav-button" data-testid="reader-previous" onClick={() => requestTurn(-1)} aria-disabled={!canPrevious} aria-label={t('reader.previousAria')}>← <span>{t('reader.previous')}</span></button>
         <div className="reader-progress" aria-label={t('reader.percentRead', { percent: Math.round(publication.progress * 100) })}>
           <div className="progress-track"><span style={{ width: `${publication.progress * 100}%` }} /></div>
           <span>{t('reader.percentComplete', { percent: Math.round(publication.progress * 100) })}</span>
         </div>
-        <button className="nav-button nav-button--forward" onClick={onNext} disabled={!canNext} aria-label={t('reader.nextAria')}><span>{t('reader.next')}</span> →</button>
+        <button className="nav-button nav-button--forward" data-testid="reader-next" onClick={() => requestTurn(1)} aria-disabled={!canNext} aria-label={t('reader.nextAria')}><span>{t('reader.next')}</span> →</button>
       </footer>
 
-      <p className="reader-announcement" aria-hidden="true">{announcement}</p>
+      <p className="reader-announcement" data-testid="reader-announcement" aria-hidden="true">{announcement}</p>
     </main>
   );
 }

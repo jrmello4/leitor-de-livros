@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createWebGl2Backend, createWebGpuBackend, type CanvasRenderer } from './backends';
 import type { RenderBackendKind, RenderFrame, RenderQuality, RendererStatus } from './contracts';
 import { adaptRenderQuality, FrameTelemetry } from './telemetry';
+import { parseVisualBackend } from '../release/testModes';
 
 interface ReaderSurfaceProps {
   frame: RenderFrame;
@@ -24,6 +25,10 @@ export function ReaderSurface({ frame, staticContent, ariaLabel, onStatus, inter
   const [quality, setQuality] = useState<RenderQuality>('rich');
   const [fps, setFps] = useState<number>();
   const [resizeVersion, setResizeVersion] = useState(0);
+  const forcedBackend = parseVisualBackend(
+    typeof window === 'undefined' ? '' : window.location.search,
+    import.meta.env.VITE_VISUAL_TEST === '1',
+  );
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -42,6 +47,10 @@ export function ReaderSurface({ frame, staticContent, ariaLabel, onStatus, inter
         setFps(undefined);
       }
     };
+    const useStaticWithFailure = (message: string) => {
+      failuresRef.current = [...failuresRef.current, message];
+      useStatic();
+    };
     const tryNext = (message: string) => {
       failuresRef.current = [...failuresRef.current, message];
       if (!disposed) {
@@ -49,7 +58,7 @@ export function ReaderSurface({ frame, staticContent, ariaLabel, onStatus, inter
       }
     };
 
-    if (attempt > 1) {
+    if (forcedBackend === 'static' || (forcedBackend === 'auto' && attempt > 1)) {
       useStatic();
       return () => {
         disposed = true;
@@ -58,8 +67,14 @@ export function ReaderSurface({ frame, staticContent, ariaLabel, onStatus, inter
 
     const initialize = async () => {
       try {
-        renderer = attempt === 0
-          ? await createWebGpuBackend(canvas, () => tryNext('WebGPU device was lost.'))
+        renderer = forcedBackend === 'webgpu' || (forcedBackend === 'auto' && attempt === 0)
+          ? await createWebGpuBackend(canvas, () => {
+              if (forcedBackend === 'auto') {
+                tryNext('WebGPU device was lost.');
+              } else {
+                useStaticWithFailure('Skipped ' + forcedBackend + ': WebGPU device was lost.');
+              }
+            })
           : createWebGl2Backend(canvas);
         if (disposed) {
           renderer.dispose();
@@ -70,7 +85,11 @@ export function ReaderSurface({ frame, staticContent, ariaLabel, onStatus, inter
         setQuality('rich');
         setFps(undefined);
       } catch (error) {
-        tryNext(failureMessage(error));
+        if (forcedBackend === 'auto') {
+          tryNext(failureMessage(error));
+        } else {
+          useStaticWithFailure('Skipped ' + forcedBackend + ': ' + failureMessage(error));
+        }
       }
     };
     void initialize();
@@ -82,7 +101,7 @@ export function ReaderSurface({ frame, staticContent, ariaLabel, onStatus, inter
         backendRef.current = undefined;
       }
     };
-  }, [attempt]);
+  }, [attempt, forcedBackend]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -104,13 +123,23 @@ export function ReaderSurface({ frame, staticContent, ariaLabel, onStatus, inter
       if (cancelled) {
         return;
       }
-      failuresRef.current = [...failuresRef.current, failureMessage(error)];
-      setAttempt((current) => Math.max(current, backend === 'webgpu' ? 1 : 2));
+      const message = failureMessage(error);
+      failuresRef.current = [
+        ...failuresRef.current,
+        forcedBackend === 'auto' ? message : 'Skipped ' + forcedBackend + ': ' + message,
+      ];
+      if (forcedBackend === 'auto') {
+        setAttempt((current) => Math.max(current, backend === 'webgpu' ? 1 : 2));
+      } else {
+        setBackend('static');
+        setQuality('essential');
+        setFps(undefined);
+      }
     });
     return () => {
       cancelled = true;
     };
-  }, [backend, frame, quality, resizeVersion]);
+  }, [backend, frame, forcedBackend, quality, resizeVersion]);
 
   useEffect(() => {
     if (backend === 'static' || typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {

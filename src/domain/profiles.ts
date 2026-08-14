@@ -23,6 +23,15 @@ export interface ProfileStore {
   profiles: NamedReadingProfile[];
 }
 
+export const PROFILE_TRANSFER_KIND = 'tactile-reading-profiles' as const;
+
+export interface ProfileTransferDocument {
+  kind: typeof PROFILE_TRANSFER_KIND;
+  version: typeof PROFILE_STORE_VERSION;
+  activeProfileId: string;
+  profiles: NamedReadingProfile[];
+}
+
 export type ProfileErrorKey =
   | 'profile.errorStoreVersion'
   | 'profile.errorActiveId'
@@ -60,6 +69,8 @@ const ACTION_NAMES: ActionName[] = [
   'toggle_fullscreen',
   'toggle_settings',
   'toggle_spread',
+  'toggle_navigator',
+  'toggle_bookmark',
   'cancel',
 ];
 
@@ -143,6 +154,61 @@ export function validateProfileStore(value: unknown): ProfileValidation {
   return {
     ok: true,
     value: { version: PROFILE_STORE_VERSION, activeProfileId: value.activeProfileId, profiles },
+  };
+}
+
+export function serializeProfileTransfer(store: ProfileStore): string {
+  const validation = validateProfileStore(store);
+  if (!validation.ok) {
+    throw new Error(validation.error);
+  }
+  const document: ProfileTransferDocument = {
+    kind: PROFILE_TRANSFER_KIND,
+    version: PROFILE_STORE_VERSION,
+    activeProfileId: validation.value.activeProfileId,
+    profiles: validation.value.profiles.map(cloneProfile),
+  };
+  return JSON.stringify(document, null, 2);
+}
+
+export function parseProfileTransfer(value: unknown): ProfileValidation {
+  const parsed = typeof value === 'string' ? parseTransferText(value) : value;
+  if (!isRecord(parsed) || parsed.kind !== PROFILE_TRANSFER_KIND || parsed.version !== PROFILE_STORE_VERSION) {
+    return { ok: false, error: 'profile.errorStoreVersion' };
+  }
+  return validateProfileStore({
+    version: PROFILE_STORE_VERSION,
+    activeProfileId: parsed.activeProfileId,
+    profiles: parsed.profiles,
+  });
+}
+
+export function mergeProfileStore(current: ProfileStore, imported: ProfileStore): ProfileMutation {
+  const currentValidation = validateProfileStore(current);
+  if (!currentValidation.ok) return currentValidation;
+  const importedValidation = validateProfileStore(imported);
+  if (!importedValidation.ok) return importedValidation;
+
+  const profiles = currentValidation.value.profiles.map(cloneProfile);
+  const usedIds = new Set(profiles.map((profile) => profile.id));
+  const usedNames = new Set(profiles.map((profile) => profile.name.toLocaleLowerCase()));
+
+  for (const importedProfile of importedValidation.value.profiles) {
+    const name = uniqueImportedName(importedProfile.name, usedNames);
+    const id = uniqueImportedId(importedProfile.id, usedIds);
+    const profile = { ...cloneProfile(importedProfile), id, name };
+    profiles.push(profile);
+    usedIds.add(id);
+    usedNames.add(name.toLocaleLowerCase());
+  }
+
+  return {
+    ok: true,
+    store: {
+      version: PROFILE_STORE_VERSION,
+      activeProfileId: currentValidation.value.activeProfileId,
+      profiles,
+    },
   };
 }
 
@@ -346,6 +412,41 @@ function normalizeLegacyProfile(value: Record<string, unknown>): NamedReadingPro
   return validated.ok ? validated.value : fallback;
 }
 
+function parseTransferText(value: string): unknown {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function uniqueImportedName(baseName: string, usedNames: Set<string>): string {
+  const normalizedBase = baseName.trim();
+  let suffix = 1;
+  while (true) {
+    const suffixText = suffix === 1 ? ' (imported)' : ` (imported ${suffix})`;
+    const availableBaseLength = Math.max(1, PROFILE_NAME_LIMIT - suffixText.length);
+    const truncatedBase = normalizedBase.slice(0, availableBaseLength).trim();
+    const candidate = `${truncatedBase}${suffixText}`;
+    if (!usedNames.has(candidate.toLocaleLowerCase())) {
+      return candidate;
+    }
+    suffix += 1;
+  }
+}
+
+function uniqueImportedId(baseId: string, usedIds: Set<string>): string {
+  const normalizedBase = `imported-${baseId}`.slice(0, 80);
+  let candidate = normalizedBase;
+  let suffix = 2;
+  while (usedIds.has(candidate) || !isValidId(candidate)) {
+    const suffixText = `-${suffix}`;
+    candidate = `${normalizedBase.slice(0, 80 - suffixText.length)}${suffixText}`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
 function normalizeLegacyBindings(value: unknown, fallback: BindingMap): BindingMap {
   if (!isRecord(value)) {
     return cloneBindings(fallback);
@@ -397,9 +498,10 @@ function isValidZoomScale(value: unknown): value is number {
 function isValidBindings(value: unknown): value is BindingMap {
   if (!isRecord(value)) return false;
   return ACTION_NAMES.every((action) => (
-    Array.isArray(value[action])
-      && value[action].length <= 2
-      && value[action].every((code) => typeof code === 'string' && code.length > 0 && code.length <= 64)
+    value[action] === undefined
+      || (Array.isArray(value[action])
+        && value[action].length <= 2
+        && value[action].every((code) => typeof code === 'string' && code.length > 0 && code.length <= 64))
   ));
 }
 

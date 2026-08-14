@@ -5,7 +5,10 @@ import {
   deleteProfile,
   duplicateProfile,
   getActiveProfile,
+  mergeProfileStore,
   migrateProfileStore,
+  parseProfileTransfer,
+  serializeProfileTransfer,
   renameProfile,
   selectProfile,
   validateProfileStore,
@@ -89,6 +92,49 @@ describe('named reading profiles', () => {
         profiles: [{ ...store.profiles[0], [field]: value }],
       };
       expect(validateProfileStore(candidate).ok).toBe(false);
+    }
+  });
+
+  it('exports preferences without history, paths, or diagnostics', () => {
+    const text = serializeProfileTransfer(createDefaultProfileStore());
+    const payload = JSON.parse(text) as Record<string, unknown>;
+
+    expect(payload.kind).toBe('tactile-reading-profiles');
+    expect(payload.version).toBe(2);
+    expect(text).not.toContain('sourcePath');
+    expect(text).not.toContain('progress');
+    expect(text).not.toContain('diagnostic');
+  });
+
+  it('rejects newer transfer schemas and deterministically renames conflicts', () => {
+    expect(parseProfileTransfer({ kind: 'tactile-reading-profiles', version: 99 })).toEqual({
+      ok: false,
+      error: 'profile.errorStoreVersion',
+    });
+
+    const current = createDefaultProfileStore();
+    const imported = createDefaultProfileStore();
+    const merged = mergeProfileStore(current, imported);
+    expect(merged.ok).toBe(true);
+    if (merged.ok) {
+      expect(merged.store.profiles.at(-1)?.name).toBe('Paper Atelier (imported)');
+      expect(merged.store.profiles.at(-1)?.id).not.toBe(current.profiles[0]?.id);
+    }
+  });
+
+  it('keeps imported conflict names within the profile limit after truncation', () => {
+    const current = createDefaultProfileStore();
+    const imported = createDefaultProfileStore();
+    const longName = 'a'.repeat(80);
+    current.profiles[0] = { ...current.profiles[0]!, name: `${'a'.repeat(69)} (imported)` };
+    imported.profiles[0] = { ...imported.profiles[0]!, name: longName };
+
+    const merged = mergeProfileStore(current, imported);
+    expect(merged.ok).toBe(true);
+    if (merged.ok) {
+      const importedName = merged.store.profiles.at(-1)!.name;
+      expect(importedName.length).toBeLessThanOrEqual(80);
+      expect(importedName).not.toBe(current.profiles[0]?.name);
     }
   });
 });

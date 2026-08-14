@@ -6,7 +6,8 @@ import {
   validateProfileStore,
 } from '../domain/profiles';
 import type { ReadingProfile } from '../domain/types';
-import type { Bookmark, ReaderState } from '../domain/types';
+import type { Bookmark, CustomCover, ReaderState } from '../domain/types';
+import { normalizeCustomCover } from '../domain/covers';
 import { defaultReaderState, normalizeReaderState } from '../domain/readerState';
 
 const PROFILE_KEY = 'tactile-reader/profile/v1';
@@ -15,6 +16,7 @@ const PROGRESS_KEY = 'tactile-reader/progress/v1';
 const FAVORITES_KEY = 'tactile-reader/favorites/v1';
 const BOOKMARKS_KEY = 'tactile-reader/bookmarks/v1';
 const READER_STATE_KEY = 'tactile-reader/reader-state/v1';
+const CUSTOM_COVERS_KEY = 'tactile-reader/custom-covers/v1';
 
 function getStorage(): Storage | null {
   try {
@@ -177,6 +179,25 @@ export function saveReaderState(publicationId: string, state: ReaderState): void
   saveValue(READER_STATE_KEY, { ...states, [publicationId]: normalizeReaderState(state) });
 }
 
+export function loadCustomCover(publicationId: string): CustomCover | undefined {
+  return loadCustomCoverMap()[publicationId];
+}
+
+export function saveCustomCover(publicationId: string, cover: CustomCover): boolean {
+  const normalized = normalizeCustomCover(cover);
+  if (!normalized) {
+    return false;
+  }
+  const covers = loadCustomCoverMap();
+  return saveValue(CUSTOM_COVERS_KEY, { ...covers, [publicationId]: normalized });
+}
+
+export function clearCustomCover(publicationId: string): boolean {
+  const covers = loadCustomCoverMap();
+  delete covers[publicationId];
+  return saveValue(CUSTOM_COVERS_KEY, covers);
+}
+
 /** Remove only browser-side metadata for a publication. Imported source files
  * are represented by object URLs and are never touched by this operation. */
 export function clearPublicationStorage(publicationId: string): void {
@@ -200,6 +221,8 @@ export function clearPublicationStorage(publicationId: string): void {
     const progress = loadValue(PROGRESS_KEY, {}, isRecord);
     delete progress[publicationId];
     saveValue(PROGRESS_KEY, progress);
+
+    clearCustomCover(publicationId);
   } catch {
     // Storage can be unavailable or quota-limited; the native caller reports
     // no destructive filesystem work even when metadata cleanup is skipped.
@@ -221,11 +244,16 @@ function loadValue<T>(key: string, fallback: T, isValid: (value: unknown) => val
   }
 }
 
-function saveValue(key: string, value: unknown): void {
+function saveValue(key: string, value: unknown): boolean {
   try {
-    getStorage()?.setItem(key, JSON.stringify(value));
+    const storage = getStorage();
+    if (!storage) {
+      return false;
+    }
+    storage.setItem(key, JSON.stringify(value));
+    return true;
   } catch {
-    return;
+    return false;
   }
 }
 
@@ -241,6 +269,29 @@ function isBookmark(value: unknown): value is Bookmark {
     && typeof value.label === 'string'
     && typeof value.createdAt === 'string'
     && typeof value.updatedAt === 'string';
+}
+
+function loadCustomCoverMap(): Record<string, CustomCover> {
+  const storage = getStorage();
+  if (!storage) {
+    return {};
+  }
+  try {
+    const parsed: unknown = JSON.parse(storage.getItem(CUSTOM_COVERS_KEY) ?? 'null');
+    if (!isRecord(parsed)) {
+      return {};
+    }
+    const covers: Record<string, CustomCover> = {};
+    for (const [publicationId, value] of Object.entries(parsed)) {
+      const cover = normalizeCustomCover(value);
+      if (cover) {
+        covers[publicationId] = cover;
+      }
+    }
+    return covers;
+  } catch {
+    return {};
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

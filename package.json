@@ -9,6 +9,14 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:visual": "playwright test tests/visual --config playwright.config.ts",
+    "test:installed-app-harness": "node --test scripts/windows/installed-app-harness.test.mjs",
+    "test:installer-smoke": "node scripts/release/installer-smoke.mjs",
+    "test:release-scripts": "node --test scripts/release/installer-smoke.check.mjs",
+    "test:performance-contract": "node --test scripts/performance/performance-contract.test.mjs scripts/performance/performance-fixtures.test.mjs scripts/performance/performance-navigation.test.mjs scripts/performance/performance-smoke.test.mjs",
+    "test:performance": "node scripts/performance/performance-smoke.mjs",
+    "performance:compare": "node scripts/performance/compare-performance.mjs",
+    "test:workflow": "node scripts/release/verify-workflow.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"
@@ -21,6 +29,7 @@
     "react-dom": "^19.1.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tauri-apps/cli": "^2.8.0",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
@@ -28,6 +37,7 @@
     "jsdom": "^26.1.0",
     "typescript": "~5.9.2",
     "vite": "^7.1.2",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "yaml": "^2.9.0"
   }
 }

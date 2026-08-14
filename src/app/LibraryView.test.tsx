@@ -48,6 +48,9 @@ function libraryProps(overrides: Partial<LibraryProps> = {}): LibraryProps {
     onOpenSettings: vi.fn(),
     onToggleFavorite: vi.fn(),
     onDelete: vi.fn(),
+    onReplaceCover: vi.fn(),
+    onChooseNativeCover: vi.fn(),
+    onResetCover: vi.fn(),
     favoriteOnly: false,
     onFavoriteOnlyChange: vi.fn(),
     settingsTriggerRef: { current: null },
@@ -239,6 +242,30 @@ describe('LibraryView favorites and safe deletion', () => {
     act(() => filter?.click());
 
     expect(onFavoriteOnlyChange).toHaveBeenCalledWith(true);
+  });
+
+  it('renders a custom cover and exposes replacement/reset controls', () => {
+    const book = { ...publication('book-a', 'Book A', false), customCover: { src: 'data:image/png;base64,AA==', sourceName: 'replacement.png' } };
+    const onResetCover = vi.fn();
+    root = renderLibrary(host, [book], { onResetCover });
+
+    expect(host.querySelector<HTMLImageElement>('.cover-button img')?.src).toContain('data:image/png;base64,AA==');
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="Use original cover"]')).not.toBeNull();
+    act(() => host.querySelector<HTMLButtonElement>('[aria-label="Use original cover"]')?.click());
+    expect(onResetCover).toHaveBeenCalledWith(book);
+  });
+
+  it('falls back to the original cover when a custom cover cannot load', () => {
+    const book = { ...publication('book-a', 'Book A', false), customCover: { src: 'data:image/png;base64,broken', sourceName: 'replacement.png' } };
+    const onCoverError = vi.fn();
+    root = renderLibrary(host, [book], { onCoverError });
+
+    const image = host.querySelector<HTMLImageElement>('.cover-button img');
+    expect(image).not.toBeNull();
+    act(() => image?.dispatchEvent(new Event('error', { bubbles: false })));
+
+    expect(image?.src).toContain('data:image/gif;base64');
+    expect(onCoverError).toHaveBeenCalledWith(book);
   });
 
   it('requires confirmation and explains that the original is preserved', async () => {
