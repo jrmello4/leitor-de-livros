@@ -140,3 +140,121 @@ Output:
 
 - Kept the implementation limited to the requested geometry/velocity module.
 - No unrelated files were modified.
+
+## Fix round 1
+
+Reviewer finding addressed:
+
+- `VelocityTracker.velocity()` still returns the raw px/s vector.
+- `VelocityTracker.velocityTowardDestination(pageWidth, direction)` now returns signed, normalized page-widths/second for release decisions.
+- Direction-aware tests cover LTR, RTL, page-width normalization, and away-from-destination negative/zero results.
+
+### Focused RED
+
+Command:
+
+```powershell
+npm.cmd test -- --configLoader runner src/domain/pageTurnGeometry.test.ts
+```
+
+Output:
+
+```text
+> tactile-reader@0.1.0 test
+> vitest run --configLoader runner src/domain/pageTurnGeometry.test.ts
+
+
+ RUN  v3.2.7 C:/Users/adenilson.j/Documents/ChatGPT/leitor/.worktrees/physical-page-curl-design
+
+ ❯ src/domain/pageTurnGeometry.test.ts (10 tests | 2 failed) 13ms
+   ✓ page turn geometry > clamps activation band width for page width 100 1ms
+   ✓ page turn geometry > clamps activation band width for page width 500 0ms
+   ✓ page turn geometry > clamps activation band width for page width 2000 0ms
+   ✓ page turn geometry > inverts zoom and pan before normalizing into page space 1ms
+   ✓ page turn geometry > accepts the full visible outer edge in LTR and mirrors it in RTL 1ms
+   ✓ page turn geometry > uses the clipped transformed edge instead of the full page edge 0ms
+   ✓ page turn geometry > returns a positive displacement toward the destination for both reading directions 0ms
+   ✓ page turn geometry > keeps velocity within a short window and returns zero for zero elapsed time 0ms
+   × page turn geometry > normalizes signed velocity toward the destination in LTR and RTL 5ms
+     → expected 10 to be close to 4, received difference is 6, but expected 0.005
+   × page turn geometry > returns zero or negative signed velocity when motion is away from the destination 3ms
+     → expected -0 to be +0 // Object.is equality
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 8 passed (10)
+```
+
+### Focused GREEN
+
+Command:
+
+```powershell
+npm.cmd test -- --configLoader runner src/domain/pageTurnGeometry.test.ts
+```
+
+Output:
+
+```text
+> tactile-reader@0.1.0 test
+> vitest run --configLoader runner src/domain/pageTurnGeometry.test.ts
+
+
+ RUN  v3.2.7 C:/Users/adenilson.j/Documents/ChatGPT/leitor/.worktrees/physical-page-curl-design
+
+ ✓ src/domain/pageTurnGeometry.test.ts (10 tests) 5ms
+
+ Test Files  1 passed (1)
+      Tests  10 passed (10)
+```
+
+### Full suite after fix
+
+Command:
+
+```powershell
+npm.cmd test -- --configLoader runner
+```
+
+Output:
+
+```text
+> tactile-reader@0.1.0 test
+> vitest run --configLoader runner
+
+
+ RUN  v3.2.7 C:/Users/adenilson.j/Documents/ChatGPT/leitor/.worktrees/physical-page-curl-design
+
+ ✓ src/domain/library.test.ts (6 tests) 34ms
+ ✓ src/app/nativeImportFlow.test.ts (4 tests) 8ms
+ ✓ src/domain/flow.test.ts (4 tests) 17ms
+ ✓ src/domain/pageTurn.test.ts (8 tests) 8ms
+ ✓ src/services/importers.test.ts (3 tests) 37ms
+ ✓ src/app/ZoomControls.test.tsx (3 tests) 89ms
+ ✓ src/services/storage.test.ts (7 tests) 16ms
+ ✓ src/app/LiveAnnouncement.test.tsx (3 tests) 56ms
+ ✓ src/app/SmokeHarness.test.tsx (9 tests) 152ms
+ ✓ src/services/readerState.test.ts (3 tests) 16ms
+ ✓ src/app/PageNavigator.test.tsx (6 tests) 191ms
+ ✓ src/app/ProfilePanel.test.tsx (4 tests) 246ms
+ ✓ src/app/LibraryView.test.tsx (12 tests) 635ms
+ ✓ src/app/AppNativeImport.test.tsx (7 tests) 404ms
+ ✓ src/app/AppAnnouncements.test.tsx (1 test) 766ms
+   ✓ application live-region wiring > announces reader navigation and renderer state through real consumers  764ms
+ ✓ src/domain/reader.test.ts (8 tests) 9ms
+ ✓ src/domain/profiles.test.ts (6 tests) 16ms
+ ✓ src/domain/pageSelection.test.ts (4 tests) 8ms
+ ✓ src/domain/pageTurnScene.test.ts (12 tests) 11ms
+ ✓ src/domain/input.test.ts (4 tests) 8ms
+ ✓ src/services/flowStorage.test.ts (1 test) 7ms
+ ✓ src/rendering/contracts.test.ts (3 tests) 7ms
+ ✓ src/domain/covers.test.ts (3 tests) 7ms
+ ✓ src/rendering/telemetry.test.ts (4 tests) 8ms
+ ✓ src/domain/readerState.test.ts (3 tests) 9ms
+ ✓ src/release/testModes.test.ts (7 tests) 8ms
+ ✓ src/i18n/catalog.test.ts (3 tests) 6ms
+ ✓ src/domain/pageTurnGeometry.test.ts (10 tests) 6ms
+ ✓ tests/visual/visual-matrix.test.ts (1 test) 2ms
+
+ Test Files  29 passed (29)
+      Tests  149 passed (149)
+```

@@ -66,4 +66,35 @@ describe('page turn geometry', () => {
 
     expect(zeroTime.velocity()).toEqual({ x: 0, y: 0 });
   });
+
+  it('normalizes signed velocity toward the destination in LTR and RTL', () => {
+    const ltr = new VelocityTracker();
+    ltr.push({ x: 400, y: 0 }, 0);
+    ltr.push({ x: 336, y: 0 }, 40);
+
+    const rtl = new VelocityTracker();
+    rtl.push({ x: 120, y: 0 }, 0);
+    rtl.push({ x: 176, y: 0 }, 40);
+
+    expect(ltr.velocityTowardDestination(400, 'ltr')).toBeCloseTo(4);
+    expect(rtl.velocityTowardDestination(400, 'rtl')).toBeCloseTo(3.5);
+  });
+
+  it('returns zero or negative signed velocity when motion is away from the destination', () => {
+    const awayLtr = new VelocityTracker();
+    awayLtr.push({ x: 240, y: 0 }, 0);
+    awayLtr.push({ x: 280, y: 0 }, 40);
+
+    const awayRtl = new VelocityTracker();
+    awayRtl.push({ x: 260, y: 0 }, 0);
+    awayRtl.push({ x: 220, y: 0 }, 40);
+
+    const stationary = new VelocityTracker();
+    stationary.push({ x: 100, y: 0 }, 50);
+    stationary.push({ x: 100, y: 0 }, 90);
+
+    expect(awayLtr.velocityTowardDestination(400, 'ltr')).toBeLessThan(0);
+    expect(awayRtl.velocityTowardDestination(400, 'rtl')).toBeLessThan(0);
+    expect(stationary.velocityTowardDestination(400, 'ltr')).toBe(0);
+  });
 });

@@ -91,6 +91,17 @@ export class VelocityTracker {
       y: (last.point.y - first.point.y) / seconds,
     };
   }
+
+  velocityTowardDestination(pageWidth: number, direction: ReadingDirection): number {
+    if (!Number.isFinite(pageWidth) || pageWidth <= 0) {
+      return 0;
+    }
+
+    const velocity = this.velocity();
+    const signedVelocity = direction === 'ltr' ? -velocity.x : velocity.x;
+    const normalized = signedVelocity / pageWidth;
+    return Object.is(normalized, -0) ? 0 : normalized;
+  }
 }
 
 export function turnDisplacement(start: Vec2, point: Vec2, pageWidth: number, direction: ReadingDirection): number {
