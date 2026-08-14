@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PageDescriptor } from '../domain/types';
-import { backendCandidates, buildRenderPlan } from './contracts';
+import { backendCandidates, buildRenderPlan, PAGE_TURN_LUMINANCE_BOUNDS } from './contracts';
 import { adaptRenderQuality, FrameTelemetry } from './telemetry';
 
 const pages: PageDescriptor[] = [
@@ -52,6 +52,10 @@ describe('reader renderer contracts', () => {
     expect(adaptRenderQuality('rich', snapshot?.fps ?? 60)).toBe('balanced');
     expect(adaptRenderQuality('balanced', 40)).toBe('essential');
     expect(adaptRenderQuality('essential', 60)).toBe('balanced');
+  });
+
+  it('exports the approved physical page-turn luminance bounds', () => {
+    expect(PAGE_TURN_LUMINANCE_BOUNDS).toEqual({ minimum: 0.72, maximum: 1.08 });
   });
 
 });

@@ -259,9 +259,9 @@ describe('PageTurnTextureCache', () => {
 
   it('retries a source after a failed pending load instead of reusing the rejected promise', async () => {
     const load = vi
-      .fn<({ key: string })[], [request: { src: string }]>()
+      .fn()
       .mockRejectedValueOnce(new Error('decode failed'))
-      .mockImplementationOnce(async (request) => ({ key: request.src }));
+      .mockImplementationOnce(async (request: { src: string }) => ({ key: request.src }));
     const cache = new PageTurnTextureCache({ load });
 
     await expect(

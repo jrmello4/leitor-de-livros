@@ -1,4 +1,6 @@
 import type { PageDescriptor, ReadingDirection, ReadingMode } from '../domain/types';
+export { PAGE_TURN_LUMINANCE_BOUNDS } from './pageTurn/contracts';
+export type { PageTurnBackend, PageTurnFailure, PageTurnMetrics, PageTurnRenderFrame, PageTurnSettled } from './pageTurn/contracts';
 
 export type RenderBackendKind = 'webgpu' | 'webgl2' | 'static';
 export type RenderQuality = 'rich' | 'balanced' | 'essential';
