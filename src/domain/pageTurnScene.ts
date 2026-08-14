@@ -42,7 +42,7 @@ export function buildPageTurnScene(input: PageTurnSceneInput): PageTurnScene | u
 
   const under = input.pages[input.currentIndex + step * 2];
   const stationary = visiblePagesAt(input.pages, input.currentIndex, input.mode, input.readingDirection).filter(
-    (page) => page.id !== turningFront.id,
+    (page) => page.id !== turningFront.id && page.id !== turningVerso.id,
   );
   const committed = visiblePagesAt(
     input.pages,
@@ -64,7 +64,6 @@ export function buildPageTurnScene(input: PageTurnSceneInput): PageTurnScene | u
       under?.id ?? 'paper',
       input.mode,
       input.readingDirection,
-      input.turnDirection,
     ].join(':'),
   };
 }

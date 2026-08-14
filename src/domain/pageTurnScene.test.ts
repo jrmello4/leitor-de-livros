@@ -61,7 +61,7 @@ describe('buildPageTurnScene', () => {
       turnDirection: 'forward' as const,
       currentIndex: 2,
       expected: {
-        stationary: ['p3'],
+        stationary: [],
         turningFront: 'p2',
         turningVerso: 'p3',
         under: 'p4',
@@ -87,7 +87,7 @@ describe('buildPageTurnScene', () => {
       turnDirection: 'backward' as const,
       currentIndex: 2,
       expected: {
-        stationary: ['p1'],
+        stationary: [],
         turningFront: 'p2',
         turningVerso: 'p1',
         under: 'p0',
@@ -165,12 +165,32 @@ describe('buildPageTurnScene', () => {
       under: scene.under?.id,
       committed: scene.committed.map((page) => page.id),
     }).toEqual({
-      stationary: ['p4'],
+      stationary: [],
       turningFront: 'p3',
       turningVerso: 'p4',
       under: undefined,
       committed: ['p4'],
     });
+  });
+
+  it('never duplicates a page id across stationary, turningFront, turningVerso, and under in spread scenes', () => {
+    const scene = buildPageTurnScene({
+      pages: createPages(6),
+      currentIndex: 2,
+      mode: 'spread',
+      readingDirection: 'ltr',
+      turnDirection: 'forward',
+    });
+
+    const surfaceIds = [
+      ...(scene?.stationary.map((page) => page.id) ?? []),
+      scene?.turningFront.id,
+      scene?.turningVerso.id,
+      scene?.under?.id,
+    ].filter((id): id is string => Boolean(id));
+
+    expect(surfaceIds).toEqual(['p2', 'p3', 'p4']);
+    expect(new Set(surfaceIds).size).toBe(surfaceIds.length);
   });
 
   it('marks the verso UV as readable on the back face', () => {
@@ -183,6 +203,18 @@ describe('buildPageTurnScene', () => {
     });
 
     expect(scene?.versoUv).toBe('back-face-readable');
+  });
+
+  it('uses the prescribed generationKey shape without turnDirection suffix', () => {
+    const scene = buildPageTurnScene({
+      pages: createPages(6),
+      currentIndex: 2,
+      mode: 'spread',
+      readingDirection: 'rtl',
+      turnDirection: 'backward',
+    });
+
+    expect(scene?.generationKey).toBe('p2:p1:p0:spread:rtl');
   });
 
   it('treats PageDescriptor.src as opaque URI data regardless of source format hints', () => {
