@@ -75,6 +75,10 @@ function notMatchedGeneration(state: PageTurnState, generation: number): boolean
   return 'generation' in state && state.generation !== generation;
 }
 
+function stateDirectionSign(direction: TurnDirection): number {
+  return direction === 'forward' ? -1 : 1;
+}
+
 export function transitionPageTurn(state: PageTurnState, event: PageTurnEvent): TransitionResult {
   switch (event.type) {
     case 'request': {
@@ -193,16 +197,18 @@ type NavigationEffect = Extract<PageTurnEffect, { type: 'navigate' }>;
 export class PageTurnController {
   private state: PageTurnState = { phase: 'idle' };
   private queuedTurn?: { generation: number; direction: TurnDirection };
+  private readonly effect?: (effect: PageTurnEffect) => void;
   private readonly navigate: (effect: NavigationEffect) => void;
   private generation = 0;
   private dragPointer?: {
     pointerId: number;
     grab: Vec2;
     point: Vec2;
-    at: number;
+    startedAt: number;
   };
 
-  constructor(options: { navigate: (effect: NavigationEffect) => void }) {
+  constructor(options: { effect?: (effect: PageTurnEffect) => void; navigate: (effect: NavigationEffect) => void }) {
+    this.effect = options.effect;
     this.navigate = options.navigate;
   }
 
@@ -246,7 +252,7 @@ export class PageTurnController {
         pointerId,
         grab: { x: grab.x, y: grab.y },
         point: { x: grab.x, y: grab.y },
-        at,
+        startedAt: at,
       };
     }
   }
@@ -256,14 +262,12 @@ export class PageTurnController {
       return;
     }
 
-    const elapsed = Math.max(1, at - this.dragPointer.at);
     const velocity = {
-      x: (point.x - this.dragPointer.point.x) / elapsed,
-      y: (point.y - this.dragPointer.point.y) / elapsed,
+      x: (point.x - this.dragPointer.point.x) / Math.max(1, at - this.dragPointer.startedAt),
+      y: (point.y - this.dragPointer.point.y) / Math.max(1, at - this.dragPointer.startedAt),
     };
 
     this.dragPointer.point = { x: point.x, y: point.y };
-    this.dragPointer.at = at;
     this.applyResult(transitionPageTurn(this.state, { type: 'pointer-move', pointerId, point, velocity }));
   }
 
@@ -272,14 +276,16 @@ export class PageTurnController {
       return;
     }
 
-    const releaseDuration = Math.max(1, at - this.dragPointer.at);
-    const displacement = Math.abs(this.dragPointer.point.x - this.dragPointer.grab.x);
-    const velocityTowardDestination = Math.abs((this.dragPointer.point.x - this.dragPointer.grab.x) / releaseDuration);
+    const elapsedSeconds = Math.max((at - this.dragPointer.startedAt) / 1000, Number.EPSILON);
+    const signedDisplacement =
+      stateDirectionSign(this.state.phase === 'dragging' ? this.state.direction : 'forward')
+      * (this.dragPointer.point.x - this.dragPointer.grab.x);
+    const velocityTowardDestination = signedDisplacement / elapsedSeconds;
     this.applyResult(
       transitionPageTurn(this.state, {
         type: 'pointer-up',
         pointerId,
-        displacement,
+        displacement: signedDisplacement,
         velocityTowardDestination,
       }),
     );
@@ -319,6 +325,7 @@ export class PageTurnController {
   private applyResult(result: TransitionResult): void {
     this.state = result.state;
     for (const effect of result.effects) {
+      this.effect?.(effect);
       if (effect.type === 'navigate') {
         this.navigate(effect);
       }
