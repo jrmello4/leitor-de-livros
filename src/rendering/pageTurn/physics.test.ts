@@ -33,6 +33,25 @@ describe('PaperPhysicsSolver', () => {
     expect(Array.from(leftFrame.controlPoints)).toEqual(Array.from(rightFrame.controlPoints));
   });
 
+  it('keeps frame snapshots immutable after later solver steps', () => {
+    const solver = new PaperPhysicsSolver({ quality: 'rich', direction: 'ltr' }).begin({ x: 1, y: 0.25 });
+    const frame = solver.step({ pointer: { x: 0.72, y: 0.3 }, elapsedMs: 16 });
+    const index = 2 * 9 + 8;
+    const pointBefore = frame.pointAt(8, 2);
+    const pointsBefore = frame.points.map((point) => ({ ...point }));
+    const controlBefore = Array.from(frame.controlPoints);
+
+    solver.step({ pointer: { x: 0.4, y: 0.65 }, elapsedMs: 16 });
+
+    expect(frame.pointAt(8, 2)).toEqual(pointBefore);
+    expect(frame.points).toEqual(pointsBefore);
+    expect(Array.from(frame.controlPoints)).toEqual(controlBefore);
+    expect(frame.pointAt(8, 2)).toEqual(pointsBefore[index]);
+    expect(frame.pointAt(8, 2).x).toBeCloseTo(controlBefore[index * 6], 6);
+    expect(frame.pointAt(8, 2).y).toBeCloseTo(controlBefore[index * 6 + 1], 6);
+    expect(frame.pointAt(8, 2).z).toBeCloseTo(controlBefore[index * 6 + 2], 6);
+  });
+
   it('caps integration to four substeps and drops excess accumulated time', () => {
     const solver = new PaperPhysicsSolver({ quality: 'balanced', direction: 'ltr' }).begin({ x: 1, y: 0.5 });
 
@@ -52,6 +71,28 @@ describe('PaperPhysicsSolver', () => {
     expect(frame.invalidReason).toBe('non-finite-input');
     expect(frame.controlPoints).toHaveLength(0);
     expect(frame.points).toHaveLength(0);
+  });
+
+  it('rejects out-of-envelope normalized grab points without leaking them through a public frame', () => {
+    const solver = new PaperPhysicsSolver({ quality: 'essential', direction: 'ltr' }).begin({ x: 3.01, y: 0.5 });
+    const frame = solver.step({ elapsedMs: 0 });
+
+    expect(frame.invalidReason).toBe('excessive-displacement');
+    expect(frame.controlPoints).toHaveLength(0);
+    expect(frame.points).toHaveLength(0);
+    expect(frame.grabPoint).toEqual({ x: 1, y: 0.5 });
+  });
+
+  it('rejects out-of-envelope normalized pointers without leaking them through a public frame', () => {
+    const solver = new PaperPhysicsSolver({ quality: 'essential', direction: 'ltr' }).begin({ x: 1, y: 0.5 });
+    const valid = solver.step({ pointer: { x: 0.6, y: 0.45 }, elapsedMs: 16 });
+    const invalid = solver.step({ pointer: { x: 3.01, y: 0.45 }, elapsedMs: 16 });
+
+    expect(valid.invalidReason).toBeUndefined();
+    expect(invalid.invalidReason).toBe('excessive-displacement');
+    expect(invalid.controlPoints).toHaveLength(0);
+    expect(invalid.points).toHaveLength(0);
+    expect(invalid.grabPoint).toEqual(valid.grabPoint);
   });
 
   it('rejects excessive displacement before exposing the frame', () => {

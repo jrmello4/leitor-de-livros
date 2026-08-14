@@ -32,17 +32,22 @@ export interface PaperPhysicsSolverOptions {
 const FIXED_STEP_SECONDS = 1 / 120;
 const MAX_SUBSTEPS = 4;
 const MAX_NORMALIZED_DISPLACEMENT = 2;
+const SAFE_NORMALIZED_MIN = -MAX_NORMALIZED_DISPLACEMENT;
+const SAFE_NORMALIZED_MAX = 1 + MAX_NORMALIZED_DISPLACEMENT;
 const ZERO_POINT = Object.freeze({ x: 0, y: 0, z: 0 });
+type InvalidFrameReason = NonNullable<PageTurnPhysicsFrame['invalidReason']>;
 
 export class PaperPhysicsSolver {
   private readonly columns: number;
   private readonly rows: number;
   private readonly direction: ReadingDirection;
   private readonly restPoints: readonly Vec2[];
+  private readonly defaultGrabPoint: Vec2;
   private accumulator = 0;
   private actualGrabPoint: Vec2;
   private actualPointer: Vec2;
   private points: Vec3[];
+  private pendingInvalidReason?: InvalidFrameReason;
 
   constructor(options: PaperPhysicsSolverOptions) {
     const topology = QUALITY_TOPOLOGY[options.quality];
@@ -50,22 +55,47 @@ export class PaperPhysicsSolver {
     this.rows = topology.controlRows;
     this.direction = options.direction;
     this.restPoints = createRestPoints(this.columns, this.rows);
-    this.actualGrabPoint = options.direction === 'rtl' ? { x: 0, y: 0.5 } : { x: 1, y: 0.5 };
+    this.defaultGrabPoint = options.direction === 'rtl' ? { x: 0, y: 0.5 } : { x: 1, y: 0.5 };
+    this.actualGrabPoint = { ...this.defaultGrabPoint };
     this.actualPointer = { ...this.actualGrabPoint };
     this.points = this.restPoints.map((point) => ({ x: point.x, y: point.y, z: 0 }));
   }
 
   begin(grabPoint: Vec2): this {
-    this.actualGrabPoint = { x: grabPoint.x, y: grabPoint.y };
-    this.actualPointer = { x: grabPoint.x, y: grabPoint.y };
     this.accumulator = 0;
     this.points = this.restPoints.map((point) => ({ x: point.x, y: point.y, z: 0 }));
+
+    if (!isFiniteVec2(grabPoint)) {
+      this.pendingInvalidReason = 'non-finite-input';
+      this.actualGrabPoint = { ...this.defaultGrabPoint };
+      this.actualPointer = { ...this.defaultGrabPoint };
+      return this;
+    }
+
+    if (!isWithinNormalizedEnvelopeVec2(grabPoint)) {
+      this.pendingInvalidReason = 'excessive-displacement';
+      this.actualGrabPoint = { ...this.defaultGrabPoint };
+      this.actualPointer = { ...this.defaultGrabPoint };
+      return this;
+    }
+
+    this.pendingInvalidReason = undefined;
+    this.actualGrabPoint = { x: grabPoint.x, y: grabPoint.y };
+    this.actualPointer = { x: grabPoint.x, y: grabPoint.y };
     return this;
   }
 
   step(input: SolverInput): PageTurnPhysicsFrame {
     if (!isFiniteNumber(input.elapsedMs) || !isFiniteVec2(this.actualGrabPoint) || (input.pointer && !isFiniteVec2(input.pointer))) {
       return this.emptyFrame('non-finite-input', 0, 0);
+    }
+
+    if (this.pendingInvalidReason) {
+      return this.emptyFrame(this.pendingInvalidReason, 0, 0);
+    }
+
+    if (input.pointer && !isWithinNormalizedEnvelopeVec2(input.pointer)) {
+      return this.emptyFrame('excessive-displacement', 0, 0);
     }
 
     if (input.pointer) {
@@ -135,14 +165,19 @@ export class PaperPhysicsSolver {
       return this.emptyFrame('non-finite-output', substeps, droppedSeconds);
     }
 
+    if (!this.points.every(isWithinNormalizedEnvelopeVec3)) {
+      return this.emptyFrame('excessive-displacement', substeps, droppedSeconds);
+    }
+
     const normals = createNormals(this.points, this.columns, this.rows);
     if (!normals || !normals.every(isFiniteVec3)) {
       return this.emptyFrame('invalid-normal', substeps, droppedSeconds);
     }
 
+    const snapshotPoints = this.points.map((point) => ({ ...point }));
     const controlPoints = new Float32Array(this.points.length * 6);
-    for (let index = 0; index < this.points.length; index += 1) {
-      const point = this.points[index];
+    for (let index = 0; index < snapshotPoints.length; index += 1) {
+      const point = snapshotPoints[index];
       const normal = normals[index];
       const cursor = index * 6;
       controlPoints[cursor] = point.x;
@@ -155,19 +190,19 @@ export class PaperPhysicsSolver {
 
     return {
       controlPoints,
-      points: this.points.map((point) => ({ ...point })),
+      points: snapshotPoints,
       grabPoint: { ...this.actualPointer },
       substeps,
       droppedSeconds,
       pointAt: (column: number, row: number) => {
-        const point = this.points[row * this.columns + column];
+        const point = snapshotPoints[row * this.columns + column];
         return point ? { ...point } : ZERO_POINT;
       },
     };
   }
 
   private emptyFrame(
-    invalidReason: NonNullable<PageTurnPhysicsFrame['invalidReason']>,
+    invalidReason: InvalidFrameReason,
     substeps: number,
     droppedSeconds: number,
   ): PageTurnPhysicsFrame {
@@ -356,4 +391,18 @@ function isFiniteVec2(value: Vec2): boolean {
 
 function isFiniteVec3(value: Vec3): boolean {
   return isFiniteNumber(value.x) && isFiniteNumber(value.y) && isFiniteNumber(value.z);
+}
+
+function isWithinNormalizedEnvelopeVec2(value: Vec2): boolean {
+  return isWithinNormalizedEnvelopeNumber(value.x) && isWithinNormalizedEnvelopeNumber(value.y);
+}
+
+function isWithinNormalizedEnvelopeVec3(value: Vec3): boolean {
+  return isWithinNormalizedEnvelopeNumber(value.x)
+    && isWithinNormalizedEnvelopeNumber(value.y)
+    && isWithinNormalizedEnvelopeNumber(value.z);
+}
+
+function isWithinNormalizedEnvelopeNumber(value: number): boolean {
+  return value >= SAFE_NORMALIZED_MIN && value <= SAFE_NORMALIZED_MAX;
 }

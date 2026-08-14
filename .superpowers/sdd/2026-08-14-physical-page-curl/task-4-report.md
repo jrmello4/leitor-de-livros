@@ -200,6 +200,160 @@ Output:
 - Mesh topology and solver quality tiers share the same `QUALITY_TOPOLOGY` contract to keep backends aligned later.
 - Unrelated files were preserved; this task only adds the requested `src/rendering/pageTurn/` slice plus this report.
 
+## Fix round 1
+
+Addressed the two Important review findings:
+
+1. `PageTurnPhysicsFrame.pointAt()` now reads from the same immutable snapshot as `points` and `controlPoints`.
+2. Public solver I/O now enforces a safe normalized envelope of `[-2, 3]` on normalized coordinates before exposing a frame, matching the existing two-page-width displacement budget around the base `[0, 1]` page-local range.
+
+What changed:
+
+- `physics.test.ts`
+  - added a regression test that captures a frame, advances the solver, and proves the old frame remains internally consistent across `pointAt()`, `points`, and `controlPoints`
+  - added tests for out-of-envelope finite `begin()` grab points
+  - added tests for out-of-envelope finite `step()` pointers
+- `physics.ts`
+  - snapshots `points` once per frame and closes `pointAt()` over that immutable array instead of mutable solver state
+  - tracks invalid `begin()` input via the existing `invalidReason` path
+  - rejects finite out-of-envelope public input before mutating pointer state
+  - validates public output points against the same normalized envelope before exposing a frame
+
+### Focused RED
+
+Command:
+
+```powershell
+npm.cmd test -- --configLoader runner src/rendering/pageTurn/physics.test.ts
+```
+
+Output:
+
+```text
+> tactile-reader@0.1.0 test
+> vitest run --configLoader runner src/rendering/pageTurn/physics.test.ts
+
+
+ RUN  v3.2.7 C:/Users/adenilson.j/Documents/ChatGPT/leitor/.worktrees/physical-page-curl-design
+
+ ❯ src/rendering/pageTurn/physics.test.ts (9 tests | 3 failed) 19ms
+   ✓ PaperPhysicsSolver > keeps every spine point pinned while the outer edge follows the pointer 3ms
+   ✓ PaperPhysicsSolver > produces deterministic cylinder output for the same normalized steps 1ms
+   × PaperPhysicsSolver > keeps frame snapshots immutable after later solver steps 8ms
+     → expected { x: 0.4, y: 0.65, …(1) } to deeply equal { x: 0.72, y: 0.3, …(1) }
+   ✓ PaperPhysicsSolver > caps integration to four substeps and drops excess accumulated time 1ms
+   ✓ PaperPhysicsSolver > rejects non-finite input before integrating 1ms
+   × PaperPhysicsSolver > rejects out-of-envelope normalized grab points without leaking them through a public frame 1ms
+     → expected undefined to be 'excessive-displacement' // Object.is equality
+   × PaperPhysicsSolver > rejects out-of-envelope normalized pointers without leaking them through a public frame 1ms
+     → expected { x: 3.01, y: 0.45 } to deeply equal { x: 0.6, y: 0.45 }
+   ✓ PaperPhysicsSolver > rejects excessive displacement before exposing the frame 0ms
+   ✓ PaperPhysicsSolver > mirrors the lattice equivalently for rtl turns 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/rendering/pageTurn/physics.test.ts > PaperPhysicsSolver > keeps frame snapshots immutable after later solver steps
+AssertionError: expected { x: 0.4, y: 0.65, …(1) } to deeply equal { x: 0.72, y: 0.3, …(1) }
+
+ FAIL  src/rendering/pageTurn/physics.test.ts > PaperPhysicsSolver > rejects out-of-envelope normalized grab points without leaking them through a public frame
+AssertionError: expected undefined to be 'excessive-displacement' // Object.is equality
+
+ FAIL  src/rendering/pageTurn/physics.test.ts > PaperPhysicsSolver > rejects out-of-envelope normalized pointers without leaking them through a public frame
+AssertionError: expected { x: 3.01, y: 0.45 } to deeply equal { x: 0.6, y: 0.45 }
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 6 passed (9)
+   Start at  16:52:39
+   Duration  862ms (transform 39ms, setup 10ms, collect 42ms, tests 19ms, environment 461ms, prepare 106ms)
+```
+
+This RED run confirmed all three symptom-level failures expected from the two findings:
+
+- old frames were not immutable because `pointAt()` read mutable solver state
+- invalid `begin()` coordinates were accepted without surfacing `invalidReason`
+- invalid finite pointer input leaked into `grabPoint` on an invalid frame
+
+### Focused GREEN
+
+Command:
+
+```powershell
+npm.cmd test -- --configLoader runner src/rendering/pageTurn/physics.test.ts
+```
+
+Output:
+
+```text
+> tactile-reader@0.1.0 test
+> vitest run --configLoader runner src/rendering/pageTurn/physics.test.ts
+
+
+ RUN  v3.2.7 C:/Users/adenilson.j/Documents/ChatGPT/leitor/.worktrees/physical-page-curl-design
+
+ ✓ src/rendering/pageTurn/physics.test.ts (9 tests) 12ms
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  16:53:49
+   Duration  960ms (transform 41ms, setup 11ms, collect 46ms, tests 12ms, environment 490ms, prepare 130ms)
+```
+
+### Full verification after fix
+
+Command:
+
+```powershell
+npm.cmd test -- --configLoader runner
+```
+
+Output:
+
+```text
+> tactile-reader@0.1.0 test
+> vitest run --configLoader runner
+
+
+ RUN  v3.2.7 C:/Users/adenilson.j/Documents/ChatGPT/leitor/.worktrees/physical-page-curl-design
+
+ ✓ src/domain/library.test.ts (6 tests) 22ms
+ ✓ src/domain/flow.test.ts (4 tests) 18ms
+ ✓ src/domain/pageTurn.test.ts (8 tests) 13ms
+ ✓ src/domain/profiles.test.ts (6 tests) 14ms
+ ✓ src/services/importers.test.ts (3 tests) 33ms
+ ✓ src/services/storage.test.ts (7 tests) 15ms
+ ✓ src/app/LiveAnnouncement.test.tsx (3 tests) 56ms
+ ✓ src/app/ZoomControls.test.tsx (3 tests) 81ms
+ ✓ src/app/SmokeHarness.test.tsx (9 tests) 144ms
+ ✓ src/app/PageNavigator.test.tsx (6 tests) 191ms
+ ✓ src/services/readerState.test.ts (3 tests) 15ms
+ ✓ src/app/ProfilePanel.test.tsx (4 tests) 227ms
+ ✓ src/app/LibraryView.test.tsx (12 tests) 631ms
+ ✓ src/app/AppNativeImport.test.tsx (7 tests) 379ms
+ ✓ src/app/AppAnnouncements.test.tsx (1 test) 781ms
+   ✓ application live-region wiring > announces reader navigation and renderer state through real consumers  779ms
+ ✓ src/app/nativeImportFlow.test.ts (4 tests) 10ms
+ ✓ src/domain/pageTurnScene.test.ts (12 tests) 11ms
+ ✓ src/domain/reader.test.ts (8 tests) 10ms
+ ✓ src/rendering/pageTurn/physics.test.ts (9 tests) 29ms
+ ✓ src/domain/pageSelection.test.ts (4 tests) 8ms
+ ✓ src/rendering/telemetry.test.ts (4 tests) 7ms
+ ✓ src/domain/readerState.test.ts (3 tests) 11ms
+ ✓ src/domain/input.test.ts (4 tests) 8ms
+ ✓ src/domain/covers.test.ts (3 tests) 7ms
+ ✓ src/rendering/contracts.test.ts (3 tests) 7ms
+ ✓ src/release/testModes.test.ts (7 tests) 8ms
+ ✓ src/domain/pageTurnGeometry.test.ts (10 tests) 11ms
+ ✓ src/services/flowStorage.test.ts (1 test) 5ms
+ ✓ src/rendering/pageTurn/mesh.test.ts (4 tests) 7ms
+ ✓ src/i18n/catalog.test.ts (3 tests) 4ms
+ ✓ tests/visual/visual-matrix.test.ts (1 test) 2ms
+
+ Test Files  31 passed (31)
+      Tests  162 passed (162)
+   Start at  16:53:59
+   Duration  5.27s (transform 2.39s, setup 645ms, collect 6.97s, tests 2.77s, environment 37.68s, prepare 6.29s)
+```
+
 ## Concerns
 
 - The hard pointer constraint currently snaps the nearest outer-edge control row to the pointer. That satisfies this task’s lattice contract, but later visual fidelity work may want interpolation between rows once the renderer consumes the lattice directly.
