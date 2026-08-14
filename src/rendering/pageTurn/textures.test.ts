@@ -257,6 +257,33 @@ describe('PageTurnTextureCache', () => {
     });
   });
 
+  it('retries a source after a failed pending load instead of reusing the rejected promise', async () => {
+    const load = vi
+      .fn<({ key: string })[], [request: { src: string }]>()
+      .mockRejectedValueOnce(new Error('decode failed'))
+      .mockImplementationOnce(async (request) => ({ key: request.src }));
+    const cache = new PageTurnTextureCache({ load });
+
+    await expect(
+      cache.prepare(createSingleSourceScene('asset://retry'), 10, { width: 1000, height: 700, dpr: 2 }),
+    ).resolves.toEqual({
+      kind: 'error',
+      generation: 10,
+      message: 'decode failed',
+    });
+
+    await expect(
+      cache.prepare(createSingleSourceScene('asset://retry'), 11, { width: 1000, height: 700, dpr: 2 }),
+    ).resolves.toMatchObject({
+      kind: 'ready',
+      generation: 11,
+      textures: {
+        count: 1,
+      },
+    });
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
   it('disposes every resident texture handle when the cache is disposed', async () => {
     const dispose = vi.fn();
     const cache = new PageTurnTextureCache({

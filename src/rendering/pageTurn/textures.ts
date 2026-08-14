@@ -268,9 +268,17 @@ export class PageTurnTextureCache<T> {
       return pending.promise;
     }
 
-    const pendingEntry: PendingTextureEntry<T> = {
+    let pendingEntry!: PendingTextureEntry<T>;
+    pendingEntry = {
       request,
-      promise: this.loadTexture(request).then((handle) => this.finalizePending(request, pendingEntry, handle)),
+      promise: this.loadTexture(request)
+        .then((handle) => this.finalizePending(request, pendingEntry, handle))
+        .catch((error: unknown) => {
+          if (this.pending.get(request.src) === pendingEntry) {
+            this.pending.delete(request.src);
+          }
+          throw error;
+        }),
     };
 
     this.pending.set(request.src, pendingEntry);
