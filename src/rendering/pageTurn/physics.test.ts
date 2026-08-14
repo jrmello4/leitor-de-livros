@@ -122,4 +122,82 @@ describe('PaperPhysicsSolver', () => {
       }
     }
   });
+
+  it('bounds stretch and never crosses the stationary page plane', () => {
+    const solver = new PaperPhysicsSolver({ quality: 'balanced', direction: 'ltr' })
+      .begin({ x: 1, y: 0.02 }) as PaperPhysicsSolver & { snapshot(): { maxStretch: number; points: Array<{ x: number; z: number }> } };
+
+    for (let index = 0; index < 120; index += 1) {
+      solver.step({ pointer: { x: 0.08, y: 0.62 }, elapsedMs: 8.333 });
+    }
+
+    const frame = solver.snapshot();
+
+    expect(frame.maxStretch).toBeLessThanOrEqual(0.035);
+    expect(frame.points.every((point) => point.z >= -0.0001 && point.x >= -0.0001)).toBe(true);
+  });
+
+  it.each(['commit', 'cancel'] as const)('settles %s without persistent oscillation', (outcome) => {
+    const solver = curledSolver() as PaperPhysicsSolver & {
+      settle(result: 'commit' | 'cancel'): void;
+      snapshot(): { settled?: 'commit' | 'cancel'; maxSpeed: number };
+    };
+
+    solver.settle(outcome);
+    let frame = solver.snapshot() as { settled?: 'commit' | 'cancel'; maxSpeed: number };
+
+    for (let index = 0; index < 360 && !frame.settled; index += 1) {
+      frame = solver.step({ elapsedMs: 8.333 }) as unknown as { settled?: 'commit' | 'cancel'; maxSpeed: number };
+    }
+
+    expect(frame.settled).toBe(outcome);
+    expect(frame.maxSpeed).toBeLessThan(0.01);
+  });
+
+  it('creates more torsion for a corner grab than a middle-edge grab', () => {
+    const corner = solveAtGrabY(0.02);
+    const middle = solveAtGrabY(0.5);
+
+    expect(Math.abs(corner.top.z - corner.bottom.z)).toBeGreaterThan(Math.abs(middle.top.z - middle.bottom.z));
+  });
+
+  it('remains deterministic across equivalent fixed-step groupings', () => {
+    expect(runSequence([8, 8, 8, 8])).toEqual(runSequence([16, 16]));
+  });
 });
+
+function curledSolver() {
+  const solver = new PaperPhysicsSolver({ quality: 'balanced', direction: 'ltr' }).begin({ x: 1, y: 0.18 });
+
+  solver.step({ pointer: { x: 0.7, y: 0.22 }, elapsedMs: 16 });
+  solver.step({ pointer: { x: 0.44, y: 0.3 }, elapsedMs: 16 });
+  solver.step({ pointer: { x: 0.16, y: 0.54 }, elapsedMs: 16 });
+
+  return solver;
+}
+
+function solveAtGrabY(grabY: number) {
+  const solver = new PaperPhysicsSolver({ quality: 'balanced', direction: 'ltr' }).begin({ x: 1, y: grabY });
+
+  for (let index = 0; index < 90; index += 1) {
+    solver.step({ pointer: { x: 0.18, y: 0.6 }, elapsedMs: 8.333 });
+  }
+
+  const frame = (solver as PaperPhysicsSolver & {
+    snapshot(): { points: Array<{ x: number; y: number; z: number }> };
+  }).snapshot();
+  const top = frame.points.reduce((best, point) => (point.y < best.y ? point : best));
+  const bottom = frame.points.reduce((best, point) => (point.y > best.y ? point : best));
+
+  return { top, bottom };
+}
+
+function runSequence(sequence: readonly number[]) {
+  const solver = new PaperPhysicsSolver({ quality: 'balanced', direction: 'ltr' }).begin({ x: 1, y: 0.3 });
+
+  for (const elapsedMs of sequence) {
+    solver.step({ pointer: { x: 0.24, y: 0.58 }, elapsedMs });
+  }
+
+  return Array.from(solver.step({ elapsedMs: 0 }).controlPoints);
+}

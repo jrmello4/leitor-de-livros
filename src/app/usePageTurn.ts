@@ -109,7 +109,6 @@ const SYNTHETIC_GRAB_Y = 0.62;
 const HOVER_PROGRESS_LIMIT = 0.03;
 const AUTOMATIC_POINTER_ID = -1;
 const SYNTHETIC_DURATION_MS = 180;
-const SETTLE_DURATION_MS = 220;
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
@@ -125,17 +124,6 @@ function turnDirectionToCallback(direction: TurnDirection, readingDirection: Rea
     ? direction === 'forward' ? -1 : 1
     : direction === 'forward' ? 1 : -1;
   return delta > 0 ? onNext : onPrevious;
-}
-
-function releaseTargetFor(direction: ReadingDirection, outcome: 'commit' | 'cancel', grab: Vec2): Vec2 {
-  if (outcome === 'cancel') {
-    return { ...grab };
-  }
-
-  return {
-    x: direction === 'rtl' ? 0.84 : 0.16,
-    y: grab.y,
-  };
 }
 
 function automaticPoint(direction: ReadingDirection, grab: Vec2, progress: number): Vec2 {
@@ -327,11 +315,13 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
     syncFromController();
   }, [clearAnimation, pendingPointer?.pointerId, releasePointerCapture, state, syncFromController]);
 
-  const updateDragSurface = useCallback((grab: Vec2, point: Vec2, phase: 'dragging' | 'settling', outcome?: 'commit' | 'cancel') => {
-    const solver = physicsRef.current ?? new PaperPhysicsSolver({ quality: SURFACE_QUALITY, direction: readingDirection }).begin(grab);
-    physicsRef.current = solver;
-    const frame = solver.step({ pointer: point, elapsedMs: 16.7 });
-    const progress = clamp(turnDisplacement(grab, point, 1, readingDirection), 0, 1);
+  const updateSurfaceState = useCallback((
+    grab: Vec2,
+    frame: PageTurnPhysicsFrame,
+    phase: 'dragging' | 'settling',
+    outcome?: 'commit' | 'cancel',
+  ) => {
+    const progress = clamp(turnDisplacement(grab, frame.grabPoint, 1, readingDirection), 0, 1);
 
     if (phase === 'dragging') {
       setSurfaceState({
@@ -352,36 +342,40 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
     });
   }, [readingDirection]);
 
+  const updateDragSurface = useCallback((grab: Vec2, point: Vec2, elapsedMs = 16.7) => {
+    const solver = physicsRef.current ?? new PaperPhysicsSolver({ quality: SURFACE_QUALITY, direction: readingDirection }).begin(grab);
+    physicsRef.current = solver;
+    const frame = solver.step({ pointer: point, elapsedMs });
+    updateSurfaceState(grab, frame, 'dragging');
+    return frame;
+  }, [readingDirection, updateSurfaceState]);
+
   const animateSettle = useCallback((
     generation: number,
     grab: Vec2,
-    from: Vec2,
     outcome: 'commit' | 'cancel',
   ) => {
     clearAnimation();
+    const solver = physicsRef.current ?? new PaperPhysicsSolver({ quality: SURFACE_QUALITY, direction: readingDirection }).begin(grab);
+    physicsRef.current = solver;
+    solver.settle(outcome);
+    updateSurfaceState(grab, solver.snapshot(), 'settling', outcome);
+
     const token = `settle:${generation}:${outcome}`;
     animationTokenRef.current = token;
-    const start = performance.now();
-    const target = releaseTargetFor(readingDirection, outcome, grab);
+    let previousNow = performance.now();
 
     const tick = (now: number) => {
       if (animationTokenRef.current !== token) {
         return;
       }
 
-      const progress = clamp((now - start) / SETTLE_DURATION_MS, 0, 1);
-      const eased = 1 - (1 - progress) ** 3;
-      const point = {
-        x: from.x + (target.x - from.x) * eased,
-        y: from.y + (target.y - from.y) * eased,
-      };
+      const frame = solver.step({ elapsedMs: Math.max(0, now - previousNow) });
+      previousNow = now;
+      updateSurfaceState(grab, frame, 'settling', outcome);
 
-      updateDragSurface(grab, point, 'settling', outcome);
-
-      if (progress >= 1) {
+      if (frame.settled === outcome) {
         clearAnimation();
-        controllerRef.current?.finishSettle(generation);
-        syncFromController();
         return;
       }
 
@@ -392,11 +386,8 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
 
     if (typeof requestAnimationFrame === 'function') {
       animationFrameRef.current = requestAnimationFrame(tick);
-    } else {
-      controllerRef.current?.finishSettle(generation);
-      syncFromController();
     }
-  }, [clearAnimation, readingDirection, syncFromController, updateDragSurface]);
+  }, [clearAnimation, readingDirection, updateSurfaceState]);
 
   const beginAutomaticTurn = useCallback((planned: PlannedTurn) => {
     clearAnimation();
@@ -417,14 +408,14 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
       const progress = clamp((now - start) / SYNTHETIC_DURATION_MS, 0, 1);
       const point = automaticPoint(readingDirection, planned.grab, progress);
       controllerRef.current?.movePointer(AUTOMATIC_POINTER_ID, point, now);
-      updateDragSurface(planned.grab, point, 'dragging');
+      updateDragSurface(planned.grab, point);
       setSyntheticTrajectory({ direction: planned.direction, grab: planned.grab, point });
 
       if (progress >= 1) {
         clearAnimation();
         controllerRef.current?.releasePointer(AUTOMATIC_POINTER_ID, now);
         syncFromController();
-        animateSettle(planned.generation, planned.grab, point, 'commit');
+        animateSettle(planned.generation, planned.grab, 'commit');
         return;
       }
 
@@ -436,10 +427,9 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
     if (typeof requestAnimationFrame === 'function') {
       animationFrameRef.current = requestAnimationFrame(tick);
     } else {
-      const point = automaticPoint(readingDirection, planned.grab, 1);
       controllerRef.current?.releasePointer(AUTOMATIC_POINTER_ID, performance.now());
       syncFromController();
-      animateSettle(planned.generation, planned.grab, point, 'commit');
+      animateSettle(planned.generation, planned.grab, 'commit');
     }
   }, [animateSettle, clearAnimation, readingDirection, syncFromController, updateDragSurface]);
 
@@ -512,7 +502,7 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
       controllerRef.current?.beginPointer(generation, planned.pendingPointer.pointerId, planned.grab, performance.now());
       setPendingPointer(undefined);
       syncFromController();
-      updateDragSurface(planned.grab, planned.grab, 'dragging');
+      updateDragSurface(planned.grab, planned.grab);
       return;
     }
 
@@ -630,7 +620,7 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
         const point = clientToPagePoint({ x: event.clientX, y: event.clientY }, frame, zoom);
         const normalizedPoint = { x: point.x, y: point.y };
         controllerRef.current?.movePointer(event.pointerId, normalizedPoint, performance.now());
-        updateDragSurface(state.grab, normalizedPoint, 'dragging');
+        updateDragSurface(state.grab, normalizedPoint);
         syncFromController();
         return;
       }
@@ -684,7 +674,7 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
       syncFromController();
 
       if (snapshot?.phase === 'settling') {
-        animateSettle(snapshot.generation, state.grab, state.point, snapshot.outcome);
+        animateSettle(snapshot.generation, state.grab, snapshot.outcome);
       }
     },
     onPointerCancel: () => {

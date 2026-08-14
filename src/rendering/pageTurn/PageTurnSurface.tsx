@@ -199,7 +199,7 @@ export function PageTurnSurface({
         textureBytes: textureMetaRef.current.bytes,
       });
 
-      if (state.phase === 'settling' && isTerminalProgress(state.outcome, state.progress)) {
+      if (state.phase === 'settling' && physicsFrame.settled === state.outcome) {
         const token = `${generation}:${state.outcome}`;
         if (settledRef.current !== token) {
           settledRef.current = token;
@@ -313,10 +313,6 @@ function loadImage(src: string): Promise<HTMLImageElement> {
       resolve(image);
     }
   });
-}
-
-function isTerminalProgress(outcome: 'commit' | 'cancel', progress: number): boolean {
-  return outcome === 'commit' ? progress >= 1 : progress <= 0;
 }
 
 function requestAnimationFrameSafe(callback: FrameRequestCallback): number | undefined {

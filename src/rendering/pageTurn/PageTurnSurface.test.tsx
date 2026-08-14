@@ -71,16 +71,24 @@ function scene(): PageTurnScene {
   };
 }
 
-function readyFrame(direction: ReadingDirection, progress: number, invalidReason?: PageTurnPhysicsFrame['invalidReason']): PageTurnPhysicsFrame {
+function readyFrame(
+  direction: ReadingDirection,
+  progress: number,
+  invalidReason?: PageTurnPhysicsFrame['invalidReason'],
+  settled?: 'commit' | 'cancel',
+): PageTurnPhysicsFrame {
   return {
     controlPoints: new Float32Array([0, 0, 0, 0, 0, 1]),
     points: [{ x: 0, y: 0, z: 0 }],
     grabPoint: direction === 'rtl' ? { x: 0, y: 0.5 } : { x: 1, y: 0.5 },
     substeps: 1,
     droppedSeconds: 0,
+    maxStretch: 0,
+    maxSpeed: settled ? 0.005 : 0.1,
     invalidReason,
     pointAt: () => ({ x: progress, y: 0.5, z: 0 }),
-  };
+    settled,
+  } as PageTurnPhysicsFrame;
 }
 
 function createDeferred<T>() {
@@ -191,7 +199,7 @@ describe('PageTurnSurface', () => {
     }));
   });
 
-  it('notifies settled once the active frame reaches its terminal progress', async () => {
+  it('notifies settled once the active frame reports a matching settled flag', async () => {
     const onSettled = vi.fn();
     const view = renderSurface(root, container, {
       scene: scene(),
@@ -206,10 +214,57 @@ describe('PageTurnSurface', () => {
 
     await settleAsyncEffects();
     await flushAnimationFrame(rafQueue, 16.7);
-    await view.rerender({ state: settlingState('commit', 1) });
+    await view.rerender({
+      state: {
+        phase: 'settling',
+        direction: 'ltr',
+        outcome: 'commit',
+        progress: 1,
+        frame: readyFrame('ltr', 1, undefined, 'commit'),
+      },
+    });
     await flushAnimationFrame(rafQueue, 33.4);
 
     expect(onSettled).toHaveBeenCalledWith({ generation: 9, outcome: 'commit' });
+    expect(onSettled).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for the physics frame settled flag instead of terminal progress alone', async () => {
+    const onSettled = vi.fn();
+    const view = renderSurface(root, container, {
+      scene: scene(),
+      generation: 14,
+      state: {
+        phase: 'settling',
+        direction: 'ltr',
+        outcome: 'commit',
+        progress: 1,
+        frame: readyFrame('ltr', 1),
+      },
+      quality: 'balanced',
+      onReady: vi.fn(),
+      onSettled,
+      onFailure: vi.fn(),
+      onMetrics: vi.fn(),
+    });
+
+    await settleAsyncEffects();
+    await flushAnimationFrame(rafQueue, 16.7);
+
+    expect(onSettled).not.toHaveBeenCalled();
+
+    await view.rerender({
+      state: {
+        phase: 'settling',
+        direction: 'ltr',
+        outcome: 'commit',
+        progress: 1,
+        frame: readyFrame('ltr', 1, undefined, 'commit'),
+      },
+    });
+    await flushAnimationFrame(rafQueue, 33.4);
+
+    expect(onSettled).toHaveBeenCalledWith({ generation: 14, outcome: 'commit' });
     expect(onSettled).toHaveBeenCalledTimes(1);
   });
 

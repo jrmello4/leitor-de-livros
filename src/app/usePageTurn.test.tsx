@@ -300,4 +300,5 @@ describe('usePageTurn', () => {
     expect(latest?.state).toEqual({ phase: 'idle' });
     expect(latest?.pendingPointer).toBeUndefined();
   });
+
 });
