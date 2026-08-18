@@ -1,13 +1,19 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  loadProfileStore,
   loadBookmarks,
   loadFavorites,
   loadReaderState,
   saveBookmarks,
   saveFavorite,
   saveReaderState,
+  saveProfileStore,
+  loadCustomCover,
+  saveCustomCover,
+  clearCustomCover,
 } from './storage';
+import { createDefaultProfileStore } from '../domain/profiles';
 import { defaultReaderState } from '../domain/readerState';
 
 describe('browser fallback storage', () => {
@@ -41,5 +47,78 @@ describe('browser fallback storage', () => {
     expect(loadFavorites()).toEqual([]);
     expect(loadBookmarks('book-a')).toEqual([]);
     expect(loadReaderState('book-a')).toEqual(defaultReaderState);
+  });
+
+  it('migrates the flat profile key into the named profile store', () => {
+    window.localStorage.setItem('tactile-reader/profile/v1', JSON.stringify({
+      version: 1,
+      name: 'Archive mode',
+      mode: 'spread',
+      direction: 'rtl',
+      contrast: 'standard',
+      reducedMotion: false,
+      pageTurnDuration: 480,
+      layoutZone: 'right',
+      bindings: { next_page: ['KeyN'] },
+    }));
+
+    const store = loadProfileStore();
+    expect(store.profiles[0]).toMatchObject({ name: 'Archive mode', direction: 'rtl', layoutZone: 'right' });
+    expect(store.profiles[0]?.bindings.next_page).toEqual(['KeyN']);
+    expect(JSON.parse(window.localStorage.getItem('tactile-reader/profiles/v2') ?? '{}').version).toBe(2);
+  });
+
+  it('persists the active profile catalogue and rejects invalid stores', () => {
+    const store = createDefaultProfileStore();
+    expect(saveProfileStore(store)).toBe(true);
+    expect(loadProfileStore()).toEqual(store);
+    expect(saveProfileStore({ ...store, activeProfileId: 'missing' })).toBe(false);
+  });
+
+  it('uses a valid legacy profile instead of discarding it when the v2 store is corrupt', () => {
+    window.localStorage.setItem('tactile-reader/profiles/v2', JSON.stringify({
+      version: 2,
+      activeProfileId: 'missing',
+      profiles: [],
+    }));
+    window.localStorage.setItem('tactile-reader/profile/v1', JSON.stringify({
+      version: 1,
+      name: 'Recovered profile',
+      direction: 'rtl',
+      mode: 'single',
+      contrast: 'standard',
+      reducedMotion: false,
+      pageTurnDuration: 420,
+      layoutZone: 'top',
+      bindings: {},
+    }));
+
+    const store = loadProfileStore();
+
+    expect(store.profiles[0]).toMatchObject({ name: 'Recovered profile', direction: 'rtl' });
+    expect(JSON.parse(window.localStorage.getItem('tactile-reader/profiles/v2') ?? '{}').version).toBe(2);
+  });
+
+  it('round-trips and clears a custom cover without changing other publication metadata', () => {
+    const cover = { src: 'data:image/png;base64,AA==', sourceName: 'replacement.png' };
+    saveFavorite('book-a', true);
+    saveCustomCover('book-a', cover);
+
+    expect(loadCustomCover('book-a')).toEqual(cover);
+    expect(loadFavorites()).toEqual(['book-a']);
+
+    clearCustomCover('book-a');
+    expect(loadCustomCover('book-a')).toBeUndefined();
+    expect(loadFavorites()).toEqual(['book-a']);
+  });
+
+  it('keeps valid covers when another persisted cover is malformed', () => {
+    window.localStorage.setItem('tactile-reader/custom-covers/v1', JSON.stringify({
+      valid: { src: 'data:image/png;base64,AA==', sourceName: 'valid.png' },
+      invalid: { src: 'https://example.com/cover.png', sourceName: 'invalid.png' },
+    }));
+
+    expect(loadCustomCover('valid')).toEqual({ src: 'data:image/png;base64,AA==', sourceName: 'valid.png' });
+    expect(loadCustomCover('invalid')).toBeUndefined();
   });
 });

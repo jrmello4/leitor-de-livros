@@ -12,6 +12,8 @@ export type ActionName =
   | 'toggle_fullscreen'
   | 'toggle_settings'
   | 'toggle_spread'
+  | 'toggle_navigator'
+  | 'toggle_bookmark'
   | 'cancel';
 
 export type BindingMap = Record<ActionName, string[]>;
@@ -23,6 +25,11 @@ export interface PageDescriptor {
   src: string;
   width: number;
   height: number;
+}
+
+export interface CustomCover {
+  src: string;
+  sourceName: string;
 }
 
 export interface Publication {
@@ -38,6 +45,9 @@ export interface Publication {
   addedAt: string;
   updatedAt: string;
   isFavorite: boolean;
+  /** Safe basenames used for discovery; never contains an absolute source path. */
+  sourceNames?: string[];
+  customCover?: CustomCover;
   diagnostic?: string;
 }
 
@@ -62,6 +72,7 @@ export interface CacheInfo {
 }
 
 export interface ReadingProfile {
+  id?: string;
   version: 1;
   name: string;
   mode: ReadingMode;
@@ -70,6 +81,8 @@ export interface ReadingProfile {
   reducedMotion: boolean;
   pageTurnDuration: number;
   layoutZone: LayoutZone;
+  zoomMode: ZoomMode;
+  zoomScale: number;
   bindings: BindingMap;
 }
 

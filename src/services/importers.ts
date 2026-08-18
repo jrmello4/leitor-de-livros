@@ -1,5 +1,6 @@
 import { unzipSync } from 'fflate';
 import type { ImportResult, PageDescriptor, Publication, PublicationFormat } from '../domain/types';
+import { t } from '../i18n/catalog';
 
 const IMAGE_EXTENSIONS = new Set(['avif', 'gif', 'jpeg', 'jpg', 'png', 'svg', 'webp']);
 
@@ -70,6 +71,7 @@ function publicationFromPages(
   sourceLabel: string,
   format: PublicationFormat,
   pages: PageDescriptor[],
+  sourceNames: string[] = [sourceLabel],
 ): Publication {
   const now = new Date().toISOString();
   const id = createId('publication');
@@ -87,6 +89,9 @@ function publicationFromPages(
     addedAt: now,
     updatedAt: now,
     isFavorite: false,
+    sourceNames: sourceNames
+      .map((name) => name.split(/[\\/]/).pop() ?? name)
+      .filter(Boolean),
   };
 }
 
@@ -124,13 +129,13 @@ async function importCbz(file: File): Promise<ImportResult> {
     });
 
     if (pages.length === 0) {
-      return { diagnostic: 'The CBZ contains no supported image pages.' };
+      return { diagnostic: t('import.cbzEmpty') };
     }
 
-    const title = file.name.replace(/\.cbz$/i, '') || 'Imported CBZ';
-    return { publication: publicationFromPages(title, file.name, 'cbz', pages) };
+    const title = file.name.replace(/\.cbz$/i, '') || t('import.defaultCbzTitle');
+    return { publication: publicationFromPages(title, file.name, 'cbz', pages, [file.name]) };
   } catch {
-    return { diagnostic: 'The CBZ could not be read. The original file was not modified.' };
+    return { diagnostic: t('import.cbzReadError') };
   }
 }
 
@@ -138,8 +143,16 @@ export async function importFiles(files: File[]): Promise<ImportResult> {
   const imageFiles = files.filter((file) => isImageName(file.name));
   if (imageFiles.length > 0) {
     const pages = pagesFromFiles(imageFiles);
-    const title = imageFiles[0]?.name.replace(/\.[^.]+$/, '') || 'Imported pages';
-    return { publication: publicationFromPages(title, `${imageFiles.length} image files`, 'images', pages) };
+    const title = imageFiles[0]?.name.replace(/\.[^.]+$/, '') || t('import.defaultPagesTitle');
+    return {
+      publication: publicationFromPages(
+        title,
+        `${imageFiles.length} image files`,
+        'images',
+        pages,
+        imageFiles.map((file) => file.name),
+      ),
+    };
   }
 
   const cbz = files.find((file) => formatForFile(file.name) === 'cbz');
@@ -150,8 +163,8 @@ export async function importFiles(files: File[]): Promise<ImportResult> {
   const unsupported = files.find((file) => ['cbr', 'pdf'].includes(fileExtension(file.name)));
   if (unsupported) {
     const format = fileExtension(unsupported.name).toUpperCase();
-    return { diagnostic: `${format} import is reserved for the native importer slice. Try an image set or CBZ for now.` };
+    return { diagnostic: t('import.nativeOnly', { format }) };
   }
 
-  return { diagnostic: 'No supported publication files were found.' };
+  return { diagnostic: t('import.noSupported') };
 }

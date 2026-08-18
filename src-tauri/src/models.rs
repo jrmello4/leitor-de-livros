@@ -29,6 +29,7 @@ pub struct NativePublication {
     pub id: String,
     pub title: String,
     pub source_label: String,
+    pub source_names: Vec<String>,
     pub format: String,
     pub pages: Vec<NativePage>,
     pub cover_page_id: String,
@@ -39,6 +40,8 @@ pub struct NativePublication {
     pub updated_at: String,
     pub is_favorite: bool,
     pub diagnostic: Option<String>,
+    pub custom_cover_path: Option<String>,
+    pub custom_cover_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

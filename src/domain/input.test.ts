@@ -6,14 +6,16 @@ describe('named input map', () => {
     const input = new InputMap();
     expect(input.resolve('ArrowRight')).toBe('next_page');
     expect(input.resolve('KeyF')).toBe('toggle_fullscreen');
+    expect(input.resolve('KeyN')).toBe('toggle_navigator');
+    expect(input.resolve('KeyB')).toBe('toggle_bookmark');
     expect(input.resolve('Unknown')).toBeUndefined();
   });
 
   it('rejects conflicts while allowing a deliberate rebind', () => {
     const input = new InputMap();
     expect(input.bind('next_page', 'KeyF')).toEqual({ ok: false, conflict: 'toggle_fullscreen' });
-    expect(input.bind('next_page', 'KeyN')).toEqual({ ok: true });
-    expect(input.resolve('KeyN')).toBe('next_page');
+    expect(input.bind('next_page', 'KeyX')).toEqual({ ok: true });
+    expect(input.resolve('KeyX')).toBe('next_page');
   });
 
   it('can restore the default route back to the library', () => {
@@ -29,5 +31,7 @@ describe('named input map', () => {
     expect(canRunActionWhileSettingsOpen('next_page')).toBe(false);
     expect(canRunActionWhileSettingsOpen('previous_page')).toBe(false);
     expect(canRunActionWhileSettingsOpen('toggle_fullscreen')).toBe(false);
+    expect(canRunActionWhileSettingsOpen('toggle_navigator')).toBe(false);
+    expect(canRunActionWhileSettingsOpen('toggle_bookmark')).toBe(false);
   });
 });

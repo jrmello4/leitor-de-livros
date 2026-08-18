@@ -4,6 +4,7 @@ use std::{
     sync::Mutex,
 };
 
+use image::{ImageFormat, ImageReader};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
@@ -21,7 +22,10 @@ const CACHE_MISSING_DIAGNOSTIC: &str =
 #[allow(dead_code)]
 const CACHE_UNREBUILDABLE_DIAGNOSTIC: &str =
     "The derived page cannot be reconstructed because its source reference is unavailable.";
-const MIGRATION_VERSION: i64 = 4;
+const CUSTOM_COVER_MISSING_DIAGNOSTIC: &str =
+    "The custom cover is unavailable; the original publication cover is shown.";
+const MIGRATION_VERSION: i64 = 5;
+const MAX_CUSTOM_COVER_BYTES: u64 = 10 * 1024 * 1024;
 
 pub struct LibraryDb {
     connection: Mutex<Connection>,
@@ -42,6 +46,7 @@ impl LibraryDb {
              PRAGMA synchronous = NORMAL;",
         )?;
         migrate(&mut connection)?;
+        retry_delete_tombstones(&cache_dir);
         retry_eviction_tombstones(&connection, &cache_dir);
         reconcile_cache_entries(&mut connection, &cache_dir)?;
 
@@ -62,7 +67,8 @@ impl LibraryDb {
             .map_err(|_| CoreError::from("database lock poisoned"))?;
         let mut statement = connection.prepare(
             "SELECT id, title, source_label, format, cover_page_id, direction,
-                    added_at, updated_at, is_favorite, diagnostic
+                    added_at, updated_at, is_favorite, diagnostic,
+                    custom_cover_cache, custom_cover_name
                FROM publications
               ORDER BY updated_at DESC, title COLLATE NOCASE ASC",
         )?;
@@ -78,6 +84,8 @@ impl LibraryDb {
                 updated_at: row.get(7)?,
                 is_favorite: row.get::<_, i64>(8)? != 0,
                 diagnostic: row.get(9)?,
+                custom_cover_cache: row.get(10)?,
+                custom_cover_name: row.get(11)?,
             })
         })?;
 
@@ -96,7 +104,8 @@ impl LibraryDb {
         let row = connection
             .query_row(
                 "SELECT id, title, source_label, format, cover_page_id, direction,
-                        added_at, updated_at, is_favorite, diagnostic
+                        added_at, updated_at, is_favorite, diagnostic,
+                        custom_cover_cache, custom_cover_name
                    FROM publications
                   WHERE source_path = ?1",
                 [source_path],
@@ -112,6 +121,8 @@ impl LibraryDb {
                         updated_at: row.get(7)?,
                         is_favorite: row.get::<_, i64>(8)? != 0,
                         diagnostic: row.get(9)?,
+                        custom_cover_cache: row.get(10)?,
+                        custom_cover_name: row.get(11)?,
                     })
                 },
             )
@@ -134,8 +145,9 @@ impl LibraryDb {
         transaction.execute(
             "INSERT INTO publications
                 (id, title, source_label, format, source_path, cover_page_id,
-                 direction, added_at, updated_at, diagnostic)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                 direction, added_at, updated_at, diagnostic,
+                 custom_cover_source, custom_cover_cache, custom_cover_name)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, NULL, NULL)",
             params![
                 publication.id,
                 publication.title,
@@ -235,6 +247,186 @@ impl LibraryDb {
             "UPDATE publications SET is_favorite = ?1, updated_at = ?2 WHERE id = ?3",
             params![if is_favorite { 1 } else { 0 }, now(), publication_id],
         )?;
+        Ok(())
+    }
+
+    pub fn set_custom_cover(&self, publication_id: &str, source_path: &str) -> CoreResult<()> {
+        let source = Path::new(source_path)
+            .canonicalize()
+            .map_err(|_| CoreError::from("custom cover source is unavailable"))?;
+        let metadata = std::fs::metadata(&source)?;
+        if !metadata.is_file() {
+            return Err(CoreError::from("custom cover source is not a file"));
+        }
+        if metadata.len() == 0 || metadata.len() > MAX_CUSTOM_COVER_BYTES {
+            return Err(CoreError::from("custom cover exceeds the 10 MiB limit"));
+        }
+        let image = ImageReader::open(&source)?
+            .with_guessed_format()?
+            .decode()?;
+        let source_name = source
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| CoreError::from("custom cover name is invalid"))?;
+        let publication_cache_dir = self.publication_cache_dir(publication_id)?;
+        std::fs::create_dir_all(&publication_cache_dir)?;
+        let target = publication_cache_dir.join("custom-cover.png");
+        let temporary = publication_cache_dir.join(format!(".custom-cover.{}.tmp", now()));
+        image.save_with_format(&temporary, ImageFormat::Png)?;
+
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| CoreError::from("database lock poisoned"))?;
+        let exists = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM publications WHERE id = ?1)",
+            [publication_id],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !exists {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(CoreError::from("publication does not exist"));
+        }
+
+        let backup = publication_cache_dir.join(format!(".custom-cover.{}.bak", now()));
+        if target.exists() {
+            std::fs::rename(&target, &backup)?;
+        }
+        if let Err(error) = std::fs::rename(&temporary, &target) {
+            if backup.exists() {
+                let _ = std::fs::rename(&backup, &target);
+            }
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error.into());
+        }
+
+        let transaction_result = (|| -> CoreResult<()> {
+            let transaction = connection.transaction()?;
+            transaction.execute(
+                "UPDATE publications
+                    SET custom_cover_source = ?1,
+                        custom_cover_cache = ?2,
+                        custom_cover_name = ?3,
+                        updated_at = ?4
+                  WHERE id = ?5",
+                params![
+                    source.to_string_lossy().as_ref(),
+                    target.to_string_lossy().as_ref(),
+                    source_name,
+                    now(),
+                    publication_id,
+                ],
+            )?;
+            transaction.commit()?;
+            Ok(())
+        })();
+        if let Err(error) = transaction_result {
+            let _ = std::fs::remove_file(&target);
+            if backup.exists() {
+                let _ = std::fs::rename(&backup, &target);
+            }
+            return Err(error);
+        }
+        let _ = std::fs::remove_file(&backup);
+        Ok(())
+    }
+
+    pub fn clear_custom_cover(&self, publication_id: &str) -> CoreResult<()> {
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| CoreError::from("database lock poisoned"))?;
+        let (cache_path, source_path, source_name) = connection
+            .query_row(
+                "SELECT custom_cover_cache, custom_cover_source, custom_cover_name
+                   FROM publications WHERE id = ?1",
+                [publication_id],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or_else(|| CoreError::from("publication does not exist or has no custom cover"))?;
+        let cache_root = self.cache_dir.canonicalize()?;
+        let source_canonical = source_path
+            .as_deref()
+            .and_then(|path| Path::new(path).canonicalize().ok());
+        let cover_target = cache_path
+            .as_deref()
+            .and_then(|path| Path::new(path).canonicalize().ok())
+            .filter(|path| {
+                path.starts_with(&cache_root)
+                    && path.is_file()
+                    && source_canonical.as_ref() != Some(path)
+            });
+        let mut staged_cover: Option<(PathBuf, PathBuf)> = None;
+        if let Some(target) = cover_target {
+            let backup = target.with_file_name(format!(".custom-cover-clear-{}.bak", now()));
+            std::fs::rename(&target, &backup)?;
+            staged_cover = Some((target, backup));
+        }
+
+        let transaction_result = (|| -> CoreResult<()> {
+            let transaction = connection.transaction()?;
+            let changed = transaction.execute(
+                "UPDATE publications
+                    SET custom_cover_source = NULL,
+                        custom_cover_cache = NULL,
+                        custom_cover_name = NULL,
+                        updated_at = ?1
+                  WHERE id = ?2",
+                params![now(), publication_id],
+            )?;
+            if changed != 1 {
+                return Err(CoreError::from("publication does not exist"));
+            }
+            transaction.commit()?;
+            Ok(())
+        })();
+        if let Err(error) = transaction_result {
+            if let Some((target, backup)) = staged_cover.take() {
+                if let Err(restore_error) = std::fs::rename(backup, target) {
+                    return Err(format!(
+                        "custom cover reset failed: {error}; rollback failed: {restore_error}"
+                    )
+                    .into());
+                }
+            }
+            return Err(error);
+        }
+
+        if let Some((target, backup)) = staged_cover {
+            if let Err(error) = std::fs::remove_file(&backup) {
+                let restore_file = std::fs::rename(&backup, &target);
+                if let Err(restore_error) = restore_file {
+                    return Err(format!(
+                        "custom cover cleanup failed: {error}; file rollback failed: {restore_error}"
+                    )
+                    .into());
+                }
+                let restore_metadata = (|| -> CoreResult<()> {
+                    let transaction = connection.transaction()?;
+                    transaction.execute(
+                        "UPDATE publications
+                            SET custom_cover_source = ?1,
+                                custom_cover_cache = ?2,
+                                custom_cover_name = ?3,
+                                updated_at = ?4
+                          WHERE id = ?5",
+                        params![source_path, cache_path, source_name, now(), publication_id],
+                    )?;
+                    transaction.commit()?;
+                    Ok(())
+                })();
+                restore_metadata?;
+                return Err(error.into());
+            }
+        }
         Ok(())
     }
 
@@ -385,7 +577,16 @@ impl LibraryDb {
         })
     }
 
+    #[allow(dead_code)]
     pub fn set_cache_limit(&self, max_bytes: i64) -> CoreResult<()> {
+        self.set_cache_limit_with_protected(max_bytes, &[])
+    }
+
+    pub fn set_cache_limit_with_protected(
+        &self,
+        max_bytes: i64,
+        protected_page_ids: &[String],
+    ) -> CoreResult<()> {
         if max_bytes <= 0 {
             return Err(CoreError::from("cache limit must be greater than zero"));
         }
@@ -402,7 +603,7 @@ impl LibraryDb {
             params![max_bytes, now()],
         )?;
         drop(connection);
-        self.enforce_cache_limit(&[])?;
+        self.enforce_cache_limit(protected_page_ids)?;
         Ok(())
     }
 
@@ -598,6 +799,15 @@ impl LibraryDb {
 
     #[allow(dead_code)]
     pub fn ensure_page_cache(&self, publication_id: &str, page_id: &str) -> CoreResult<NativePage> {
+        self.ensure_page_cache_with_protected(publication_id, page_id, &[])
+    }
+
+    pub fn ensure_page_cache_with_protected(
+        &self,
+        publication_id: &str,
+        page_id: &str,
+        additional_protected_page_ids: &[String],
+    ) -> CoreResult<NativePage> {
         let (mut page, format) = {
             let connection = self
                 .connection
@@ -630,7 +840,12 @@ impl LibraryDb {
                 .optional()?
                 .ok_or_else(|| CoreError::from("page does not belong to the publication"))?
         };
-        let protected_page_ids = self.protected_page_ids(publication_id, page.index)?;
+        let mut protected_page_ids = self.protected_page_ids(publication_id, page.index)?;
+        for protected_page_id in additional_protected_page_ids {
+            if !protected_page_ids.contains(protected_page_id) {
+                protected_page_ids.push(protected_page_id.clone());
+            }
+        }
         if let Some((_, byte_size)) =
             validated_cache_file(&self.cache_dir, Path::new(&page.cache_path))?
         {
@@ -708,19 +923,71 @@ impl LibraryDb {
         Ok(page)
     }
 
+    #[allow(dead_code)]
     pub fn clear_cache(&self) -> CoreResult<()> {
+        self.clear_cache_with_protected(&[])
+    }
+
+    pub fn clear_cache_with_protected(&self, protected_page_ids: &[String]) -> CoreResult<()> {
         let cache_root = self.cache_dir.canonicalize()?;
         let mut connection = self
             .connection
             .lock()
             .map_err(|_| CoreError::from("database lock poisoned"))?;
         let origin_paths = canonical_origin_paths(&connection)?;
-        remove_derived_files(&cache_root, &cache_root, &origin_paths)?;
+        let protected = protected_page_ids.iter().cloned().collect::<HashSet<_>>();
+        let protected_paths = {
+            let mut statement = connection.prepare(
+                "SELECT cache_path FROM cache_entries
+                  WHERE page_id = ?1",
+            )?;
+            let mut paths = HashSet::new();
+            for page_id in protected_page_ids {
+                let cache_path = statement
+                    .query_row([page_id], |row| row.get::<_, String>(0))
+                    .optional()?;
+                if let Some(cache_path) = cache_path {
+                    if let Some((path, _)) =
+                        validated_cache_file(&self.cache_dir, Path::new(&cache_path))?
+                    {
+                        paths.insert(path);
+                    }
+                }
+            }
+            paths
+        };
+        remove_derived_files_except(&cache_root, &cache_root, &origin_paths, &protected_paths)?;
+
+        let entries = {
+            let mut statement = connection.prepare(
+                "SELECT page_id, publication_id
+                   FROM cache_entries",
+            )?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+        let affected_publications = entries
+            .iter()
+            .filter(|(page_id, _)| !protected.contains(page_id))
+            .map(|(_, publication_id)| publication_id.clone())
+            .collect::<HashSet<_>>();
         let transaction = connection.transaction()?;
-        transaction.execute("DELETE FROM cache_entries", [])?;
-        transaction.execute("UPDATE pages SET cache_path = ''", [])?;
-        mark_publications_cache_missing(&transaction)?;
+        for (page_id, _) in entries {
+            if protected.contains(&page_id) {
+                continue;
+            }
+            transaction.execute("DELETE FROM cache_entries WHERE page_id = ?1", [&page_id])?;
+            transaction.execute("UPDATE pages SET cache_path = '' WHERE id = ?1", [&page_id])?;
+        }
+        for publication_id in affected_publications {
+            mark_publication_cache_missing(&transaction, &publication_id)?;
+        }
         transaction.commit()?;
+        remove_empty_directories(&cache_root)?;
         Ok(())
     }
 
@@ -731,30 +998,102 @@ impl LibraryDb {
             .connection
             .lock()
             .map_err(|_| CoreError::from("database lock poisoned"))?;
-        let origin_paths = canonical_origin_paths(&connection)?;
-        let transaction = connection.transaction()?;
-        for table in [
-            "bookmarks",
-            "reader_states",
-            "cache_entries",
-            "panel_graphs",
-            "progress",
-            "pages",
-        ] {
-            transaction.execute(
-                &format!("DELETE FROM {table} WHERE publication_id = ?1"),
-                [publication_id],
-            )?;
+        let exists: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM publications WHERE id = ?1)",
+            [publication_id],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Err(CoreError::from("publication does not exist"));
         }
-        transaction.execute("DELETE FROM publications WHERE id = ?1", [publication_id])?;
-        transaction.commit()?;
-        drop(connection);
+        let origin_paths = canonical_origin_paths(&connection)?;
 
+        // Stage derived files before changing SQLite. If any filesystem step
+        // fails, the publication row and all dependent metadata remain intact.
+        // Origins are deliberately skipped, including origins that happen to
+        // be located inside the derived-cache tree.
+        let staging_root = cache_root.join(format!(".{}.{}.delete", publication_id, now()));
+        let mut staged_files = Vec::new();
         if cache_publication_dir.exists() {
-            remove_derived_files(&cache_root, &cache_publication_dir, &origin_paths)?;
-            if cache_publication_dir.read_dir()?.next().is_none() {
-                std::fs::remove_dir(cache_publication_dir)?;
+            std::fs::create_dir_all(&staging_root)?;
+            if let Err(error) = stage_derived_files(
+                &cache_root,
+                &cache_publication_dir,
+                &origin_paths,
+                &staging_root,
+                &mut staged_files,
+            ) {
+                let restore_error = restore_staged_files(&staged_files).err();
+                let _ = std::fs::remove_dir_all(&staging_root);
+                if let Some(restore_error) = restore_error {
+                    return Err(CoreError::from(format!(
+                        "cache cleanup failed: {error}; cache rollback failed: {restore_error}"
+                    )));
+                }
+                return Err(error);
             }
+
+            // Remove only the now-empty derived directories before opening the
+            // metadata transaction. The staged bytes must remain available
+            // until the transaction commits so a database failure can restore
+            // the complete cache state.
+            if let Err(error) = remove_empty_directories(&cache_publication_dir) {
+                let restore_error = restore_staged_files(&staged_files).err();
+                let _ = std::fs::remove_dir_all(&staging_root);
+                if let Some(restore_error) = restore_error {
+                    return Err(CoreError::from(format!(
+                        "cache cleanup failed: {error}; cache rollback failed: {restore_error}"
+                    )));
+                }
+                return Err(error);
+            }
+        }
+
+        let transaction_result = (|| -> CoreResult<()> {
+            let transaction = connection.transaction()?;
+            for table in [
+                "bookmarks",
+                "reader_states",
+                "cache_entries",
+                "panel_graphs",
+                "progress",
+                "pages",
+            ] {
+                transaction.execute(
+                    &format!("DELETE FROM {table} WHERE publication_id = ?1"),
+                    [publication_id],
+                )?;
+            }
+            let deleted =
+                transaction.execute("DELETE FROM publications WHERE id = ?1", [publication_id])?;
+            if deleted != 1 {
+                return Err(CoreError::from("publication disappeared during removal"));
+            }
+            transaction.commit()?;
+            Ok(())
+        })();
+        if let Err(error) = transaction_result {
+            let restore_error = restore_staged_files(&staged_files).err();
+            let _ = std::fs::remove_dir_all(&staging_root);
+            drop(connection);
+            if let Some(restore_error) = restore_error {
+                return Err(CoreError::from(format!(
+                    "publication removal failed: {error}; cache rollback failed: {restore_error}"
+                )));
+            }
+            return Err(error);
+        }
+        drop(connection);
+        // The database commit is the point of no return. A leftover empty
+        // tombstone is harmless and can be retried later, so cleanup failure
+        // here must not report a failed deletion after metadata is gone.
+        let _ = std::fs::remove_dir_all(&staging_root);
+        let cache_publication_is_empty = cache_publication_dir
+            .read_dir()
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(false);
+        if cache_publication_is_empty {
+            let _ = std::fs::remove_dir(&cache_publication_dir);
         }
         Ok(())
     }
@@ -775,11 +1114,11 @@ impl LibraryDb {
     }
 
     pub fn save_profile(&self, profile: &Value) -> CoreResult<()> {
+        let version = validate_profile_payload(profile)?;
         let connection = self
             .connection
             .lock()
             .map_err(|_| CoreError::from("database lock poisoned"))?;
-        let version = profile.get("version").and_then(Value::as_i64).unwrap_or(1);
         connection.execute(
             "INSERT INTO profiles (id, version, payload_json, updated_at)
              VALUES ('default', ?1, ?2, ?3)
@@ -939,11 +1278,33 @@ impl LibraryDb {
             .unwrap_or(0)
             .max(0) as usize;
         let progress = calculate_progress(current_page, pages.len(), &row.direction);
+        let source_names = if row.format == "images" {
+            pages.iter().map(|page| page.name.clone()).collect()
+        } else {
+            vec![row.source_label.clone()]
+        };
+
+        let custom_cover_path = row
+            .custom_cover_cache
+            .as_deref()
+            .and_then(|path| self.valid_custom_cover_path(path));
+        let mut diagnostic = row.diagnostic;
+        if row.custom_cover_cache.is_some() && custom_cover_path.is_none() {
+            diagnostic = Some(match diagnostic {
+                Some(existing) if !existing.contains(CUSTOM_COVER_MISSING_DIAGNOSTIC) => {
+                    format!("{existing} {CUSTOM_COVER_MISSING_DIAGNOSTIC}")
+                }
+                Some(existing) => existing,
+                None => CUSTOM_COVER_MISSING_DIAGNOSTIC.to_owned(),
+            });
+        }
+        let has_custom_cover_path = custom_cover_path.is_some();
 
         Ok(NativePublication {
             id: row.id,
             title: row.title,
             source_label: row.source_label,
+            source_names,
             format: row.format,
             cover_page_id: row.cover_page_id,
             current_page: current_page.min(pages.len().saturating_sub(1)),
@@ -952,9 +1313,31 @@ impl LibraryDb {
             added_at: row.added_at,
             updated_at: row.updated_at,
             is_favorite: row.is_favorite,
-            diagnostic: row.diagnostic,
+            diagnostic,
+            custom_cover_path,
+            custom_cover_name: if has_custom_cover_path {
+                row.custom_cover_name
+            } else {
+                None
+            },
             pages,
         })
+    }
+
+    fn valid_custom_cover_path(&self, path: &str) -> Option<String> {
+        let candidate = Path::new(path);
+        let cache_root = self.cache_dir.canonicalize().ok()?;
+        let canonical = candidate.canonicalize().ok()?;
+        if !canonical.starts_with(cache_root) || !canonical.is_file() {
+            return None;
+        }
+        ImageReader::open(&canonical)
+            .ok()?
+            .with_guessed_format()
+            .ok()?
+            .decode()
+            .ok()?;
+        canonical.to_str().map(str::to_owned)
     }
 }
 
@@ -970,6 +1353,8 @@ struct PublicationRow {
     updated_at: String,
     is_favorite: bool,
     diagnostic: Option<String>,
+    custom_cover_cache: Option<String>,
+    custom_cover_name: Option<String>,
 }
 
 fn migrate(connection: &mut Connection) -> CoreResult<()> {
@@ -1115,10 +1500,29 @@ fn migrate(connection: &mut Connection) -> CoreResult<()> {
         )?;
     }
 
-    if current_version < MIGRATION_VERSION {
+    if current_version < 4 {
         backfill_deterministic_source_refs(&transaction)?;
         transaction.execute(
             "INSERT INTO schema_migrations (version, applied_at) VALUES (4, ?1)",
+            params![now()],
+        )?;
+    }
+
+    if current_version < MIGRATION_VERSION {
+        for (column, definition) in [
+            ("custom_cover_source", "TEXT"),
+            ("custom_cover_cache", "TEXT"),
+            ("custom_cover_name", "TEXT"),
+        ] {
+            if !column_exists(&transaction, "publications", column)? {
+                transaction.execute(
+                    &format!("ALTER TABLE publications ADD COLUMN {column} {definition}"),
+                    [],
+                )?;
+            }
+        }
+        transaction.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (5, ?1)",
             params![now()],
         )?;
     }
@@ -1306,6 +1710,19 @@ fn canonical_origin_paths(connection: &Connection) -> CoreResult<HashSet<PathBuf
             .filter_map(|source_path| legacy_origin_path(source_path))
             .filter_map(|path| path.canonicalize().ok()),
     );
+    let mut statement = connection.prepare(
+        "SELECT custom_cover_source FROM publications
+          WHERE custom_cover_source IS NOT NULL AND custom_cover_source <> ''",
+    )?;
+    let custom_cover_sources = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    origin_paths.extend(
+        custom_cover_sources
+            .iter()
+            .map(Path::new)
+            .filter_map(|path| path.canonicalize().ok()),
+    );
     Ok(origin_paths)
 }
 
@@ -1323,6 +1740,42 @@ fn retry_eviction_tombstones(connection: &Connection, cache_dir: &Path) {
         return;
     };
     remove_eviction_tombstones(&cache_root, &cache_root, &origin_paths);
+}
+
+fn retry_delete_tombstones(cache_dir: &Path) {
+    let Ok(cache_root) = cache_dir.canonicalize() else {
+        return;
+    };
+    remove_delete_tombstones(&cache_root, &cache_root);
+}
+
+fn remove_delete_tombstones(cache_root: &Path, directory: &Path) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        let is_delete_tombstone = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with('.') && name.ends_with(".delete"));
+        if is_delete_tombstone {
+            if path
+                .canonicalize()
+                .is_ok_and(|canonical| canonical.starts_with(cache_root))
+            {
+                let _ = std::fs::remove_dir_all(path);
+            }
+            continue;
+        }
+        remove_delete_tombstones(cache_root, &path);
+    }
 }
 
 fn remove_eviction_tombstones(
@@ -1358,24 +1811,252 @@ fn remove_eviction_tombstones(
     }
 }
 
-fn remove_derived_files(
+fn remove_derived_files_except(
     cache_root: &Path,
     directory: &Path,
     origin_paths: &HashSet<PathBuf>,
+    protected_paths: &HashSet<PathBuf>,
 ) -> CoreResult<()> {
     for entry in std::fs::read_dir(directory)? {
         let entry = entry?;
         let path = entry.path();
         let file_type = entry.file_type()?;
         if file_type.is_dir() {
-            remove_derived_files(cache_root, &path, origin_paths)?;
+            remove_derived_files_except(cache_root, &path, origin_paths, protected_paths)?;
             if path.read_dir()?.next().is_none() {
                 std::fs::remove_dir(path)?;
             }
         } else {
             let canonical = path.canonicalize()?;
-            if canonical.starts_with(cache_root) && !origin_paths.contains(&canonical) {
+            if canonical.starts_with(cache_root)
+                && !origin_paths.contains(&canonical)
+                && !protected_paths.contains(&canonical)
+            {
                 std::fs::remove_file(path)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_profile_payload(profile: &Value) -> CoreResult<i64> {
+    let object = profile
+        .as_object()
+        .ok_or_else(|| CoreError::from("profile payload must be an object"))?;
+    let version = object
+        .get("version")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| CoreError::from("profile payload version is required"))?;
+    match version {
+        1 => {
+            validate_profile_object(object, false)?;
+            Ok(1)
+        }
+        2 => {
+            let active_id = object
+                .get("activeProfileId")
+                .and_then(Value::as_str)
+                .filter(|value| is_valid_profile_id(value))
+                .ok_or_else(|| CoreError::from("active profile id is invalid"))?;
+            let profiles = object
+                .get("profiles")
+                .and_then(Value::as_array)
+                .filter(|profiles| !profiles.is_empty())
+                .ok_or_else(|| CoreError::from("profile store must contain a profile"))?;
+            let mut ids = HashSet::new();
+            for profile in profiles {
+                let profile_object = profile
+                    .as_object()
+                    .ok_or_else(|| CoreError::from("profile must be an object"))?;
+                validate_profile_object(profile_object, true)?;
+                let id = profile_object
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| CoreError::from("profile id is required"))?;
+                if !ids.insert(id.to_owned()) {
+                    return Err(CoreError::from("profile ids must be unique"));
+                }
+            }
+            if !ids.contains(active_id) {
+                return Err(CoreError::from("active profile must exist"));
+            }
+            Ok(2)
+        }
+        _ => Err(CoreError::from("profile payload version is not supported")),
+    }
+}
+
+fn validate_profile_object(
+    profile: &serde_json::Map<String, Value>,
+    require_zoom: bool,
+) -> CoreResult<()> {
+    if profile.get("version").and_then(Value::as_i64) != Some(1) {
+        return Err(CoreError::from("profile version is not supported"));
+    }
+    if require_zoom {
+        let id = profile
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|value| is_valid_profile_id(value))
+            .ok_or_else(|| CoreError::from("profile id is invalid"))?;
+        if id.is_empty() {
+            return Err(CoreError::from("profile id is invalid"));
+        }
+    }
+    let name = profile
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && value.chars().count() <= 80)
+        .ok_or_else(|| CoreError::from("profile name is invalid"))?;
+    if name.is_empty() {
+        return Err(CoreError::from("profile name is invalid"));
+    }
+    validate_enum(profile, "mode", &["single", "spread"])?;
+    validate_enum(profile, "direction", &["ltr", "rtl"])?;
+    validate_enum(profile, "contrast", &["standard", "high"])?;
+    validate_enum(profile, "layoutZone", &["top", "bottom", "left", "right"])?;
+    if require_zoom || profile.contains_key("zoomMode") {
+        validate_enum(profile, "zoomMode", &["page", "width", "manual"])?;
+    }
+    if profile
+        .get("reducedMotion")
+        .and_then(Value::as_bool)
+        .is_none()
+    {
+        return Err(CoreError::from("reduced motion must be boolean"));
+    }
+    let duration = profile
+        .get("pageTurnDuration")
+        .and_then(Value::as_i64)
+        .filter(|value| (120..=1200).contains(value))
+        .ok_or_else(|| CoreError::from("turn duration is invalid"))?;
+    let _ = duration;
+    if require_zoom || profile.contains_key("zoomScale") {
+        let scale = profile
+            .get("zoomScale")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite() && (0.5..=3.0).contains(value))
+            .ok_or_else(|| CoreError::from("zoom scale is invalid"))?;
+        let _ = scale;
+    }
+    let bindings = profile
+        .get("bindings")
+        .and_then(Value::as_object)
+        .ok_or_else(|| CoreError::from("bindings must be an object"))?;
+    for action in [
+        "next_page",
+        "previous_page",
+        "toggle_library",
+        "toggle_fullscreen",
+        "toggle_settings",
+        "toggle_spread",
+        "toggle_navigator",
+        "toggle_bookmark",
+        "cancel",
+    ] {
+        if bindings.get(action).is_none()
+            && matches!(action, "toggle_navigator" | "toggle_bookmark")
+        {
+            continue;
+        }
+        let valid = bindings
+            .get(action)
+            .and_then(Value::as_array)
+            .map(|codes| {
+                codes.len() <= 2
+                    && codes.iter().all(|code| {
+                        code.as_str()
+                            .map(|value| !value.is_empty() && value.chars().count() <= 64)
+                            .unwrap_or(false)
+                    })
+            })
+            .unwrap_or(false);
+        if !valid {
+            return Err(CoreError::from("bindings contain an invalid action"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_enum(
+    profile: &serde_json::Map<String, Value>,
+    field: &str,
+    allowed: &[&str],
+) -> CoreResult<()> {
+    let value = profile
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| CoreError::from(format!("{field} is required")))?;
+    if !allowed.contains(&value) {
+        return Err(CoreError::from(format!("{field} is invalid")));
+    }
+    Ok(())
+}
+
+fn is_valid_profile_id(value: &str) -> bool {
+    value.len() >= 2
+        && value.len() <= 80
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-')
+}
+
+fn stage_derived_files(
+    cache_root: &Path,
+    directory: &Path,
+    origin_paths: &HashSet<PathBuf>,
+    staging_root: &Path,
+    staged_files: &mut Vec<(PathBuf, PathBuf)>,
+) -> CoreResult<()> {
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            stage_derived_files(cache_root, &path, origin_paths, staging_root, staged_files)?;
+            continue;
+        }
+
+        let canonical = path.canonicalize()?;
+        if !canonical.starts_with(cache_root) || origin_paths.contains(&canonical) {
+            continue;
+        }
+
+        let relative = canonical
+            .strip_prefix(cache_root)
+            .map_err(|_| CoreError::from("derived cache path escaped its root"))?;
+        let staged_path = staging_root.join(relative);
+        if let Some(parent) = staged_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(&path, &staged_path)?;
+        staged_files.push((path, staged_path));
+    }
+    Ok(())
+}
+
+fn restore_staged_files(staged_files: &[(PathBuf, PathBuf)]) -> CoreResult<()> {
+    for (original, staged) in staged_files.iter().rev() {
+        if !staged.exists() {
+            continue;
+        }
+        if let Some(parent) = original.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(staged, original)?;
+    }
+    Ok(())
+}
+
+fn remove_empty_directories(directory: &Path) -> CoreResult<()> {
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            remove_empty_directories(&path)?;
+            if path.read_dir()?.next().is_none() {
+                std::fs::remove_dir(path)?;
             }
         }
     }
@@ -1395,22 +2076,6 @@ fn mark_publication_cache_missing(
             END
           WHERE id = ?2",
         params![CACHE_MISSING_DIAGNOSTIC, publication_id],
-    )?;
-    Ok(())
-}
-
-fn mark_publications_cache_missing(transaction: &rusqlite::Transaction<'_>) -> CoreResult<()> {
-    transaction.execute(
-        "UPDATE publications
-            SET diagnostic = CASE
-                WHEN diagnostic IS NULL OR diagnostic = '' THEN ?1
-                WHEN instr(diagnostic, ?1) > 0 THEN diagnostic
-                ELSE diagnostic || ' ' || ?1
-            END
-          WHERE EXISTS (
-                SELECT 1 FROM pages WHERE pages.publication_id = publications.id
-          )",
-        [CACHE_MISSING_DIAGNOSTIC],
     )?;
     Ok(())
 }
@@ -1496,6 +2161,63 @@ mod tests {
             .expect("insert publication");
     }
 
+    fn write_test_png(path: &Path) {
+        use std::io::Cursor;
+
+        let mut bytes = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(3, 4)
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .expect("encode png");
+        std::fs::write(path, bytes.into_inner()).expect("write png");
+    }
+
+    #[test]
+    fn custom_cover_round_trip_preserves_original_and_cleans_derived_data() {
+        let root = temporary_root("custom-cover");
+        std::fs::create_dir_all(&root).expect("root");
+        let publication_source = root.join("publication.cbz");
+        let cover_source = root.join("replacement.png");
+        let original_bytes = b"original publication";
+        std::fs::write(&publication_source, original_bytes).expect("publication source");
+        write_test_png(&cover_source);
+        let database = LibraryDb::open(root.clone()).expect("database");
+        insert_test_publication(&database, &publication_source.to_string_lossy());
+
+        database
+            .set_custom_cover("publication-1", &cover_source.to_string_lossy())
+            .expect("set custom cover");
+        let publication = database
+            .list_publications()
+            .expect("publications")
+            .remove(0);
+        assert_eq!(
+            publication.custom_cover_name.as_deref(),
+            Some("replacement.png")
+        );
+        assert!(publication
+            .custom_cover_path
+            .as_deref()
+            .is_some_and(|path| Path::new(path).exists()));
+        assert_eq!(
+            std::fs::read(&publication_source).expect("source bytes"),
+            original_bytes
+        );
+
+        database
+            .clear_custom_cover("publication-1")
+            .expect("clear custom cover");
+        let cleared = database
+            .list_publications()
+            .expect("publications")
+            .remove(0);
+        assert!(cleared.custom_cover_path.is_none());
+        assert!(cleared.custom_cover_name.is_none());
+        assert!(cover_source.exists());
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
     #[test]
     fn migration_is_idempotent_and_profile_round_trips() {
         let mut connection = Connection::open_in_memory().expect("in-memory sqlite");
@@ -1519,6 +2241,167 @@ mod tests {
             )
             .expect("default cache limit");
         assert_eq!(cache_limit, TWO_GIB);
+    }
+
+    #[test]
+    fn profile_ipc_payload_validates_named_profile_schema() {
+        let root = temporary_root("profile-validation");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        let valid = serde_json::json!({
+            "version": 2,
+            "activeProfileId": "paper-atelier",
+            "profiles": [{
+                "id": "paper-atelier",
+                "version": 1,
+                "name": "Paper Atelier",
+                "mode": "single",
+                "direction": "ltr",
+                "contrast": "standard",
+                "reducedMotion": false,
+                "pageTurnDuration": 420,
+                "layoutZone": "top",
+                "zoomMode": "page",
+                "zoomScale": 1.0,
+                "bindings": {
+                    "next_page": ["ArrowRight"],
+                    "previous_page": ["ArrowLeft"],
+                    "toggle_library": ["KeyL"],
+                    "toggle_fullscreen": ["KeyF"],
+                    "toggle_settings": ["KeyS"],
+                    "toggle_spread": ["KeyM"],
+                    "cancel": ["Escape"]
+                }
+            }]
+        });
+        database.save_profile(&valid).expect("valid profile");
+        assert_eq!(
+            database.load_profile().expect("load profile"),
+            Some(valid.clone())
+        );
+
+        for (field, value) in [
+            ("direction", "diagonal"),
+            ("zoomMode", "warp"),
+            ("layoutZone", "center"),
+        ] {
+            let mut invalid = valid.clone();
+            invalid["profiles"][0][field] = serde_json::json!(value);
+            assert!(
+                database.save_profile(&invalid).is_err(),
+                "{field} should be rejected"
+            );
+        }
+        assert_eq!(
+            database.load_profile().expect("load after rejected writes"),
+            Some(valid)
+        );
+        drop(database);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_profile_payload_survives_native_restart_for_frontend_migration() {
+        let root = temporary_root("profile-restart");
+        let legacy = serde_json::json!({
+            "version": 1,
+            "name": "Archive mode",
+            "mode": "spread",
+            "direction": "rtl",
+            "contrast": "high",
+            "reducedMotion": true,
+            "pageTurnDuration": 720,
+            "layoutZone": "bottom",
+            "bindings": {
+                "next_page": ["KeyN"],
+                "previous_page": ["KeyP"],
+                "toggle_library": ["KeyL"],
+                "toggle_fullscreen": ["KeyF"],
+                "toggle_settings": ["KeyS"],
+                "toggle_spread": ["KeyM"],
+                "cancel": ["Escape"]
+            }
+        });
+        let database = LibraryDb::open(root.clone()).expect("database");
+        database.save_profile(&legacy).expect("legacy profile");
+        assert_eq!(
+            database.load_profile().expect("load legacy"),
+            Some(legacy.clone())
+        );
+        drop(database);
+
+        let reopened = LibraryDb::open(root.clone()).expect("reopen database");
+        assert_eq!(
+            reopened.load_profile().expect("load after restart"),
+            Some(legacy)
+        );
+        drop(reopened);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn named_profile_store_round_trips_across_native_restart() {
+        let root = temporary_root("named-profile-restart");
+        let store = serde_json::json!({
+            "version": 2,
+            "activeProfileId": "night-study",
+            "profiles": [
+                {
+                    "id": "paper-atelier",
+                    "version": 1,
+                    "name": "Paper Atelier",
+                    "mode": "single",
+                    "direction": "ltr",
+                    "contrast": "standard",
+                    "reducedMotion": false,
+                    "pageTurnDuration": 420,
+                    "layoutZone": "top",
+                    "zoomMode": "page",
+                    "zoomScale": 1.0,
+                    "bindings": {
+                        "next_page": ["ArrowRight"],
+                        "previous_page": ["ArrowLeft"],
+                        "toggle_library": ["KeyL"],
+                        "toggle_fullscreen": ["KeyF"],
+                        "toggle_settings": ["KeyS"],
+                        "toggle_spread": ["KeyM"],
+                        "cancel": ["Escape"]
+                    }
+                },
+                {
+                    "id": "night-study",
+                    "version": 1,
+                    "name": "Night Study",
+                    "mode": "spread",
+                    "direction": "rtl",
+                    "contrast": "high",
+                    "reducedMotion": true,
+                    "pageTurnDuration": 720,
+                    "layoutZone": "bottom",
+                    "zoomMode": "manual",
+                    "zoomScale": 1.5,
+                    "bindings": {
+                        "next_page": ["KeyN"],
+                        "previous_page": ["KeyP"],
+                        "toggle_library": ["KeyL"],
+                        "toggle_fullscreen": ["KeyF"],
+                        "toggle_settings": ["KeyS"],
+                        "toggle_spread": ["KeyM"],
+                        "cancel": ["Escape"]
+                    }
+                }
+            ]
+        });
+        let database = LibraryDb::open(root.clone()).expect("database");
+        database.save_profile(&store).expect("named profile store");
+        drop(database);
+
+        let reopened = LibraryDb::open(root.clone()).expect("reopen database");
+        assert_eq!(
+            reopened.load_profile().expect("load named profiles"),
+            Some(store)
+        );
+        drop(reopened);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -2047,6 +2930,78 @@ mod tests {
     }
 
     #[test]
+    fn failed_cache_cleanup_keeps_publication_metadata_and_source_intact() {
+        let root = temporary_root("delete-cache-failure");
+        let source_path = root.join("external-source.cbz");
+        let source_bytes = b"source must survive a failed removal";
+        std::fs::create_dir_all(&root).expect("root");
+        std::fs::write(&source_path, source_bytes).expect("source");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        insert_test_publication(&database, &source_path.to_string_lossy());
+
+        let cache_path = database.cache_dir().join("publication-1");
+        std::fs::remove_dir_all(&cache_path).expect("remove cache directory");
+        std::fs::write(&cache_path, b"cache path is not a directory").expect("blocking cache path");
+
+        let result = database.delete_publication("publication-1");
+
+        assert!(result.is_err(), "invalid cache path must fail removal");
+        assert_eq!(database.list_publications().expect("publications").len(), 1);
+        assert_eq!(
+            std::fs::read(&source_path).expect("source remains"),
+            source_bytes
+        );
+        assert!(
+            cache_path.is_file(),
+            "failed cleanup must leave the cache path intact"
+        );
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
+    fn failed_metadata_transaction_restores_staged_cache_and_metadata() {
+        let root = temporary_root("delete-db-failure");
+        let source_path = root.join("external-source.cbz");
+        let source_bytes = b"source must survive a failed transaction";
+        std::fs::create_dir_all(&root).expect("root");
+        std::fs::write(&source_path, source_bytes).expect("source");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        insert_test_publication(&database, &source_path.to_string_lossy());
+        let cache_path = database
+            .cache_dir()
+            .join("publication-1")
+            .join("page-1.png");
+        let cache_bytes = std::fs::read(&cache_path).expect("cache bytes");
+        let connection = database.connection.lock().expect("database lock");
+        connection
+            .execute_batch(
+                "CREATE TRIGGER block_publication_delete
+                 BEFORE DELETE ON publications
+                 BEGIN SELECT RAISE(ABORT, 'blocked by test'); END;",
+            )
+            .expect("delete trigger");
+        drop(connection);
+
+        let result = database.delete_publication("publication-1");
+
+        assert!(result.is_err());
+        assert_eq!(database.list_publications().expect("publications").len(), 1);
+        assert_eq!(
+            std::fs::read(&cache_path).expect("restored cache"),
+            cache_bytes
+        );
+        assert_eq!(
+            std::fs::read(&source_path).expect("source remains"),
+            source_bytes
+        );
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
     fn deleting_publication_preserves_another_publications_origin_inside_its_cache_tree() {
         let root = temporary_root("delete-cross-publication-origin");
         let database = LibraryDb::open(root.clone()).expect("database");
@@ -2228,6 +3183,74 @@ mod tests {
     }
 
     #[test]
+    fn cache_limit_and_clear_keep_the_active_working_set() {
+        let root = temporary_root("cache-working-set");
+        std::fs::create_dir_all(&root).expect("root");
+        let source_path = root.join("source.png");
+        std::fs::write(&source_path, b"source").expect("source");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        let publication_id = "publication-working-set";
+        let publication_cache = database.cache_dir().join(publication_id);
+        std::fs::create_dir_all(&publication_cache).expect("cache directory");
+        let pages = ["page-current", "page-adjacent", "page-old"]
+            .iter()
+            .enumerate()
+            .map(|(index, page_id)| {
+                let cache_path = publication_cache.join(format!("{}.png", page_id));
+                std::fs::write(&cache_path, [index as u8; 4]).expect("cache page");
+                NewPage {
+                    id: (*page_id).to_owned(),
+                    index,
+                    name: format!("{}.png", page_id),
+                    cache_path,
+                    source_ref: PageSourceRef::Image {
+                        path: source_path.to_string_lossy().into_owned(),
+                    },
+                    width: 1,
+                    height: 1,
+                }
+            })
+            .collect::<Vec<_>>();
+        database
+            .insert_publication(&NewPublication {
+                id: publication_id.to_owned(),
+                title: "Working set".to_owned(),
+                source_label: "source".to_owned(),
+                source_path: source_path.to_string_lossy().into_owned(),
+                format: "images".to_owned(),
+                pages,
+                cover_page_id: "page-current".to_owned(),
+                current_page: 0,
+                direction: "ltr".to_owned(),
+                added_at: "0".to_owned(),
+                updated_at: "0".to_owned(),
+                diagnostic: None,
+            })
+            .expect("publication");
+
+        let protected = vec!["page-current".to_owned(), "page-adjacent".to_owned()];
+        database
+            .set_cache_limit_with_protected(8, &protected)
+            .expect("protected cache limit");
+
+        assert!(publication_cache.join("page-current.png").exists());
+        assert!(publication_cache.join("page-adjacent.png").exists());
+        assert!(!publication_cache.join("page-old.png").exists());
+
+        database
+            .clear_cache_with_protected(&protected)
+            .expect("protected clear cache");
+
+        assert!(publication_cache.join("page-current.png").exists());
+        assert!(publication_cache.join("page-adjacent.png").exists());
+        assert!(!publication_cache.join("page-old.png").exists());
+        assert_eq!(database.cache_info().expect("cache info").entry_count, 2);
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
     fn cache_hit_preserves_an_existing_pin() {
         let root = temporary_root("cache-pin-hit");
         std::fs::create_dir_all(&root).expect("root");
@@ -2306,6 +3329,23 @@ mod tests {
         std::fs::create_dir_all(&publication_cache).expect("publication cache");
         let tombstone = publication_cache.join(".page-1.123.evict");
         std::fs::write(&tombstone, b"evicted derived bytes").expect("tombstone");
+        drop(database);
+
+        let reopened = LibraryDb::open(root.clone()).expect("reopen database");
+
+        assert!(!tombstone.exists());
+        drop(reopened);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
+    fn opening_database_retries_removal_of_publication_delete_tombstones() {
+        let root = temporary_root("cache-delete-retry");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        let tombstone = database.cache_dir().join(".publication-1.123.delete");
+        std::fs::create_dir_all(&tombstone).expect("delete tombstone");
+        std::fs::write(tombstone.join("page-1.png"), b"staged derived bytes")
+            .expect("staged bytes");
         drop(database);
 
         let reopened = LibraryDb::open(root.clone()).expect("reopen database");

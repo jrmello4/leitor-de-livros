@@ -104,25 +104,60 @@ fn get_cache_info(database: State<'_, LibraryDb>) -> Result<CacheInfo, String> {
 }
 
 #[tauri::command]
-fn set_cache_limit(max_bytes: i64, database: State<'_, LibraryDb>) -> Result<(), String> {
+fn set_cache_limit(
+    max_bytes: i64,
+    protected_page_ids: Option<Vec<String>>,
+    database: State<'_, LibraryDb>,
+) -> Result<(), String> {
     database
-        .set_cache_limit(max_bytes)
+        .set_cache_limit_with_protected(max_bytes, protected_page_ids.as_deref().unwrap_or(&[]))
         .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-fn clear_cache(database: State<'_, LibraryDb>) -> Result<(), String> {
-    database.clear_cache().map_err(|error| error.to_string())
+fn set_custom_cover(
+    publication_id: String,
+    source_path: String,
+    database: State<'_, LibraryDb>,
+) -> Result<(), String> {
+    database
+        .set_custom_cover(&publication_id, &source_path)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn clear_custom_cover(
+    publication_id: String,
+    database: State<'_, LibraryDb>,
+) -> Result<(), String> {
+    database
+        .clear_custom_cover(&publication_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn clear_cache(
+    protected_page_ids: Option<Vec<String>>,
+    database: State<'_, LibraryDb>,
+) -> Result<(), String> {
+    database
+        .clear_cache_with_protected(protected_page_ids.as_deref().unwrap_or(&[]))
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 fn ensure_page_cache(
     publication_id: String,
     page_id: String,
+    protected_page_ids: Option<Vec<String>>,
     database: State<'_, LibraryDb>,
 ) -> Result<models::NativePage, String> {
     database
-        .ensure_page_cache(&publication_id, &page_id)
+        .ensure_page_cache_with_protected(
+            &publication_id,
+            &page_id,
+            protected_page_ids.as_deref().unwrap_or(&[]),
+        )
         .map_err(|error| error.to_string())
 }
 
@@ -199,6 +234,8 @@ pub fn run() {
             import_publications,
             save_progress,
             set_publication_favorite,
+            set_custom_cover,
+            clear_custom_cover,
             list_bookmarks,
             upsert_bookmark,
             remove_bookmark,
@@ -248,6 +285,7 @@ mod tests {
             id: "publication-1".to_owned(),
             title: "Test".to_owned(),
             source_label: "Source".to_owned(),
+            source_names: vec!["Source".to_owned()],
             format: "images".to_owned(),
             pages: Vec::new(),
             cover_page_id: "page-1".to_owned(),
@@ -258,6 +296,8 @@ mod tests {
             updated_at: "2".to_owned(),
             is_favorite: true,
             diagnostic: None,
+            custom_cover_path: None,
+            custom_cover_name: None,
         };
         let reader_state = NativeReaderState {
             zoom_mode: "manual".to_owned(),

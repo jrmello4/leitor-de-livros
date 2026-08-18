@@ -813,6 +813,113 @@ img {
     #0a1319;
 }
 
+.cover-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.cover-file-button {
+  position: relative;
+  cursor: pointer;
+}
+
+.cover-file-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.reader-view[data-layout-zone="bottom"] {
+  grid-template-rows: 1fr 82px 72px;
+}
+
+.reader-view[data-layout-zone="bottom"] .reading-stage {
+  order: 1;
+}
+
+.reader-view[data-layout-zone="bottom"] .reader-controls {
+  order: 2;
+}
+
+.reader-view[data-layout-zone="bottom"] .reader-topbar {
+  order: 3;
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+}
+
+.reader-view[data-layout-zone="left"],
+.reader-view[data-layout-zone="right"] {
+  grid-template-rows: 1fr;
+  grid-template-columns: 86px 1fr;
+}
+
+.reader-view[data-layout-zone="left"] .reader-topbar,
+.reader-view[data-layout-zone="right"] .reader-topbar {
+  z-index: 3;
+  grid-row: 1;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 26px;
+  padding: 28px 10px;
+  border-bottom: 0;
+}
+
+.reader-view[data-layout-zone="left"] .reader-topbar {
+  grid-column: 1;
+  border-right: 1px solid var(--line);
+}
+
+.reader-view[data-layout-zone="right"] {
+  grid-template-columns: 1fr 86px;
+}
+
+.reader-view[data-layout-zone="right"] .reader-topbar {
+  grid-column: 2;
+  border-left: 1px solid var(--line);
+}
+
+.reader-view[data-layout-zone="left"] .reader-topbar-start,
+.reader-view[data-layout-zone="left"] .reader-topbar-end,
+.reader-view[data-layout-zone="right"] .reader-topbar-start,
+.reader-view[data-layout-zone="right"] .reader-topbar-end {
+  flex-direction: column;
+  gap: 14px;
+}
+
+.reader-view[data-layout-zone="left"] .reading-stage,
+.reader-view[data-layout-zone="right"] .reading-stage,
+.reader-view[data-layout-zone="left"] .reader-controls,
+.reader-view[data-layout-zone="right"] .reader-controls {
+  grid-row: 1;
+}
+
+.reader-view[data-layout-zone="left"] .reading-stage,
+.reader-view[data-layout-zone="left"] .reader-controls {
+  grid-column: 2;
+}
+
+.reader-view[data-layout-zone="right"] .reading-stage,
+.reader-view[data-layout-zone="right"] .reader-controls {
+  grid-column: 1;
+}
+
+.reader-view[data-layout-zone="left"] .reading-stage,
+.reader-view[data-layout-zone="right"] .reading-stage {
+  padding-right: 110px;
+  padding-left: 110px;
+}
+
+.reader-view[data-layout-zone="left"] .reader-controls,
+.reader-view[data-layout-zone="right"] .reader-controls {
+  align-self: end;
+}
+
 .reader-topbar {
   padding: 0 34px;
   border-bottom: 1px solid var(--line);
@@ -1483,6 +1590,17 @@ html:fullscreen .reader-controls:focus-within {
   background: var(--copper);
 }
 
+.page-thumb__bookmark-label {
+  width: 100%;
+  margin-top: 6px;
+  padding: 4px 5px;
+  border: 1px solid var(--line);
+  background: var(--night-soft);
+  color: var(--mist);
+  font-family: var(--utility);
+  font-size: 9px;
+}
+
 .zoom-controls {
   position: absolute;
   z-index: 7;
@@ -1657,6 +1775,55 @@ html:fullscreen .reader-controls:focus-within {
   display: flex;
   justify-content: space-between;
   color: var(--paper);
+}
+
+.setting-row--stacked input:not([type="range"]) {
+  width: 100%;
+  margin-top: 11px;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  outline: none;
+  background: var(--night-soft);
+  color: var(--paper);
+  font-size: 11px;
+}
+
+.profile-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 14px;
+}
+
+.profile-transfer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.profile-import-button {
+  position: relative;
+  cursor: pointer;
+}
+
+.profile-import-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+}
+
+.profile-actions button {
+  min-height: 32px;
+  padding: 0 8px;
+  font-size: 9px;
+}
+
+.profile-error {
+  color: #f0a18a;
 }
 
 .setting-row--stacked strong {

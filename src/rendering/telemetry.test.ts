@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { t } from '../i18n/catalog';
 import type { RendererStatus } from './contracts';
 import { rendererStatusMessage } from './telemetry';
 
@@ -8,7 +9,7 @@ describe('renderer status messaging', () => {
 
     expect(rendererStatusMessage(status)).toMatchObject({
       phase: 'ready',
-      message: 'Leitura pronta.',
+      message: t('render.ready'),
     });
   });
 
@@ -21,7 +22,7 @@ describe('renderer status messaging', () => {
 
     expect(rendererStatusMessage(status)).toMatchObject({
       phase: 'fallback',
-      message: 'O modo compatível está ativo. A leitura continua disponível.',
+      message: t('render.fallback'),
     });
   });
 
@@ -30,7 +31,7 @@ describe('renderer status messaging', () => {
 
     expect(rendererStatusMessage(status)).toMatchObject({
       phase: 'recovering',
-      message: 'Preparando a leitura. O conteúdo continua disponível.',
+      message: t('render.recovering'),
     });
   });
 

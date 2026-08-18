@@ -2,6 +2,7 @@ import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { calculateProgress } from '../domain/reader';
 import { defaultReaderState, normalizeReaderState } from '../domain/readerState';
+import { getActiveProfile, tryMigrateProfileStore, type ProfileStore } from '../domain/profiles';
 import type {
   Bookmark,
   CacheInfo,
@@ -12,11 +13,11 @@ import type {
   ReadingProfile,
 } from '../domain/types';
 import { isPanelGraph, type PanelGraph } from '../domain/flow';
-import { cloneBindings } from '../domain/input';
+import { t } from '../i18n/catalog';
 import {
   clearPublicationStorage,
   loadBookmarks,
-  loadProfile,
+  loadProfileStore,
   loadReaderState,
   saveBookmarks,
   saveFavorite,
@@ -38,6 +39,7 @@ interface NativePublicationDto {
   id: string;
   title: string;
   sourceLabel: string;
+  sourceNames?: unknown;
   format: Publication['format'];
   pages: NativePageDto[];
   coverPageId: string;
@@ -48,6 +50,20 @@ interface NativePublicationDto {
   updatedAt: string;
   isFavorite?: unknown;
   diagnostic?: string;
+  customCoverPath?: unknown;
+  customCoverName?: unknown;
+}
+
+function safeSourceName(value: unknown): string {
+  const source = normalizeString(value);
+  return source.split(/[\\/]/).pop() ?? source;
+}
+
+function safeSourceNames(value: unknown, fallback: string): string[] {
+  const names = Array.isArray(value)
+    ? value.map(safeSourceName).filter(Boolean)
+    : [];
+  return names.length > 0 ? [...new Set(names)] : (fallback ? [fallback] : []);
 }
 
 interface NativeImportResultDto {
@@ -95,7 +111,7 @@ export async function importNativePaths(
   direction: ReadingDirection,
 ): Promise<{ publications: Publication[]; diagnostics: string[] }> {
   if (!isNativeRuntime()) {
-    return { publications: [], diagnostics: ['Native import is not available in the browser.'] };
+    return { publications: [], diagnostics: [t('import.nativeUnavailable')] };
   }
 
   const result = await invoke<unknown>('import_publications', { paths });
@@ -114,18 +130,60 @@ export async function saveNativeProgress(publicationId: string, currentPage: num
 }
 
 export async function loadNativeProfile(): Promise<ReadingProfile | null> {
+  const store = await loadNativeProfileStore();
+  return store ? getActiveProfile(store) : null;
+}
+
+export async function chooseNativeCover(): Promise<string | null> {
+  if (!isNativeRuntime()) {
+    return null;
+  }
+  const selection = await open({
+    multiple: false,
+    directory: false,
+    filters: [{ name: 'Cover image', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif'] }],
+  });
+  return normalizeSelection(selection)[0] ?? null;
+}
+
+export async function setNativeCover(publicationId: string, sourcePath: string): Promise<void> {
+  if (!isNativeRuntime()) {
+    return;
+  }
+  await invoke('set_custom_cover', { publicationId, sourcePath });
+}
+
+export async function clearNativeCover(publicationId: string): Promise<void> {
+  if (!isNativeRuntime()) {
+    return;
+  }
+  await invoke('clear_custom_cover', { publicationId });
+}
+
+export async function loadNativeProfileStore(): Promise<ProfileStore | null> {
   if (!isNativeRuntime()) {
     return null;
   }
   const stored = await invoke<unknown | null>('load_profile');
-  return hydrateProfile(stored);
+  return hydrateProfileStore(stored);
 }
 
 export async function saveNativeProfile(profile: ReadingProfile): Promise<void> {
+  const store = loadProfileStore();
+  const active = getActiveProfile(store);
+  await saveNativeProfileStore({
+    ...store,
+    profiles: store.profiles.map((candidate) => candidate.id === active.id
+      ? { ...candidate, ...profile, id: candidate.id, version: 1 as const }
+      : candidate),
+  });
+}
+
+export async function saveNativeProfileStore(store: ProfileStore): Promise<void> {
   if (!isNativeRuntime()) {
     return;
   }
-  await invoke('save_profile', { profile });
+  await invoke('save_profile', { profile: store });
 }
 
 export async function loadNativePanelGraph(publicationId: string, pageId: string): Promise<PanelGraph | null> {
@@ -219,28 +277,32 @@ export async function getNativeCacheInfo(): Promise<CacheInfo> {
   return normalizeCacheInfo(value);
 }
 
-export async function setNativeCacheLimit(maxBytes: number): Promise<void> {
+export async function setNativeCacheLimit(maxBytes: number, protectedPageIds: string[] = []): Promise<void> {
   if (!isNativeRuntime()) {
     return;
   }
   const normalized = typeof maxBytes === 'number' && Number.isFinite(maxBytes)
     ? Math.max(1, Math.floor(maxBytes))
     : DEFAULT_NATIVE_CACHE_LIMIT;
-  await invoke('set_cache_limit', { maxBytes: normalized });
+  await invoke('set_cache_limit', { maxBytes: normalized, protectedPageIds });
 }
 
-export async function clearNativeCache(): Promise<void> {
+export async function clearNativeCache(protectedPageIds: string[] = []): Promise<void> {
   if (!isNativeRuntime()) {
     return;
   }
-  await invoke('clear_cache');
+  await invoke('clear_cache', { protectedPageIds });
 }
 
-export async function ensureNativePage(publicationId: string, pageId: string): Promise<PageDescriptor | null> {
+export async function ensureNativePage(
+  publicationId: string,
+  pageId: string,
+  protectedPageIds: string[] = [],
+): Promise<PageDescriptor | null> {
   if (!isNativeRuntime()) {
     return null;
   }
-  const value = await invoke<unknown>('ensure_page_cache', { publicationId, pageId });
+  const value = await invoke<unknown>('ensure_page_cache', { publicationId, pageId, protectedPageIds });
   const page = normalizePage(value);
   if (!page) {
     return null;
@@ -273,10 +335,11 @@ function mapPublication(value: unknown, direction: ReadingDirection): Publicatio
   const currentPage = pages.length === 0
     ? 0
     : Math.max(0, Math.min(normalizeInteger(publication.currentPage), pages.length - 1));
+  const sourceLabel = safeSourceName(publication.sourceLabel);
   return {
     id: normalizeString(publication.id),
     title: normalizeString(publication.title, 'Untitled publication'),
-    sourceLabel: normalizeString(publication.sourceLabel),
+    sourceLabel,
     format: normalizeFormat(publication.format),
     pages: pages.map((page) => ({
       id: page.id,
@@ -293,7 +356,14 @@ function mapPublication(value: unknown, direction: ReadingDirection): Publicatio
     addedAt: normalizeString(publication.addedAt),
     updatedAt: normalizeString(publication.updatedAt),
     isFavorite: publication.isFavorite === true,
+    sourceNames: safeSourceNames(publication.sourceNames, sourceLabel),
     diagnostic: typeof publication.diagnostic === 'string' ? publication.diagnostic : undefined,
+    customCover: publication.customCoverPath && publication.customCoverName
+      ? {
+          src: convertFileSrc(normalizeString(publication.customCoverPath)),
+          sourceName: safeSourceName(publication.customCoverName),
+        }
+      : undefined,
   };
 }
 
@@ -415,18 +485,9 @@ function normalizeSelection(selection: string | string[] | null): string[] {
   return Array.isArray(selection) ? selection : [selection];
 }
 
-function hydrateProfile(value: unknown): ReadingProfile | null {
-  if (!value || typeof value !== 'object') {
+function hydrateProfileStore(value: unknown): ProfileStore | null {
+  if (value === null || value === undefined) {
     return null;
   }
-  const candidate = value as Partial<ReadingProfile>;
-  if (candidate.version !== 1) {
-    return null;
-  }
-  const fallback = loadProfile();
-  return {
-    ...fallback,
-    ...candidate,
-    bindings: cloneBindings(candidate.bindings ?? fallback.bindings),
-  };
+  return tryMigrateProfileStore(value);
 }
