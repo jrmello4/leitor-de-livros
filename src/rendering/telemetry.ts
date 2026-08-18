@@ -21,6 +21,15 @@ export class FrameTelemetry {
 
   constructor(private readonly sampleLimit = 48) {}
 
+  /**
+   * Drops the previous timestamp so the idle gap between two sampled bursts is
+   * never recorded as a single very long frame. Retains collected samples so
+   * quality adaptation does not restart from zero on every page turn.
+   */
+  resume(): void {
+    this.previousTimestamp = undefined;
+  }
+
   record(timestamp: number): FrameTelemetrySnapshot | undefined {
     if (this.previousTimestamp === undefined) {
       this.previousTimestamp = timestamp;

@@ -19,7 +19,9 @@
     "test:workflow": "node scripts/release/verify-workflow.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "test:performance-idle": "playwright test --config playwright.perf.config.ts",
+    "test:scale-sweep": "cargo test --release --manifest-path src-tauri/Cargo.toml scale_sweep -- --ignored --nocapture"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",

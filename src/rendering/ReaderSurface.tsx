@@ -25,6 +25,7 @@ export function ReaderSurface({ frame, staticContent, ariaLabel, onStatus, inter
   const [quality, setQuality] = useState<RenderQuality>('rich');
   const [fps, setFps] = useState<number>();
   const [resizeVersion, setResizeVersion] = useState(0);
+  const telemetryRef = useRef(new FrameTelemetry());
   const forcedBackend = parseVisualBackend(
     typeof window === 'undefined' ? '' : window.location.search,
     import.meta.env.VITE_VISUAL_TEST === '1',
@@ -142,22 +143,29 @@ export function ReaderSurface({ frame, staticContent, ariaLabel, onStatus, inter
   }, [backend, frame, forcedBackend, quality, resizeVersion]);
 
   useEffect(() => {
-    if (backend === 'static' || typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+    if (
+      backend === 'static'
+      || !interactionActive
+      || typeof window === 'undefined'
+      || typeof window.requestAnimationFrame !== 'function'
+    ) {
       return undefined;
     }
-    const telemetry = new FrameTelemetry();
+    const telemetry = telemetryRef.current;
+    telemetry.resume();
     let frameId = 0;
     const tick = (timestamp: number) => {
       const snapshot = telemetry.record(timestamp);
       if (snapshot && snapshot.sampleCount >= 16 && snapshot.sampleCount % 8 === 0) {
-        setFps(Math.round(snapshot.fps));
+        const sampledFps = Math.round(snapshot.fps);
+        setFps((current) => (current === sampledFps ? current : sampledFps));
         setQuality((current) => adaptRenderQuality(current, snapshot.fps));
       }
       frameId = window.requestAnimationFrame(tick);
     };
     frameId = window.requestAnimationFrame(tick);
     return () => window.cancelAnimationFrame(frameId);
-  }, [backend]);
+  }, [backend, interactionActive]);
 
   useEffect(() => {
     onStatus({

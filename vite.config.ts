@@ -16,7 +16,7 @@ export default defineConfig({
       '**/node_modules/**',
       '**/dist/**',
       '**/.worktrees/**',
-      'tests/visual/**/*.spec.ts',
+      'tests/**/*.spec.ts',
       'scripts/release/**',
       'scripts/performance/**',
       'scripts/windows/**',

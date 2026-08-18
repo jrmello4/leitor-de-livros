@@ -85,4 +85,45 @@ describe('ReaderSurface semantics', () => {
     expect(getComputedStyle(staticLayer!).opacity).toBe('0');
     expect(getComputedStyle(staticLayer!).pointerEvents).toBe('none');
   });
+
+  it('samples frame telemetry only while a page turn is in flight', async () => {
+    const scheduled = vi.fn((_callback: FrameRequestCallback) => 1);
+    vi.stubGlobal('requestAnimationFrame', scheduled);
+
+    await act(async () => {
+      root.render(
+        <ReaderSurface
+          frame={frame()}
+          staticContent={<article aria-label="Semantic page">Semantic page</article>}
+          ariaLabel="Reader ready"
+          onStatus={vi.fn()}
+          interactionActive={false}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(
+      scheduled,
+      'an idle reader must not schedule animation frames for telemetry',
+    ).not.toHaveBeenCalled();
+
+    await act(async () => {
+      root.render(
+        <ReaderSurface
+          frame={frame()}
+          staticContent={<article aria-label="Semantic page">Semantic page</article>}
+          ariaLabel="Reader ready"
+          onStatus={vi.fn()}
+          interactionActive
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(
+      scheduled,
+      'a page turn must keep sampling frames so quality can still adapt',
+    ).toHaveBeenCalled();
+  });
 });

@@ -3590,3 +3590,94 @@ mod tests {
         std::fs::remove_dir_all(root).expect("cleanup database");
     }
 }
+
+#[cfg(test)]
+mod scale_sweep {
+    use super::*;
+
+    fn seed(database: &LibraryDb, publications: usize, pages_each: usize) {
+        let mut connection = database.connection.lock().expect("lock");
+        let transaction = connection.transaction().expect("transaction");
+        for p in 0..publications {
+            let publication_id = format!("pub-{p}");
+            transaction
+                .execute(
+                    "INSERT INTO publications (id, title, source_label, source_path, format,
+                                               cover_page_id, direction, added_at, updated_at,
+                                               is_favorite, diagnostic)
+                     VALUES (?1, ?2, ?3, ?4, 'cbz', ?5, 'ltr', '0', '0', 0, NULL)",
+                    params![
+                        publication_id,
+                        format!("Publication {p}"),
+                        format!("{publication_id}.cbz"),
+                        format!("C:/library/{publication_id}.cbz"),
+                        format!("{publication_id}-page-0")
+                    ],
+                )
+                .expect("insert publication row");
+            for i in 0..pages_each {
+                transaction
+                    .execute(
+                        "INSERT INTO pages (id, publication_id, page_index, name, cache_path,
+                                            source_ref, width, height)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1988, 3056)",
+                        params![
+                            format!("{publication_id}-page-{i}"),
+                            publication_id,
+                            i as i64,
+                            format!("page-{i:04}.png"),
+                            format!("C:/cache/{publication_id}/page-{i:04}.png"),
+                            format!("archive:C:/library/{publication_id}.cbz|page-{i:04}.png")
+                        ],
+                    )
+                    .expect("insert page row");
+            }
+            transaction
+                .execute(
+                    "INSERT INTO progress (publication_id, current_page, updated_at) VALUES (?1, 0, '0')",
+                    params![publication_id],
+                )
+                .expect("insert progress row");
+        }
+        transaction.commit().expect("commit");
+    }
+
+    #[test]
+    #[ignore]
+    fn sweep_list_publications() {
+        for (publications, pages_each) in [(5usize, 40usize), (50, 200), (200, 400)] {
+            let root = std::env::temp_dir()
+                .join(format!("tr-sweep-{publications}x{pages_each}-{}", now()));
+            let database = LibraryDb::open(root.clone()).expect("open");
+            seed(&database, publications, pages_each);
+
+            let mut samples = Vec::new();
+            for _ in 0..7 {
+                let started = std::time::Instant::now();
+                let listed = database.list_publications().expect("list");
+                let elapsed = started.elapsed();
+                assert_eq!(listed.len(), publications);
+                samples.push(elapsed.as_secs_f64() * 1000.0);
+            }
+            let listed = database.list_publications().expect("list");
+            let json_started = std::time::Instant::now();
+            let payload = serde_json::to_string(&listed).expect("serialize");
+            let json_ms = json_started.elapsed().as_secs_f64() * 1000.0;
+            println!(
+                "PAYLOAD publications={publications} total_pages={} json_bytes={} json_serialize_ms={json_ms:.1}",
+                publications * pages_each,
+                payload.len()
+            );
+
+            samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let median = samples[samples.len() / 2];
+            let total_pages = publications * pages_each;
+            println!(
+                "SWEEP publications={publications} pages_each={pages_each} total_pages={total_pages} median_ms={median:.1} min_ms={:.1} max_ms={:.1}",
+                samples[0],
+                samples[samples.len() - 1]
+            );
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+}
