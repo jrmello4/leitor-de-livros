@@ -14,9 +14,12 @@ for (const jobName of requiredJobs) {
 }
 
 const visualText = JSON.stringify(jobs.visual);
+const webText = JSON.stringify(jobs.web);
 const installerText = JSON.stringify(jobs['installer-smoke']);
 const performanceText = JSON.stringify(jobs.performance);
 assert.match(visualText, /npm run test:visual/, 'Visual job does not run the visual matrix.');
+assert.match(webText, /npm run test:installed-app-harness/, 'Normal PR CI does not run the installed-app harness contract.');
+assert.match(webText, /npm run test:performance-contract/, 'Normal PR CI does not run the performance contract.');
 assert.match(installerText, /npm run test:installer-smoke/, 'Installer smoke job does not run the smoke script.');
 assert.match(performanceText, /npm run test:performance/, 'Performance job does not run the performance script.');
 assert.ok(workflow?.on?.workflow_dispatch?.inputs?.performance_gpu_class, 'Performance workflow input is missing.');

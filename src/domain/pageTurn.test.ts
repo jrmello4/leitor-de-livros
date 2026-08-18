@@ -1,33 +1,77 @@
-import { describe, expect, it } from 'vitest';
-import { resolvePageTurn } from './pageTurn';
+import { describe, expect, it, vi } from 'vitest';
+import { PageTurnController, releaseOutcome } from './pageTurn';
 
-describe('resolvePageTurn', () => {
-  it('commits an available turn with the configured duration', () => {
-    expect(resolvePageTurn('idle', true, false, 420)).toEqual({
-      kind: 'commit',
-      immediate: false,
-      duration: 420,
-    });
+describe('releaseOutcome', () => {
+  it.each([
+    [0.45, 0, 'commit'],
+    [0.12, 0.65, 'commit'],
+    [0.119, 2, 'cancel'],
+    [0.449, 0.649, 'cancel'],
+  ] as const)('uses displacement=%s and velocity=%s', (displacement, velocity, expected) => {
+    expect(releaseOutcome(displacement, velocity)).toBe(expected);
+  });
+});
+
+it('navigates once only after committed settling finishes', () => {
+  const navigate = vi.fn();
+  const controller = new PageTurnController({ navigate });
+  const generation = controller.request('forward', false);
+  controller.texturesReady(generation);
+  controller.beginPointer(generation, 7, { x: 1, y: 0.5 }, 0);
+  controller.movePointer(7, { x: 0.4, y: 0.5 }, 16);
+  controller.releasePointer(7, 20);
+  expect(navigate).not.toHaveBeenCalled();
+  controller.finishSettle(generation);
+  controller.finishSettle(generation);
+  expect(navigate).toHaveBeenCalledTimes(1);
+});
+
+it('emits prepare and release-pointer through the controller effect path', () => {
+  const effects: string[] = [];
+  const controller = new PageTurnController({
+    effect: (effect) => effects.push(effect.type),
+    navigate: vi.fn(),
   });
 
-  it('cancels at a boundary and clamps short tactile feedback', () => {
-    expect(resolvePageTurn('idle', false, false, 90)).toEqual({
-      kind: 'cancel',
-      immediate: false,
-      duration: 160,
-    });
-  });
+  const generation = controller.request('forward', false);
+  controller.texturesReady(generation);
+  controller.beginPointer(generation, 7, { x: 1, y: 0.5 }, 0);
+  controller.movePointer(7, { x: 0.4, y: 0.5 }, 16);
+  controller.releasePointer(7, 20);
 
-  it('ignores a request while another turn is active', () => {
-    expect(resolvePageTurn('committing', true, false, 420)).toEqual({ kind: 'ignored' });
-    expect(resolvePageTurn('cancelling', false, false, 420)).toEqual({ kind: 'ignored' });
-  });
+  expect(effects).toContain('prepare');
+  expect(effects).toContain('release-pointer');
+});
 
-  it('makes reduced-motion turns immediate', () => {
-    expect(resolvePageTurn('idle', true, true, 420)).toEqual({
-      kind: 'commit',
-      immediate: true,
-      duration: 0,
-    });
-  });
+it('cancels a fast motion away from the destination and commits a signed fling toward it', () => {
+  const awayNavigate = vi.fn();
+  const away = new PageTurnController({ effect: vi.fn(), navigate: awayNavigate });
+  const awayGeneration = away.request('forward', false);
+  away.texturesReady(awayGeneration);
+  away.beginPointer(awayGeneration, 1, { x: 0.2, y: 0.5 }, 0);
+  away.movePointer(1, { x: 0.74, y: 0.5 }, 10);
+  away.releasePointer(1, 20);
+  away.finishSettle(awayGeneration);
+  expect(awayNavigate).not.toHaveBeenCalled();
+
+  const flingNavigate = vi.fn();
+  const fling = new PageTurnController({ effect: vi.fn(), navigate: flingNavigate });
+  const flingGeneration = fling.request('forward', false);
+  fling.texturesReady(flingGeneration);
+  fling.beginPointer(flingGeneration, 2, { x: 0.9, y: 0.5 }, 0);
+  fling.movePointer(2, { x: 0.76, y: 0.5 }, 100);
+  fling.releasePointer(2, 200);
+  fling.finishSettle(flingGeneration);
+  expect(flingNavigate).toHaveBeenCalledTimes(1);
+});
+
+it('rejects a stale texture generation and keeps only the latest queued turn', () => {
+  const controller = new PageTurnController({ navigate: vi.fn() });
+  const first = controller.request('forward', false);
+  controller.request('backward', false);
+  controller.request('forward', false);
+  controller.texturesReady(first + 1);
+  expect(controller.snapshot().phase).toBe('preparing');
+  controller.cancel('publication-change');
+  expect(controller.snapshot()).toMatchObject({ phase: 'preparing', direction: 'forward' });
 });

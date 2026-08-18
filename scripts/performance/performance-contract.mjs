@@ -20,6 +20,23 @@ export const PERFORMANCE_SCENARIOS = Object.freeze([
 
 export const GPU_CLASSES = Object.freeze(['integrated', 'dedicated']);
 
+export function classifyGpu(name, adapterRam = 0) {
+  const normalized = String(name ?? '').toLowerCase();
+  if (/microsoft basic display/.test(normalized)) {
+    return undefined;
+  }
+  if (/nvidia|geforce|quadro|rtx|gtx|tesla|radeon\s+(rx|pro)|intel\s+arc/.test(normalized)) {
+    return 'dedicated';
+  }
+  if (/intel.*(uhd|iris|hd\s+graphics)|amd.*radeon\s+graphics|radeon\s+vega|apu/.test(normalized)) {
+    return 'integrated';
+  }
+  if (Number(adapterRam) >= 2 * 1024 ** 3) {
+    return 'dedicated';
+  }
+  return undefined;
+}
+
 export function normalizeGpuClass(value) {
   return GPU_CLASSES.includes(value) ? value : undefined;
 }

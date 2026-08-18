@@ -1,4 +1,6 @@
 import type { PageDescriptor, ReadingDirection, ReadingMode } from '../domain/types';
+export { PAGE_TURN_LUMINANCE_BOUNDS } from './pageTurn/contracts';
+export type { PageTurnBackend, PageTurnFailure, PageTurnMetrics, PageTurnRenderFrame, PageTurnSettled } from './pageTurn/contracts';
 
 export type RenderBackendKind = 'webgpu' | 'webgl2' | 'static';
 export type RenderQuality = 'rich' | 'balanced' | 'essential';
@@ -6,10 +8,8 @@ export type RenderQuality = 'rich' | 'balanced' | 'essential';
 export interface RenderFrame {
   pages: PageDescriptor[];
   preloadPages: PageDescriptor[];
-  turningPageId?: string;
   direction: ReadingDirection;
   mode: ReadingMode;
-  turnProgress: number;
   reducedMotion: boolean;
 }
 
@@ -47,26 +47,13 @@ export function buildRenderPlan(frame: RenderFrame, width: number, height: numbe
   const sheetWidth = sheetHeight * totalAspect;
   const originX = (width - sheetWidth) / 2;
   const originY = (height - sheetHeight) / 2;
-  const progress = frame.reducedMotion ? 0 : Math.min(Math.max(frame.turnProgress, 0), 1);
   let cursorX = originX;
 
   return pages.map((page) => {
-    const originalWidth = sheetHeight * pageAspect(page);
-    let x = cursorX;
-    let renderedWidth = originalWidth;
-    let shade = 0;
-    cursorX += originalWidth;
-
-    if (page.id === frame.turningPageId && progress > 0) {
-      const fold = Math.max(0.16, 1 - progress * 0.84);
-      renderedWidth = originalWidth * fold;
-      if (frame.direction === 'ltr') {
-        x += originalWidth - renderedWidth;
-      }
-      shade = progress;
-    }
-
-    return { page, x, y: originY, width: renderedWidth, height: sheetHeight, shade };
+    const width = sheetHeight * pageAspect(page);
+    const sheet = { page, x: cursorX, y: originY, width, height: sheetHeight, shade: 0 };
+    cursorX += width;
+    return sheet;
   });
 }
 

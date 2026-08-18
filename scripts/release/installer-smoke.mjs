@@ -1,32 +1,24 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
 import {
   cp,
   mkdir,
   mkdtemp,
   readdir,
   readFile,
-  stat,
   unlink,
   writeFile,
 } from 'node:fs/promises';
-import { execFileSync, spawn } from 'node:child_process';
-import { once } from 'node:events';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { createServer } from 'node:net';
-import { basename, dirname, extname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from '@playwright/test';
+import { createInstalledAppHarness, InstalledAppLifecycleError } from '../windows/installed-app-harness.mjs';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(scriptDirectory, '../..');
 const evidenceRoot = resolve(process.env.SMOKE_EVIDENCE_DIR ?? join(repositoryRoot, 'artifacts/installer-smoke'));
 const timeoutMs = Number(process.env.SMOKE_TIMEOUT_MS ?? 180_000);
-
-export function isInstallerExecutable(filePath) {
-  const fileName = basename(filePath).toLowerCase();
-  return extname(fileName) === '.exe' && !fileName.includes('uninstall') && !fileName.includes('setup');
-}
+const installedAppHarness = createInstalledAppHarness();
 
 export function errorMessage(error) {
   if (error instanceof Error) {
@@ -36,15 +28,52 @@ export function errorMessage(error) {
 }
 
 export function resultWithFailure(result, error) {
+  const lifecycle = error instanceof InstalledAppLifecycleError
+    ? error
+    : new InstalledAppLifecycleError('execution', errorMessage(error), { cause: error });
   return {
     ...result,
     status: 'failed',
-    failure: errorMessage(error),
+    stage: lifecycle.stage,
+    ...(lifecycle.cleanupFailure ? { cleanupFailure: errorMessage(lifecycle.cleanupFailure) } : {}),
+    failure: lifecycle.message,
   };
 }
 
-function delay(milliseconds) {
-  return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+function preservePrimaryFailure(primaryError, cleanupError) {
+  if (!primaryError) {
+    return cleanupError instanceof InstalledAppLifecycleError
+      ? cleanupError
+      : new InstalledAppLifecycleError('cleanup', errorMessage(cleanupError), { cause: cleanupError });
+  }
+  const lifecycle = primaryError instanceof InstalledAppLifecycleError
+    ? primaryError
+    : new InstalledAppLifecycleError('execution', errorMessage(primaryError), { cause: primaryError });
+  lifecycle.cleanupFailure ??= cleanupError instanceof InstalledAppLifecycleError
+    ? cleanupError.cause ?? cleanupError
+    : cleanupError;
+  return lifecycle;
+}
+
+export async function settleInstallerLifecycle({ cleanup, execute, result }) {
+  let error;
+  try {
+    await execute();
+  } catch (executionError) {
+    error = executionError;
+  }
+  try {
+    await cleanup();
+  } catch (cleanupError) {
+    error = preservePrimaryFailure(error, cleanupError);
+  }
+  if (error) {
+    const lifecycle = error instanceof InstalledAppLifecycleError
+      ? error
+      : new InstalledAppLifecycleError('execution', errorMessage(error), { cause: error });
+    return { error: lifecycle, result: resultWithFailure(result, lifecycle) };
+  }
+  return { error: undefined, result: { ...result, status: 'passed' } };
 }
 
 async function recursiveFiles(directory) {
@@ -61,141 +90,8 @@ async function recursiveFiles(directory) {
   return files;
 }
 
-async function newestExecutable(directory, allowSetup) {
-  const files = (await recursiveFiles(directory))
-    .filter((filePath) => allowSetup ? extname(filePath).toLowerCase() === '.exe' : isInstallerExecutable(filePath));
-  if (files.length === 0) {
-    return undefined;
-  }
-  const withStats = await Promise.all(files.map(async (filePath) => ({
-    filePath,
-    modified: (await stat(filePath)).mtimeMs,
-  })));
-  withStats.sort((left, right) => right.modified - left.modified);
-  return withStats[0]?.filePath;
-}
-
-async function allocatePort() {
-  const server = createServer();
-  await new Promise((resolvePromise, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolvePromise);
-  });
-  const address = server.address();
-  const port = typeof address === 'object' && address ? address.port : undefined;
-  await new Promise((resolvePromise) => server.close(resolvePromise));
-  if (!port) {
-    throw new Error('Could not allocate a localhost CDP port.');
-  }
-  return port;
-}
-
-async function waitForCdp(port, label) {
-  const started = Date.now();
-  let lastError = 'CDP endpoint did not answer.';
-  while (Date.now() - started < timeoutMs) {
-    try {
-      const response = await fetch('http://127.0.0.1:' + port + '/json/version');
-      if (response.ok) {
-        return;
-      }
-      lastError = 'HTTP ' + response.status;
-    } catch (error) {
-      lastError = errorMessage(error);
-    }
-    await delay(250);
-  }
-  throw new Error(label + ' CDP endpoint timed out: ' + lastError);
-}
-
-async function waitForPageHarness(browser, label) {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    const pages = browser.contexts().flatMap((context) => context.pages());
-    for (const page of pages) {
-      try {
-        await page.getByTestId('smoke-harness').waitFor({ state: 'visible', timeout: 500 });
-        return page;
-      } catch {
-        // The WebView2 page can exist before React has mounted.
-      }
-    }
-    await delay(250);
-  }
-  throw new Error(label + ' did not expose the smoke harness.');
-}
-
-async function launchApp(executable, label, runEvidenceDirectory) {
-  const port = await allocatePort();
-  const stdoutPath = join(runEvidenceDirectory, label + '.stdout.log');
-  const stderrPath = join(runEvidenceDirectory, label + '.stderr.log');
-  const stdout = createWriteStream(stdoutPath);
-  const stderr = createWriteStream(stderrPath);
-  const child = spawn(executable, [], {
-    cwd: dirname(executable),
-    env: {
-      ...process.env,
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=' + port,
-    },
-    windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  child.stdout?.pipe(stdout);
-  child.stderr?.pipe(stderr);
-
-  try {
-    await waitForCdp(port, label);
-    const browser = await chromium.connectOverCDP('http://127.0.0.1:' + port);
-    const page = await waitForPageHarness(browser, label);
-    return {
-      browser,
-      child,
-      page,
-      async close() {
-        await browser.close().catch(() => undefined);
-        if (child.exitCode === null && child.signalCode === null) {
-          child.kill();
-          await Promise.race([once(child, 'exit'), delay(1500)]);
-        }
-        if (child.exitCode === null && child.signalCode === null) {
-          try {
-            execFileSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-          } catch {
-            // The process may have exited between the check and taskkill.
-          }
-        }
-        stdout.end();
-        stderr.end();
-      },
-    };
-  } catch (error) {
-    child.kill();
-    try {
-      execFileSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-    } catch {
-      // Preserve the original CDP error.
-    }
-    stdout.end();
-    stderr.end();
-    throw error;
-  }
-}
-
-async function waitFor(predicate, description) {
-  const started = Date.now();
-  let lastError;
-  while (Date.now() - started < timeoutMs) {
-    try {
-      const value = await predicate();
-      if (value) {
-        return value;
-      }
-    } catch (error) {
-      lastError = error;
-    }
-    await delay(250);
-  }
-  throw new Error(description + (lastError ? ': ' + errorMessage(lastError) : '.'));
+function waitFor(predicate, description) {
+  return installedAppHarness.waitFor(predicate, description, { timeoutMs });
 }
 
 async function waitForStatus(page, expected) {
@@ -280,24 +176,11 @@ async function buildInstaller(runDirectory, runId) {
     throw error;
   }
   await writeFile(join(runDirectory, 'build.log'), output, 'utf8');
-  const installer = await newestExecutable(bundleDirectory, true);
+  const installer = await installedAppHarness.findNewestExecutable(bundleDirectory, { allowSetup: true });
   if (!installer) {
     throw new Error('NSIS installer was not found under ' + bundleDirectory + ' after ' + (Date.now() - started) + 'ms.');
   }
   return installer;
-}
-
-async function installPackage(installer, installDirectory) {
-  await mkdir(installDirectory, { recursive: true });
-  execFileSync(installer, ['/S', '/D=' + installDirectory], {
-    cwd: dirname(installer),
-    stdio: 'ignore',
-  });
-  const executable = await newestExecutable(installDirectory, false);
-  if (!executable) {
-    throw new Error('Installed application executable was not found under ' + installDirectory + '.');
-  }
-  return executable;
 }
 
 async function runMissingPdfiumScenario(installDirectory, pdfPath, runDirectory, result) {
@@ -308,12 +191,18 @@ async function runMissingPdfiumScenario(installDirectory, pdfPath, runDirectory,
     throw new Error('Installed application copy did not contain pdfium.dll.');
   }
   await unlink(pdfium);
-  const executable = await newestExecutable(missingDirectory, false);
+  const executable = await installedAppHarness.findNewestExecutable(missingDirectory);
   if (!executable) {
     throw new Error('PDFium-missing application executable was not found.');
   }
 
-  const session = await launchApp(executable, 'missing-pdfium', join(evidenceRoot, result.runId));
+  const session = await installedAppHarness.launchApp({
+    executable,
+    label: 'missing-pdfium',
+    evidenceDirectory: join(evidenceRoot, result.runId),
+    runRoot: runDirectory,
+    timeoutMs,
+  });
   try {
     await waitForNativeLibraryReady(session.page);
     await importMissingSource(session.page, pdfPath);
@@ -331,7 +220,13 @@ async function runMissingPdfiumScenario(installDirectory, pdfPath, runDirectory,
 }
 
 async function runIntactScenario(executable, cbzPath, pdfPath, runDirectory, result) {
-  const session = await launchApp(executable, 'intact-first', join(evidenceRoot, result.runId));
+  const session = await installedAppHarness.launchApp({
+    executable,
+    label: 'intact-first',
+    evidenceDirectory: join(evidenceRoot, result.runId),
+    runRoot: runDirectory,
+    timeoutMs,
+  });
   try {
     await waitForNativeLibraryReady(session.page);
     await importSource(session.page, cbzPath);
@@ -356,7 +251,13 @@ async function runIntactScenario(executable, cbzPath, pdfPath, runDirectory, res
     await session.close();
   }
 
-  const resumed = await launchApp(executable, 'intact-resumed', join(evidenceRoot, result.runId));
+  const resumed = await installedAppHarness.launchApp({
+    executable,
+    label: 'intact-resumed',
+    evidenceDirectory: join(evidenceRoot, result.runId),
+    runRoot: runDirectory,
+    timeoutMs,
+  });
   try {
     await waitForNativeLibraryReady(resumed.page);
     await waitForCardCount(resumed.page, 2);
@@ -386,8 +287,8 @@ async function runIntactScenario(executable, cbzPath, pdfPath, runDirectory, res
 async function main() {
   const runId = Date.now() + '-' + process.pid + '-' + randomUUID().replaceAll('-', '');
   const runDirectory = await mkdtemp(join(tmpdir(), 'tactile-reader-smoke-'));
+  installedAppHarness.registerRunRoot(runDirectory);
   const evidenceDirectory = join(evidenceRoot, runId);
-  await mkdir(evidenceDirectory, { recursive: true });
   const result = {
     runId,
     status: 'failed',
@@ -401,35 +302,52 @@ async function main() {
     failure: null,
   };
 
+  const outcome = await settleInstallerLifecycle({
+    result,
+    execute: async () => {
+      await mkdir(evidenceDirectory, { recursive: true });
+      const fixtures = await createRunFixtures(runDirectory);
+      result.sourceHashesBefore = {
+        cbz: await sha256(fixtures.cbz),
+        pdf: await sha256(fixtures.pdf),
+      };
+      result.installer = await buildInstaller(runDirectory, runId);
+      const executable = await installedAppHarness.installPackage(result.installer, result.installDirectory);
+      await runMissingPdfiumScenario(result.installDirectory, fixtures.pdf, runDirectory, result);
+      await runIntactScenario(executable, fixtures.cbz, fixtures.pdf, runDirectory, result);
+      result.sourceHashesAfter = {
+        cbz: await sha256(fixtures.cbz),
+        pdf: await sha256(fixtures.pdf),
+      };
+      if (JSON.stringify(result.sourceHashesBefore) !== JSON.stringify(result.sourceHashesAfter)) {
+        throw new Error('Fixture source hashes changed during the smoke run.');
+      }
+    },
+    cleanup: () => installedAppHarness.cleanupRun({
+      installDirectory: result.installDirectory,
+      runRoot: runDirectory,
+    }),
+  });
+  Object.assign(result, outcome.result);
   try {
-    const fixtures = await createRunFixtures(runDirectory);
-    result.sourceHashesBefore = {
-      cbz: await sha256(fixtures.cbz),
-      pdf: await sha256(fixtures.pdf),
-    };
-    result.installer = await buildInstaller(runDirectory, runId);
-    const executable = await installPackage(result.installer, result.installDirectory);
-    await runMissingPdfiumScenario(result.installDirectory, fixtures.pdf, runDirectory, result);
-    await runIntactScenario(executable, fixtures.cbz, fixtures.pdf, runDirectory, result);
-    result.sourceHashesAfter = {
-      cbz: await sha256(fixtures.cbz),
-      pdf: await sha256(fixtures.pdf),
-    };
-    if (JSON.stringify(result.sourceHashesBefore) !== JSON.stringify(result.sourceHashesAfter)) {
-      throw new Error('Fixture source hashes changed during the smoke run.');
+    if (outcome.error) {
+      await mkdir(evidenceDirectory, { recursive: true });
+      await writeFile(join(evidenceDirectory, 'failure.txt'), errorMessage(outcome.error) + '\n', 'utf8');
     }
-    result.status = 'passed';
-  } catch (error) {
-    Object.assign(result, resultWithFailure(result, error));
-    try {
-      await writeFile(join(evidenceDirectory, 'failure.txt'), errorMessage(error) + '\n', 'utf8');
-    } catch {
-      // The result write below remains the final evidence attempt.
-    }
-  } finally {
+  } catch {
+    // The result write below remains the final evidence attempt.
+  }
+  try {
+    await mkdir(evidenceDirectory, { recursive: true });
     await writeFile(join(evidenceDirectory, 'result.json'), JSON.stringify(result, null, 2) + '\n', 'utf8');
     console.log(JSON.stringify({ evidenceDirectory, result }));
     if (result.status !== 'passed') {
+      process.exitCode = 1;
+    }
+  } catch (error) {
+    try {
+      console.error(errorMessage(error));
+    } finally {
       process.exitCode = 1;
     }
   }

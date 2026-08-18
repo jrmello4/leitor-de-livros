@@ -53,6 +53,12 @@ jobs:
       - name: Validate release scripts
         run: npm run test:release-scripts
 
+      - name: Validate installed app harness
+        run: npm run test:installed-app-harness
+
+      - name: Validate performance contract
+        run: npm run test:performance-contract
+
       - name: Validate workflow structure
         run: npm run test:workflow
 

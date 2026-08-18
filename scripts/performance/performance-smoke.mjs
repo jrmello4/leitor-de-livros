@@ -1,19 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
 import {
   mkdir,
   mkdtemp,
-  readdir,
-  stat,
   writeFile,
 } from 'node:fs/promises';
-import { execFileSync, spawn } from 'node:child_process';
-import { once } from 'node:events';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { createServer } from 'node:net';
-import { dirname, extname, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from '@playwright/test';
+import { createInstalledAppHarness, InstalledAppLifecycleError } from '../windows/installed-app-harness.mjs';
+import { measureImportToFirstFrame, waitForCommittedPage } from './performance-navigation.mjs';
 import {
   evaluateScenarioMetrics,
   PERFORMANCE_REPORT_VERSION,
@@ -22,6 +18,7 @@ import {
   percentile,
   validatePerformanceReport,
   normalizeGpuClass,
+  classifyGpu,
 } from './performance-contract.mjs';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
@@ -29,6 +26,7 @@ const repositoryRoot = resolve(scriptDirectory, '../..');
 const reportRoot = resolve(process.env.PERFORMANCE_REPORT_DIR ?? join(repositoryRoot, 'artifacts/performance'));
 const timeoutMs = Number(process.env.PERFORMANCE_TIMEOUT_MS ?? 600_000);
 const gpuClass = normalizeGpuClass(process.env.PERFORMANCE_GPU_CLASS);
+const installedAppHarness = createInstalledAppHarness();
 
 function delay(milliseconds) {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
@@ -36,6 +34,65 @@ function delay(milliseconds) {
 
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function preservePrimaryFailure(primaryError, cleanupError) {
+  if (!primaryError) {
+    return cleanupError instanceof InstalledAppLifecycleError
+      ? cleanupError
+      : new InstalledAppLifecycleError('cleanup', errorMessage(cleanupError), { cause: cleanupError });
+  }
+  const lifecycle = primaryError instanceof InstalledAppLifecycleError
+    ? primaryError
+    : new InstalledAppLifecycleError('execution', errorMessage(primaryError), { cause: primaryError });
+  lifecycle.cleanupFailure ??= cleanupError instanceof InstalledAppLifecycleError
+    ? cleanupError.cause ?? cleanupError
+    : cleanupError;
+  return lifecycle;
+}
+
+export function performanceFailureEvidence(error) {
+  const lifecycle = error instanceof InstalledAppLifecycleError
+    ? error
+    : new InstalledAppLifecycleError('execution', errorMessage(error), { cause: error });
+  return {
+    stage: lifecycle.stage,
+    failure: lifecycle.message,
+    ...(lifecycle.cleanupFailure ? { cleanupFailure: errorMessage(lifecycle.cleanupFailure) } : {}),
+    errors: [lifecycle.message],
+  };
+}
+
+export async function settlePerformanceLifecycle({ cleanup, execute }) {
+  let error;
+  let value;
+  try {
+    value = await execute();
+  } catch (executionError) {
+    error = executionError;
+  }
+  try {
+    await cleanup();
+  } catch (cleanupError) {
+    error = preservePrimaryFailure(error, cleanupError);
+  }
+  if (error && !(error instanceof InstalledAppLifecycleError)) {
+    error = new InstalledAppLifecycleError('execution', errorMessage(error), { cause: error });
+  }
+  return { error, value };
+}
+
+export function requirePassedPerformanceReport(report) {
+  if (report.status === 'passed') {
+    return report;
+  }
+  const failures = Object.entries(report.scenarios ?? {})
+    .filter(([, scenario]) => scenario?.status === 'failed')
+    .map(([name, scenario]) => name + ': ' + (scenario.failures?.join('; ') || 'scenario failed'));
+  throw new InstalledAppLifecycleError(
+    'execution',
+    'Performance scenarios failed: ' + (failures.join(' | ') || 'report status is failed'),
+  );
 }
 
 function commandOutput(command, args, options = {}) {
@@ -48,20 +105,6 @@ function readPackageVersion() {
 
 function readBuildCommit() {
   return process.env.GITHUB_SHA ?? commandOutput('git', ['rev-parse', 'HEAD'], { cwd: repositoryRoot });
-}
-
-function classifyGpu(name, adapterRam = 0) {
-  const normalized = String(name ?? '').toLowerCase();
-  if (/nvidia|geforce|quadro|rtx|gtx|tesla|radeon\s+(rx|pro)|intel\s+arc/.test(normalized)) {
-    return 'dedicated';
-  }
-  if (/intel.*(uhd|iris|hd\s+graphics)|amd.*radeon\s+graphics|radeon\s+vega|apu|microsoft basic display/.test(normalized)) {
-    return 'integrated';
-  }
-  if (Number(adapterRam) >= 2 * 1024 ** 3) {
-    return 'dedicated';
-  }
-  return undefined;
 }
 
 async function readWebglRenderer(page) {
@@ -166,91 +209,8 @@ function startMemorySampler(pid) {
   };
 }
 
-async function allocatePort() {
-  const server = createServer();
-  await new Promise((resolvePromise, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolvePromise);
-  });
-  const address = server.address();
-  const port = typeof address === 'object' && address ? address.port : undefined;
-  await new Promise((resolvePromise) => server.close(resolvePromise));
-  if (!port) {
-    throw new Error('Could not allocate a localhost CDP port.');
-  }
-  return port;
-}
-
-async function waitFor(predicate, description) {
-  const started = Date.now();
-  let lastError;
-  while (Date.now() - started < timeoutMs) {
-    try {
-      const value = await predicate();
-      if (value) {
-        return value;
-      }
-    } catch (error) {
-      lastError = error;
-    }
-    await delay(250);
-  }
-  throw new Error(description + (lastError ? ': ' + errorMessage(lastError) : '.'));
-}
-
-async function waitForCdp(port, label) {
-  await waitFor(async () => {
-    try {
-      const response = await fetch('http://127.0.0.1:' + port + '/json/version');
-      return response.ok;
-    } catch {
-      return false;
-    }
-  }, label + ' CDP endpoint did not answer');
-}
-
-async function waitForSmokePage(browser, label) {
-  return waitFor(async () => {
-    const pages = browser.contexts().flatMap((context) => context.pages());
-    for (const page of pages) {
-      try {
-        await page.getByTestId('smoke-harness').waitFor({ state: 'visible', timeout: 500 });
-        return page;
-      } catch {
-        // WebView2 can expose the page before React has mounted.
-      }
-    }
-    return undefined;
-  }, label + ' did not expose the performance harness');
-}
-
-async function recursiveFiles(directory) {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const files = [];
-  for (const entry of entries) {
-    const path = join(directory, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...await recursiveFiles(path));
-    } else {
-      files.push(path);
-    }
-  }
-  return files;
-}
-
-function isApplicationExecutable(filePath) {
-  const name = filePath.toLowerCase();
-  return extname(name) === '.exe' && !name.includes('uninstall') && !name.includes('setup');
-}
-
-async function newestExecutable(directory, modifiedAfter = 0, allowSetup = false) {
-  const files = (await recursiveFiles(directory)).filter((filePath) => allowSetup || isApplicationExecutable(filePath));
-  const candidates = await Promise.all(files.map(async (filePath) => ({
-    filePath,
-    modified: (await stat(filePath)).mtimeMs,
-  })));
-  candidates.sort((left, right) => right.modified - left.modified);
-  return candidates.find((candidate) => candidate.modified >= modifiedAfter - 2000)?.filePath;
+function waitFor(predicate, description) {
+  return installedAppHarness.waitFor(predicate, description, { timeoutMs });
 }
 
 async function createRunFixtures(runDirectory) {
@@ -282,71 +242,11 @@ async function buildInstaller(runDirectory, runId) {
     maxBuffer: 64 * 1024 * 1024,
   });
   await writeFile(join(runDirectory, 'build.log'), output, 'utf8');
-  const installer = await newestExecutable(bundleDirectory, started, true);
+  const installer = await installedAppHarness.findNewestExecutable(bundleDirectory, { allowSetup: true, modifiedAfter: started });
   if (!installer) {
     throw new Error('Performance NSIS installer was not found under ' + bundleDirectory + '.');
   }
   return { installer, identifier };
-}
-
-async function installPackage(installer, installDirectory) {
-  await mkdir(installDirectory, { recursive: true });
-  execFileSync(installer, ['/S', '/D=' + installDirectory], { cwd: dirname(installer), stdio: 'ignore' });
-  const executable = await newestExecutable(installDirectory);
-  if (!executable) {
-    throw new Error('Performance application executable was not found under ' + installDirectory + '.');
-  }
-  return executable;
-}
-
-async function launchApp(executable, label, evidenceDirectory) {
-  const port = await allocatePort();
-  const stdout = createWriteStream(join(evidenceDirectory, label + '.stdout.log'));
-  const stderr = createWriteStream(join(evidenceDirectory, label + '.stderr.log'));
-  const child = spawn(executable, [], {
-    cwd: dirname(executable),
-    env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=' + port },
-    windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  child.stdout?.pipe(stdout);
-  child.stderr?.pipe(stderr);
-  try {
-    await waitForCdp(port, label);
-    const browser = await chromium.connectOverCDP('http://127.0.0.1:' + port);
-    const page = await waitForSmokePage(browser, label);
-    return {
-      browser,
-      child,
-      page,
-      async close() {
-        await browser.close().catch(() => undefined);
-        if (child.exitCode === null && child.signalCode === null) {
-          child.kill();
-          await Promise.race([once(child, 'exit'), delay(1500)]);
-        }
-        if (child.exitCode === null && child.signalCode === null) {
-          try {
-            execFileSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-          } catch {
-            // The process may have exited between checks.
-          }
-        }
-        stdout.end();
-        stderr.end();
-      },
-    };
-  } catch (error) {
-    child.kill();
-    try {
-      execFileSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-    } catch {
-      // Preserve the original error.
-    }
-    stdout.end();
-    stderr.end();
-    throw error;
-  }
 }
 
 async function waitForNativeReady(page) {
@@ -361,6 +261,9 @@ async function waitForReader(page) {
   await page.getByTestId('reader-stage').waitFor({ state: 'visible' });
   await page.getByTestId('reader-current-page').waitFor({ state: 'visible' });
   await waitFor(async () => (await page.locator('.render-surface .page-sheet').count()) > 0 || (await page.locator('.render-surface canvas').count()) > 0, 'Reader surface did not mount');
+}
+
+async function waitForTwoFrames(page) {
   await page.evaluate(() => new Promise((resolvePromise) => requestAnimationFrame(() => requestAnimationFrame(resolvePromise))));
 }
 
@@ -373,7 +276,7 @@ async function resetReaderToFirstPage(page) {
   const currentPage = Number(await page.getByTestId('reader-current-page').getAttribute('data-page-index'));
   for (let pageIndex = currentPage; pageIndex > 0; pageIndex -= 1) {
     await page.getByTestId('reader-previous').click();
-    await page.getByTestId('reader-current-page').toHaveAttribute('data-page-index', String(pageIndex - 1));
+    await waitForCommittedPage(page, pageIndex - 1, waitFor);
   }
 }
 
@@ -397,6 +300,7 @@ async function openCard(page, sourceName) {
   const card = page.locator(`[data-testid="library-publication-card"][data-publication-source*="${sourceName}"]`).first();
   await card.locator('.cover-button').click();
   await waitForReader(page);
+  await waitForTwoFrames(page);
   return { latencyMs: performance.now() - started, card: card.first() };
 }
 
@@ -543,15 +447,14 @@ async function runPerformanceScenarios(session, fixtures) {
   let memorySamples = [];
 
   try {
-    const importStarted = performance.now();
     const importSequence = Number(await page.getByTestId('smoke-import-complete').getAttribute('data-sequence'));
-    await page.getByTestId('smoke-source-path').fill(fixtures.navigation);
-    await page.getByTestId('smoke-import').click();
-    await waitForImportComplete(page, importSequence);
-    const importCompletedAt = performance.now();
-    const importMs = importCompletedAt - importStarted;
-    await waitForReader(page);
-    const firstFrameMs = performance.now() - importCompletedAt;
+    const { importMs, firstFrameMs } = await measureImportToFirstFrame({
+      prepareImport: () => page.getByTestId('smoke-source-path').fill(fixtures.navigation),
+      triggerImport: () => page.getByTestId('smoke-import').click(),
+      waitForImportComplete: () => waitForImportComplete(page, importSequence),
+      waitForReader: () => waitForReader(page),
+      waitForTwoFrames: () => waitForTwoFrames(page),
+    }, () => performance.now());
     await waitForStatus(page, 'Imported');
     scenarioResults.import = { status: 'passed', source: 'performance-50.cbz', pageCount: 50, importMs };
     scenarioResults['first-frame'] = { status: firstFrameMs <= PERFORMANCE_THRESHOLDS.firstFrameMs ? 'passed' : 'failed', firstFrameMs };
@@ -560,7 +463,7 @@ async function runPerformanceScenarios(session, fixtures) {
     const navigationMeasurement = await measureInteraction(page, async () => {
       for (let pageIndex = 1; pageIndex < 50; pageIndex += 1) {
         await page.getByTestId('reader-next').click();
-        await page.getByTestId('reader-current-page').toHaveAttribute('data-page-index', String(pageIndex));
+        await waitForCommittedPage(page, pageIndex, waitFor);
       }
     });
     const navigationFrame = summarizeFrames(navigationMeasurement.frames);
@@ -623,6 +526,7 @@ async function runPerformanceScenarios(session, fixtures) {
     const navigationCard = page.locator('[data-testid="library-publication-card"][data-publication-source*="performance-50.cbz"]').first();
     await navigationCard.locator('.cover-button').click();
     await waitForReader(page);
+    await waitForTwoFrames(page);
     await resetReaderToFirstPage(page);
     memorySampler = startMemorySampler(child.pid);
     const longBefore = await getCacheInfo(page);
@@ -631,11 +535,11 @@ async function runPerformanceScenarios(session, fixtures) {
       for (let cycle = 0; cycle < cycles; cycle += 1) {
         for (let pageIndex = 1; pageIndex < 50; pageIndex += 1) {
           await page.getByTestId('reader-next').click();
-          await page.getByTestId('reader-current-page').toHaveAttribute('data-page-index', String(pageIndex));
+          await waitForCommittedPage(page, pageIndex, waitFor);
         }
         for (let pageIndex = 48; pageIndex >= 0; pageIndex -= 1) {
           await page.getByTestId('reader-previous').click();
-          await page.getByTestId('reader-current-page').toHaveAttribute('data-page-index', String(pageIndex));
+          await waitForCommittedPage(page, pageIndex, waitFor);
         }
       }
     });
@@ -714,36 +618,53 @@ async function main() {
   }
   const runId = Date.now() + '-' + process.pid + '-' + randomUUID().replaceAll('-', '');
   const runDirectory = await mkdtemp(join(tmpdir(), 'tactile-reader-performance-'));
+  installedAppHarness.registerRunRoot(runDirectory);
   const evidenceDirectory = join(reportRoot, runId);
-  await mkdir(evidenceDirectory, { recursive: true });
   let session;
   let report;
-  try {
-    const fixtures = await createRunFixtures(runDirectory);
-    const built = await buildInstaller(runDirectory, runId);
-    const executable = await installPackage(built.installer, join(runDirectory, 'installed'));
-    session = await launchApp(executable, 'performance', evidenceDirectory);
-    const hardware = readHardwareSnapshot(await readWebglRenderer(session.page));
-    if (!hardware.gpuClassDetected) {
-      throw new Error('Could not classify the active GPU as integrated or dedicated.');
-    }
-    if (hardware.gpuClassDetected !== gpuClass) {
-      throw new Error(`Requested GPU class ${gpuClass} does not match detected class ${hardware.gpuClassDetected}.`);
-    }
-    const result = await runPerformanceScenarios(session, fixtures);
-    report = buildReport({
-      runId,
-      hardware,
-      build: { commit: readBuildCommit(), version: readPackageVersion(), tauriIdentifier: built.identifier },
-      ...result,
-    });
-    const validationErrors = validatePerformanceReport(report);
-    report.errors.push(...validationErrors);
-    if (validationErrors.length > 0) {
-      report.status = 'failed';
-    }
-  } catch (error) {
-    report = {
+  const installDirectory = join(runDirectory, 'installed');
+  const outcome = await settlePerformanceLifecycle({
+    execute: async () => {
+      await mkdir(evidenceDirectory, { recursive: true });
+      const fixtures = await createRunFixtures(runDirectory);
+      const built = await buildInstaller(runDirectory, runId);
+      const executable = await installedAppHarness.installPackage(built.installer, installDirectory);
+      session = await installedAppHarness.launchApp({
+        executable,
+        label: 'performance',
+        evidenceDirectory,
+        pageDescription: 'performance harness',
+        runRoot: runDirectory,
+        timeoutMs,
+      });
+      const hardware = readHardwareSnapshot(await readWebglRenderer(session.page));
+      if (!hardware.gpuClassDetected) {
+        throw new Error('Could not classify the active GPU as integrated or dedicated.');
+      }
+      if (hardware.gpuClassDetected !== gpuClass) {
+        throw new Error(`Requested GPU class ${gpuClass} does not match detected class ${hardware.gpuClassDetected}.`);
+      }
+      const result = await runPerformanceScenarios(session, fixtures);
+      report = buildReport({
+        runId,
+        hardware,
+        build: { commit: readBuildCommit(), version: readPackageVersion(), tauriIdentifier: built.identifier },
+        ...result,
+      });
+      const validationErrors = validatePerformanceReport(report);
+      report.errors.push(...validationErrors);
+      if (validationErrors.length > 0) {
+        report.status = 'failed';
+        report.summary.status = 'failed';
+        throw new InstalledAppLifecycleError('execution', 'Performance report validation failed: ' + validationErrors.join('; '));
+      }
+      return requirePassedPerformanceReport(report);
+    },
+    cleanup: () => installedAppHarness.cleanupRun({ installDirectory, runRoot: runDirectory, session }),
+  });
+  report = outcome.value ?? report;
+  if (outcome.error) {
+    report ??= {
       schemaVersion: PERFORMANCE_REPORT_VERSION,
       status: 'failed',
       runId,
@@ -753,15 +674,22 @@ async function main() {
       thresholds: PERFORMANCE_THRESHOLDS,
       scenarios: Object.fromEntries(PERFORMANCE_SCENARIOS.map((scenario) => [scenario, { status: 'not-run' }])),
       summary: { status: 'failed' },
-      errors: [errorMessage(error)],
+      errors: [],
     };
-  } finally {
-    await session?.close();
+    Object.assign(report, performanceFailureEvidence(outcome.error));
+    report.status = 'failed';
+    report.summary.status = 'failed';
+  }
+  try {
+    await mkdir(evidenceDirectory, { recursive: true });
     await writeFile(join(evidenceDirectory, 'performance-report.json'), JSON.stringify(report, null, 2) + '\n', 'utf8');
     console.log(JSON.stringify({ evidenceDirectory, report }));
     if (report?.status !== 'passed') {
       process.exitCode = 1;
     }
+  } catch (error) {
+    console.error(errorMessage(error));
+    process.exitCode = 1;
   }
 }
 

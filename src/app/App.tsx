@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createDemoPublication } from '../data/demo';
 import { canRunActionWhileSettingsOpen, InputMap } from '../domain/input';
-import { createPageSelectionCoordinator, selectLatestPage, type PageSelectionRequest } from '../domain/pageSelection';
-import { calculateProgress, movePage, clamp, visiblePageIndexes } from '../domain/reader';
+import { createPageSelectionCoordinator, preparePageSelection, selectLatestPage, type PageSelectionRequest } from '../domain/pageSelection';
+import { activeWorkingSetPageIds, calculateProgress, movePage, clamp } from '../domain/reader';
 import { nextBookmark, type LibrarySort } from '../domain/library';
 import {
   createDefaultProfile,
@@ -60,10 +60,12 @@ import {
   saveProgress,
 } from '../services/storage';
 import { LibraryView } from './LibraryView';
+import { LiveAnnouncement } from './LiveAnnouncement';
 import { ProfilePanel } from './ProfilePanel';
 import { ReaderView } from './ReaderView';
 import { SmokeHarness } from './SmokeHarness';
 import { isSmokeMode } from '../release/testModes';
+import { resolveNativeImportRequest, type NativeImportRequest } from './nativeImportFlow';
 
 function initialLibrary(direction: ReadingProfile['direction']): Publication[] {
   const demo = createDemoPublication();
@@ -73,19 +75,6 @@ function initialLibrary(direction: ReadingProfile['direction']): Publication[] {
   demo.currentPage = direction === 'rtl' && savedPage === 0 ? demo.pages.length - 1 : Math.min(savedPage, demo.pages.length - 1);
   demo.progress = calculateProgress(demo.currentPage, demo.pages.length, direction);
   return [demo];
-}
-
-function activeWorkingSetPageIds(publication: Publication, profile: ReadingProfile): string[] {
-  const indexes = new Set([
-    ...visiblePageIndexes(publication.currentPage, publication.pages, profile.mode, profile.direction),
-    publication.currentPage - 1,
-    publication.currentPage,
-    publication.currentPage + 1,
-  ]);
-  return [...indexes]
-    .filter((index) => index >= 0 && index < publication.pages.length)
-    .map((index) => publication.pages[index]?.id)
-    .filter((id): id is string => Boolean(id));
 }
 
 const DEFAULT_CACHE_INFO: CacheInfo = {
@@ -205,7 +194,7 @@ export function App() {
     let incomplete = false;
     const activePageId = activePublication?.pages[activePublication.currentPage]?.id;
     const activeProtectedPageIds = activePublication
-      ? activeWorkingSetPageIds(activePublication, profile)
+      ? activeWorkingSetPageIds(activePublication, profile, activePublication.currentPage)
       : [];
     for (const publication of initial) {
       const pageIds = new Set([
@@ -613,7 +602,7 @@ export function App() {
       const active = activeIdRef.current
         ? libraryRef.current.find((publication) => publication.id === activeIdRef.current)
         : undefined;
-      await setNativeCacheLimit(maxBytes, active ? activeWorkingSetPageIds(active, profile) : []);
+      await setNativeCacheLimit(maxBytes, active ? activeWorkingSetPageIds(active, profile, active.currentPage) : []);
       limitApplied = true;
       const { library: refreshedLibrary, incomplete } = await reloadNativeLibraryWithEssentials(profile.direction);
       setLibrary(refreshedLibrary);
@@ -648,7 +637,7 @@ export function App() {
       const active = activeIdRef.current
         ? libraryRef.current.find((publication) => publication.id === activeIdRef.current)
         : undefined;
-      await clearNativeCache(active ? activeWorkingSetPageIds(active, profile) : []);
+      await clearNativeCache(active ? activeWorkingSetPageIds(active, profile, active.currentPage) : []);
       cacheCleared = true;
       const { library: readyLibrary, incomplete } = await reloadNativeLibraryWithEssentials(profile.direction);
       setLibrary(readyLibrary);
@@ -754,15 +743,7 @@ export function App() {
         if (!nativeRuntime) {
           return null;
         }
-        const page = publication.pages[nextPage];
-        const protectedPageIds = page
-          ? [...new Set([...activeWorkingSetPageIds(publication, profile), page.id])]
-          : activeWorkingSetPageIds(publication, profile);
-        const preparedPage = await ensureNativePage(publication.id, page?.id ?? '', protectedPageIds);
-        if (!preparedPage) {
-          throw new Error('page-unavailable');
-        }
-        return preparedPage;
+        return preparePageSelection(publication, profile, nextPage, ensureNativePage);
       },
       onCommit,
       () => {
@@ -1088,16 +1069,20 @@ export function App() {
     setAnnouncement(t('app.publicationImportedBrowser', { title: openingPublication.title }));
   };
 
-  const handleNativeImportPaths = async (paths: string[]): Promise<boolean> => {
-    if (paths.length === 0) {
-      setAnnouncement(t('app.importCancelled'));
-      return false;
-    }
-
+  const handleNativeImport = async (request: NativeImportRequest): Promise<boolean> => {
     setIsImporting(true);
     setDiagnostic(undefined);
     try {
-      const result = await importNativePaths(paths, profile.direction);
+      const resolution = await resolveNativeImportRequest(request, {
+        chooseFiles: chooseNativeFiles,
+        chooseFolder: chooseNativeFolder,
+      });
+      if (resolution.kind === 'cancelled') {
+        setAnnouncement(t('app.importCancelled'));
+        return false;
+      }
+
+      const result = await importNativePaths(resolution.paths, profile.direction);
       setSmokeImportSequence((current) => current + 1);
       const diagnosticMessage = result.diagnostics.length > 0 ? result.diagnostics.join(' ') : undefined;
       setDiagnostic(diagnosticMessage);
@@ -1123,24 +1108,6 @@ export function App() {
       setAnnouncement(t('app.nativeImportFailed'));
       return false;
     } finally {
-      setIsImporting(false);
-    }
-  };
-
-  const handleNativeImport = async (selectFolder: boolean) => {
-    setIsImporting(true);
-    setDiagnostic(undefined);
-    try {
-      const paths = selectFolder ? await chooseNativeFolder() : await chooseNativeFiles();
-      if (paths.length === 0) {
-        setAnnouncement(t('app.importCancelled'));
-        setIsImporting(false);
-        return;
-      }
-      await handleNativeImportPaths(paths);
-    } catch {
-      setDiagnostic(t('app.nativeImportError'));
-      setAnnouncement(t('app.nativeImportFailed'));
       setIsImporting(false);
     }
   };
@@ -1223,8 +1190,8 @@ export function App() {
             onOpen={openPublication}
             onImport={handleImport}
             isNativeRuntime={nativeRuntime}
-            onImportNative={() => void handleNativeImport(false)}
-            onImportFolder={() => void handleNativeImport(true)}
+            onImportNative={() => void handleNativeImport({ kind: 'files' })}
+            onImportFolder={() => void handleNativeImport({ kind: 'folder' })}
             onOpenSettings={() => {
               void refreshCacheInfo();
               setShowProfile(true);
@@ -1245,7 +1212,7 @@ export function App() {
       {isSmokeMode(import.meta.env.VITE_SMOKE_TEST === '1', nativeRuntime) && (
         <SmokeHarness
           onImportPath={async (path) => {
-            const imported = await handleNativeImportPaths([path]);
+            const imported = await handleNativeImport({ kind: 'paths', paths: [path] });
             if (!imported) {
               throw new Error('Native import did not create a publication.');
             }
@@ -1289,9 +1256,7 @@ export function App() {
         </>
       )}
 
-      <div className="sr-only" aria-live="polite" aria-atomic="true">
-        {announcement}
-      </div>
+      <LiveAnnouncement message={announcement} />
     </div>
   );
 }
