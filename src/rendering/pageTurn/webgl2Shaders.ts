@@ -9,7 +9,7 @@ uniform int u_control_columns;
 uniform int u_control_rows;
 uniform float u_progress;
 uniform vec2 u_grab_point;
-uniform int u_pass;
+uniform highp int u_pass;
 
 in vec3 a_position;
 in vec2 a_uv;
@@ -85,7 +85,7 @@ uniform sampler2D u_under;
 uniform sampler2D u_stationary;
 uniform float u_luminance_min;
 uniform float u_luminance_max;
-uniform int u_pass;
+uniform highp int u_pass;
 
 in vec2 v_uv;
 in vec3 v_normal;

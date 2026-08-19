@@ -201,6 +201,116 @@ describe('usePageTurn', () => {
     expect(latest?.surfaceInput).toBeUndefined();
   });
 
+  it('keeps a requested turn alive across the re-render that starting it causes', async () => {
+    const onNext = vi.fn();
+    const result = await renderHook(createOptions({ onNext }));
+
+    act(() => {
+      result.requestTurn(1);
+    });
+
+    const state = latest?.state;
+    const generation = state && 'generation' in state ? state.generation : undefined;
+    expect(generation, 'requesting a turn must produce a generation').toBeDefined();
+
+    // Starting a turn changes hook state, which re-renders the reader. The
+    // controller has to survive that render: if a state-keyed effect tears it
+    // down as if the reader had unmounted, the turn is silently dropped and the
+    // page never moves.
+    await act(async () => {
+      latest?.onTexturesAndBackendReady(generation!);
+      await Promise.resolve();
+    });
+
+    // A controller torn down by a state-keyed "unmount" cleanup is back at
+    // `idle`, so it ignores this signal and the turn stays stranded.
+    expect(latest?.state.phase, 'a prepared automatic turn must start driving the page').toBe('dragging');
+    expect(onNext, 'the turn must not have navigated before it settles').not.toHaveBeenCalled();
+  });
+
+  it('starts an automatic turn once even if the surface reports readiness repeatedly', async () => {
+    const frames: FrameRequestCallback[] = [];
+    const originalRaf = globalThis.requestAnimationFrame;
+    const originalCancel = globalThis.cancelAnimationFrame;
+    globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => frames.push(callback)) as typeof globalThis.requestAnimationFrame;
+    globalThis.cancelAnimationFrame = (() => undefined) as typeof globalThis.cancelAnimationFrame;
+
+    try {
+      const result = await renderHook(createOptions());
+
+      act(() => {
+        result.requestTurn(1);
+      });
+
+      const state = latest?.state;
+      const generation = state && 'generation' in state ? state.generation : undefined;
+      expect(generation).toBeDefined();
+
+      act(() => {
+        latest?.onTexturesAndBackendReady(generation!);
+      });
+
+      const scheduledAfterFirst = frames.length;
+      expect(scheduledAfterFirst, 'the first readiness signal must drive the turn').toBeGreaterThan(0);
+
+      // The surface effect can re-run while the turn animates. Re-reporting the
+      // same generation must not restart the animation, or the turn keeps
+      // rewinding and never reaches the page.
+      act(() => {
+        latest?.onTexturesAndBackendReady(generation!);
+        latest?.onTexturesAndBackendReady(generation!);
+      });
+
+      expect(frames.length, 'a repeated readiness signal must not restart the animation').toBe(scheduledAfterFirst);
+    } finally {
+      globalThis.requestAnimationFrame = originalRaf;
+      globalThis.cancelAnimationFrame = originalCancel;
+    }
+  });
+
+  it('commits an automatic backward turn so the previous control moves the reader', async () => {
+    const frames: FrameRequestCallback[] = [];
+    const originalRaf = globalThis.requestAnimationFrame;
+    const originalCancel = globalThis.cancelAnimationFrame;
+    globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => frames.push(callback)) as typeof globalThis.requestAnimationFrame;
+    globalThis.cancelAnimationFrame = (() => undefined) as typeof globalThis.cancelAnimationFrame;
+
+    try {
+      const onPrevious = vi.fn();
+      const result = await renderHook(createOptions({ onPrevious }));
+
+      act(() => {
+        result.requestTurn(-1);
+      });
+
+      const state = latest?.state;
+      const generation = state && 'generation' in state ? state.generation : undefined;
+      expect(generation).toBeDefined();
+
+      act(() => {
+        latest?.onTexturesAndBackendReady(generation!);
+      });
+
+      // A backward turn grabs the opposite corner and sweeps the other way. A
+      // trajectory that only knows the reading direction drags the sheet away
+      // from its destination, so the release reads as a cancel and the reader
+      // never moves.
+      const started = performance.now();
+      for (let step = 0; step <= 60 && frames.length > 0; step += 1) {
+        const tick = frames.shift()!;
+        act(() => tick(started + step * 40));
+        if (latest?.state.phase === 'settling') {
+          act(() => latest?.onSettled({ generation: generation!, outcome: 'commit' }));
+        }
+      }
+
+      expect(onPrevious, 'an automatic backward turn must commit').toHaveBeenCalled();
+    } finally {
+      globalThis.requestAnimationFrame = originalRaf;
+      globalThis.cancelAnimationFrame = originalCancel;
+    }
+  });
+
   it('routes adjacent automatic turns through the shared 62-percent synthetic grab and preserves only the latest queued request', async () => {
     const result = await renderHook(createOptions());
 

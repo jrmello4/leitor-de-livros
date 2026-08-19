@@ -137,12 +137,16 @@ async function runScenarioSetup(page: Page, scenario: VisualScenario): Promise<s
         await expect(currentPage).toHaveAttribute('data-page-index', pageIndex);
       }
       await page.getByTestId('reader-previous').click();
-      await expect(stage).toHaveAttribute('data-turn-phase', 'committing');
+      // The physical controller drives a turn through `dragging` and then
+      // `settling`; it has no `committing` phase.
+      await expect(stage).toHaveAttribute('data-turn-phase', /dragging|settling/);
       await expect(stage).toHaveAttribute('data-turn-direction', 'rtl');
-      const progress = await stage.getAttribute('data-turn-progress');
-      expect(Number(progress), 'RTL turn progress must be positive while committing').toBeGreaterThan(0);
+      const progress = await expect.poll(
+        async () => Number(await stage.getAttribute('data-turn-progress')),
+        { message: 'RTL turn progress must become positive while the turn runs' },
+      ).toBeGreaterThan(0).then(async () => Number(await stage.getAttribute('data-turn-progress')));
       const direction = await stage.getAttribute('data-turn-direction');
-      expect(expectedRtlMotion(direction, Number(progress)), 'RTL turn must move backward with positive progress').toBe(true);
+      expect(expectedRtlMotion(direction, progress), 'RTL turn must move backward with positive progress').toBe(true);
       await expect(currentPage).toHaveAttribute('data-page-index', '1');
       return undefined;
     }

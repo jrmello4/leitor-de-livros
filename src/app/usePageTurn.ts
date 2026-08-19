@@ -126,9 +126,28 @@ function turnDirectionToCallback(direction: TurnDirection, readingDirection: Rea
   return delta > 0 ? onNext : onPrevious;
 }
 
-function automaticPoint(direction: ReadingDirection, grab: Vec2, progress: number): Vec2 {
-  const destinationX = direction === 'rtl' ? 0.84 : 0.16;
-  const curveHeight = direction === 'rtl' ? -0.04 : 0.04;
+/**
+ * A turn is grabbed at the corner the page leaves from. Reading direction
+ * decides which side that is for a forward turn, and a backward turn mirrors
+ * it: the sheet comes back from the opposite edge. Deriving the corner from
+ * reading direction alone points a backward turn away from its destination, so
+ * the release reads as a cancel and the page never moves.
+ */
+function automaticGrabX(readingDirection: ReadingDirection, turnDirection: TurnDirection): number {
+  const forwardGrabX = readingDirection === 'rtl' ? 0 : 1;
+  return turnDirection === 'forward' ? forwardGrabX : 1 - forwardGrabX;
+}
+
+function automaticPoint(
+  readingDirection: ReadingDirection,
+  turnDirection: TurnDirection,
+  grab: Vec2,
+  progress: number,
+): Vec2 {
+  const forwardDestinationX = readingDirection === 'rtl' ? 0.84 : 0.16;
+  const destinationX = turnDirection === 'forward' ? forwardDestinationX : 1 - forwardDestinationX;
+  const forwardCurveHeight = readingDirection === 'rtl' ? -0.04 : 0.04;
+  const curveHeight = turnDirection === 'forward' ? forwardCurveHeight : -forwardCurveHeight;
   return {
     x: grab.x + (destinationX - grab.x) * progress,
     y: clamp(grab.y + Math.sin(progress * Math.PI) * curveHeight, 0, 1),
@@ -192,6 +211,7 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
   const previousModeRef = useRef(mode);
   const previousDirectionRef = useRef(readingDirection);
   const controllerRef = useRef<PageTurnController | undefined>(undefined);
+  const startedGenerationRef = useRef(0);
 
   const [state, setState] = useState<UsePageTurnResult['state']>({ phase: 'idle' });
   const [scene, setScene] = useState<PageTurnScene | undefined>(undefined);
@@ -406,7 +426,7 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
       }
 
       const progress = clamp((now - start) / SYNTHETIC_DURATION_MS, 0, 1);
-      const point = automaticPoint(readingDirection, planned.grab, progress);
+      const point = automaticPoint(readingDirection, planned.direction, planned.grab, progress);
       controllerRef.current?.movePointer(AUTOMATIC_POINTER_ID, point, now);
       updateDragSurface(planned.grab, point);
       setSyntheticTrajectory({ direction: planned.direction, grab: planned.grab, point });
@@ -480,11 +500,11 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
       direction,
       scene: nextScene,
       kind: 'automatic',
-      grab: { x: readingDirection === 'rtl' ? 0 : 1, y: SYNTHETIC_GRAB_Y },
+      grab: { x: automaticGrabX(readingDirection, direction), y: SYNTHETIC_GRAB_Y },
       syntheticTrajectory: {
         direction,
-        grab: { x: readingDirection === 'rtl' ? 0 : 1, y: SYNTHETIC_GRAB_Y },
-        point: { x: readingDirection === 'rtl' ? 0 : 1, y: SYNTHETIC_GRAB_Y },
+        grab: { x: automaticGrabX(readingDirection, direction), y: SYNTHETIC_GRAB_Y },
+        point: { x: automaticGrabX(readingDirection, direction), y: SYNTHETIC_GRAB_Y },
       },
     });
     syncFromController();
@@ -495,6 +515,15 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
     if (!planned) {
       return;
     }
+
+    // The surface re-runs its preparation effect whenever it re-renders, and
+    // it re-reports readiness each time. Driving a turn is not idempotent —
+    // starting it again resets the animation clock — so a generation already
+    // under way ignores the repeat instead of rewinding forever.
+    if (generation <= startedGenerationRef.current) {
+      return;
+    }
+    startedGenerationRef.current = generation;
 
     if (planned.kind === 'pointer' && planned.pendingPointer) {
       physicsRef.current = new PaperPhysicsSolver({ quality: SURFACE_QUALITY, direction: readingDirection }).begin(planned.grab);
@@ -735,13 +764,21 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
     }
   }, [acknowledgeNavigation, cancelTurn, mode, publication.currentPage, publication.id, readingDirection, state.phase]);
 
-  useEffect(() => () => {
+  const teardownRef = useRef<() => void>(() => undefined);
+  teardownRef.current = () => {
     clearAnimation();
     releasePointerCapture(
       state.phase === 'dragging' ? state.pointerId : pendingPointer?.pointerId,
     );
     controllerRef.current?.cancel('unmount');
-  }, [clearAnimation, pendingPointer?.pointerId, releasePointerCapture, state]);
+  };
+
+  // Runs on unmount only. Keying this on `state` would make React fire the
+  // cleanup on every phase change, so the transition into `preparing` would
+  // immediately cancel the turn that produced it and the reader would never
+  // move. The ref keeps the teardown reading current values without making the
+  // effect re-run.
+  useEffect(() => () => teardownRef.current(), []);
 
   const surfaceInput = scene && surfaceGeneration !== undefined && surfaceState.phase !== 'idle'
     ? {

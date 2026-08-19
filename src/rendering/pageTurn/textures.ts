@@ -113,6 +113,15 @@ export class PageTurnTextureCache<T> {
       this.latestGeneration = generation;
     }
 
+    // Releasing a generation only retires the work that was in flight for it.
+    // The surface effect can be torn down and re-run for the same turn, and
+    // asking to prepare it again means the turn is live once more: keeping it
+    // retired forever would answer every retry with `stale` and strand the
+    // reader on the current page.
+    if (generation >= this.latestGeneration) {
+      this.releasedGenerations.delete(generation);
+    }
+
     if (this.isGenerationStale(generation)) {
       return { kind: 'stale', generation };
     }

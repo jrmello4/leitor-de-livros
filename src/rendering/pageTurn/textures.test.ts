@@ -62,6 +62,23 @@ afterEach(() => {
 });
 
 describe('PageTurnTextureCache', () => {
+  it('prepares a generation again after its own effect cleanup released it', async () => {
+    const load = vi.fn(async (request: { src: string }) => ({ key: request.src }));
+    const cache = new PageTurnTextureCache({ load, now: () => 0, maxEntries: 6, maxLongestSide: 4096 });
+    const viewport = { width: 1800, height: 1200, dpr: 2 };
+
+    const first = await cache.prepare(createScene(), 4, viewport);
+    expect(first.kind).toBe('ready');
+
+    // React can re-run the surface effect for the same turn. Its cleanup
+    // releases the generation, so a generation that stays released forever
+    // makes the retry report `stale`, and the reader loses the page turn.
+    cache.releaseGeneration(4);
+
+    const retry = await cache.prepare(createScene(), 4, viewport);
+    expect(retry.kind).toBe('ready');
+  });
+
   it('prepares unique front, verso, and under textures and caps the longest side', async () => {
     const load = vi.fn(async (request: { src: string }) => ({ key: request.src }));
     const front = createPage('p1', 'asset://front', 7000, 5000);
