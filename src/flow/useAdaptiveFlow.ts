@@ -12,18 +12,24 @@ interface UseAdaptiveFlowOptions {
   page?: PageDescriptor;
   direction: ReadingDirection;
   nativeRuntime: boolean;
+  /**
+   * Whether the reader currently wants panel guidance. Analysis decodes the
+   * page, reads it back off the GPU and sweeps it on the main thread, so it is
+   * only worth doing for a reader who asked to see the markers.
+   */
+  enabled: boolean;
 }
 
 function matchesReadingDirection(graph: PanelGraph | null, direction: ReadingDirection): graph is PanelGraph {
   return Boolean(graph && graph.direction === direction);
 }
 
-export function useAdaptiveFlow({ publicationId, page, direction, nativeRuntime }: UseAdaptiveFlowOptions) {
+export function useAdaptiveFlow({ publicationId, page, direction, nativeRuntime, enabled }: UseAdaptiveFlowOptions) {
   const [graph, setGraph] = useState<PanelGraph | null>(null);
   const [state, setState] = useState<FlowAnalysisState>('idle');
 
   useEffect(() => {
-    if (!page) {
+    if (!page || !enabled) {
       setGraph(null);
       setState('idle');
       return undefined;
@@ -67,7 +73,7 @@ export function useAdaptiveFlow({ publicationId, page, direction, nativeRuntime 
     return () => {
       active = false;
     };
-  }, [direction, nativeRuntime, page?.id, page?.src, publicationId]);
+  }, [direction, enabled, nativeRuntime, page?.id, page?.src, publicationId]);
 
   const swapOrder = useCallback((firstId: string, secondId: string) => {
     setGraph((current) => {

@@ -176,6 +176,7 @@ export function ReaderView({
     page: currentPage,
     direction: profile.direction,
     nativeRuntime,
+    enabled: flowVisible,
   });
 
   const isFlowInteraction = (event: PointerEvent<HTMLDivElement>) => (
