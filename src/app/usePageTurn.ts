@@ -127,27 +127,19 @@ function turnDirectionToCallback(direction: TurnDirection, readingDirection: Rea
 }
 
 /**
- * A turn is grabbed at the corner the page leaves from. Reading direction
- * decides which side that is for a forward turn, and a backward turn mirrors
- * it: the sheet comes back from the opposite edge. Deriving the corner from
- * reading direction alone points a backward turn away from its destination, so
- * the release reads as a cancel and the page never moves.
+ * The sheet is grabbed at the corner it leaves from and must travel toward the
+ * destination the controller signs its release against: a `forward` turn sweeps
+ * left, a `backward` turn sweeps right. Reading direction is already folded in
+ * by `logicalDeltaToTurnDirection`, so applying it again here would sweep the
+ * page away from its destination and every release would read as a cancel.
  */
-function automaticGrabX(readingDirection: ReadingDirection, turnDirection: TurnDirection): number {
-  const forwardGrabX = readingDirection === 'rtl' ? 0 : 1;
-  return turnDirection === 'forward' ? forwardGrabX : 1 - forwardGrabX;
+function automaticGrabX(turnDirection: TurnDirection): number {
+  return turnDirection === 'forward' ? 1 : 0;
 }
 
-function automaticPoint(
-  readingDirection: ReadingDirection,
-  turnDirection: TurnDirection,
-  grab: Vec2,
-  progress: number,
-): Vec2 {
-  const forwardDestinationX = readingDirection === 'rtl' ? 0.84 : 0.16;
-  const destinationX = turnDirection === 'forward' ? forwardDestinationX : 1 - forwardDestinationX;
-  const forwardCurveHeight = readingDirection === 'rtl' ? -0.04 : 0.04;
-  const curveHeight = turnDirection === 'forward' ? forwardCurveHeight : -forwardCurveHeight;
+function automaticPoint(turnDirection: TurnDirection, grab: Vec2, progress: number): Vec2 {
+  const destinationX = turnDirection === 'forward' ? 0.16 : 0.84;
+  const curveHeight = turnDirection === 'forward' ? 0.04 : -0.04;
   return {
     x: grab.x + (destinationX - grab.x) * progress,
     y: clamp(grab.y + Math.sin(progress * Math.PI) * curveHeight, 0, 1),
@@ -426,7 +418,7 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
       }
 
       const progress = clamp((now - start) / SYNTHETIC_DURATION_MS, 0, 1);
-      const point = automaticPoint(readingDirection, planned.direction, planned.grab, progress);
+      const point = automaticPoint(planned.direction, planned.grab, progress);
       controllerRef.current?.movePointer(AUTOMATIC_POINTER_ID, point, now);
       updateDragSurface(planned.grab, point);
       setSyntheticTrajectory({ direction: planned.direction, grab: planned.grab, point });
@@ -500,11 +492,11 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
       direction,
       scene: nextScene,
       kind: 'automatic',
-      grab: { x: automaticGrabX(readingDirection, direction), y: SYNTHETIC_GRAB_Y },
+      grab: { x: automaticGrabX(direction), y: SYNTHETIC_GRAB_Y },
       syntheticTrajectory: {
         direction,
-        grab: { x: automaticGrabX(readingDirection, direction), y: SYNTHETIC_GRAB_Y },
-        point: { x: automaticGrabX(readingDirection, direction), y: SYNTHETIC_GRAB_Y },
+        grab: { x: automaticGrabX(direction), y: SYNTHETIC_GRAB_Y },
+        point: { x: automaticGrabX(direction), y: SYNTHETIC_GRAB_Y },
       },
     });
     syncFromController();

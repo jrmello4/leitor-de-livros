@@ -268,48 +268,65 @@ describe('usePageTurn', () => {
     }
   });
 
-  it('commits an automatic backward turn so the previous control moves the reader', async () => {
-    const frames: FrameRequestCallback[] = [];
-    const originalRaf = globalThis.requestAnimationFrame;
-    const originalCancel = globalThis.cancelAnimationFrame;
-    globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => frames.push(callback)) as typeof globalThis.requestAnimationFrame;
-    globalThis.cancelAnimationFrame = (() => undefined) as typeof globalThis.cancelAnimationFrame;
+  it.each([
+    { readingDirection: 'ltr' as const, delta: 1, expected: 'onNext' as const },
+    { readingDirection: 'ltr' as const, delta: -1, expected: 'onPrevious' as const },
+    { readingDirection: 'rtl' as const, delta: 1, expected: 'onNext' as const },
+    { readingDirection: 'rtl' as const, delta: -1, expected: 'onPrevious' as const },
+  ])(
+    'commits an automatic $readingDirection turn for delta $delta',
+    async ({ readingDirection, delta, expected }) => {
+      const frames: FrameRequestCallback[] = [];
+      const originalRaf = globalThis.requestAnimationFrame;
+      const originalCancel = globalThis.cancelAnimationFrame;
+      globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => frames.push(callback)) as typeof globalThis.requestAnimationFrame;
+      globalThis.cancelAnimationFrame = (() => undefined) as typeof globalThis.cancelAnimationFrame;
 
-    try {
-      const onPrevious = vi.fn();
-      const result = await renderHook(createOptions({ onPrevious }));
+      try {
+        const onNext = vi.fn();
+        const onPrevious = vi.fn();
+        const result = await renderHook(createOptions({
+          readingDirection,
+          publication: publication({ currentPage: 2, direction: readingDirection }),
+          onNext,
+          onPrevious,
+        }));
 
-      act(() => {
-        result.requestTurn(-1);
-      });
+        act(() => {
+          result.requestTurn(delta);
+        });
 
-      const state = latest?.state;
-      const generation = state && 'generation' in state ? state.generation : undefined;
-      expect(generation).toBeDefined();
+        const state = latest?.state;
+        const generation = state && 'generation' in state ? state.generation : undefined;
+        expect(generation).toBeDefined();
 
-      act(() => {
-        latest?.onTexturesAndBackendReady(generation!);
-      });
+        act(() => {
+          latest?.onTexturesAndBackendReady(generation!);
+        });
 
-      // A backward turn grabs the opposite corner and sweeps the other way. A
-      // trajectory that only knows the reading direction drags the sheet away
-      // from its destination, so the release reads as a cancel and the reader
-      // never moves.
-      const started = performance.now();
-      for (let step = 0; step <= 60 && frames.length > 0; step += 1) {
-        const tick = frames.shift()!;
-        act(() => tick(started + step * 40));
-        if (latest?.state.phase === 'settling') {
-          act(() => latest?.onSettled({ generation: generation!, outcome: 'commit' }));
+        // The sheet has to travel toward the destination the controller signs
+        // its release against. Reading direction is already folded into the
+        // turn direction, so applying it a second time sweeps the page the
+        // wrong way and every release reads as a cancel.
+        const started = performance.now();
+        for (let step = 0; step <= 60 && frames.length > 0; step += 1) {
+          const tick = frames.shift()!;
+          act(() => tick(started + step * 40));
+          if (latest?.state.phase === 'settling') {
+            act(() => latest?.onSettled({ generation: generation!, outcome: 'commit' }));
+          }
         }
-      }
 
-      expect(onPrevious, 'an automatic backward turn must commit').toHaveBeenCalled();
-    } finally {
-      globalThis.requestAnimationFrame = originalRaf;
-      globalThis.cancelAnimationFrame = originalCancel;
-    }
-  });
+        const called = expected === 'onNext' ? onNext : onPrevious;
+        const notCalled = expected === 'onNext' ? onPrevious : onNext;
+        expect(called, `${readingDirection} delta ${delta} must commit`).toHaveBeenCalled();
+        expect(notCalled).not.toHaveBeenCalled();
+      } finally {
+        globalThis.requestAnimationFrame = originalRaf;
+        globalThis.cancelAnimationFrame = originalCancel;
+      }
+    },
+  );
 
   it('routes adjacent automatic turns through the shared 62-percent synthetic grab and preserves only the latest queued request', async () => {
     const result = await renderHook(createOptions());
