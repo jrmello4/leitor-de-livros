@@ -340,9 +340,9 @@ describe('usePageTurn', () => {
       result.requestTurn(1);
     });
 
-    // One fold runs, one waits in the single queue slot, and the third request
-    // takes its page at once rather than evicting the one already waiting.
-    expect(onNext).toHaveBeenCalledTimes(1);
+    // The fold that is running owns the screen; the two behind it are counted
+    // and land when it finishes.
+    expect(onNext).not.toHaveBeenCalled();
     expect(latest?.syntheticTrajectory?.grab.y).toBeCloseTo(0.62, 2);
     expect(latest?.state).toMatchObject({ phase: 'preparing', direction: 'forward' });
 
@@ -547,25 +547,61 @@ describe('usePageTurn', () => {
   });
 
   it('advances one page per request when a reader clicks faster than the fold', async () => {
-    const onNext = vi.fn();
-    const result = await renderHook(createOptions({ onNext }));
+    const frames: FrameRequestCallback[] = [];
+    const originalRaf = globalThis.requestAnimationFrame;
+    const originalCancel = globalThis.cancelAnimationFrame;
+    globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => frames.push(callback)) as typeof globalThis.requestAnimationFrame;
+    globalThis.cancelAnimationFrame = (() => undefined) as typeof globalThis.cancelAnimationFrame;
 
-    // Queuing kept only the most recent request, so a reader clicking at a
-    // natural pace silently lost pages. Every request has to reach the page.
-    act(() => {
-      result.requestTurn(1);
-    });
-    act(() => {
-      latest?.requestTurn(1);
-    });
-    act(() => {
-      latest?.requestTurn(1);
-    });
+    try {
+      const onNext = vi.fn();
+      const result = await renderHook(createOptions({ onNext }));
 
-    // The running fold and the queued one land on their own; only the third
-    // request has nowhere to wait, so it takes its page at once.
-    expect(onNext, 'a request with nowhere to queue must still take its page').toHaveBeenCalledTimes(1);
-    expect(latest?.state).toMatchObject({ phase: 'preparing', direction: 'forward' });
+      const drive = (generation: number) => {
+        const started = performance.now();
+        for (let step = 0; step <= 60 && frames.length > 0; step += 1) {
+          const tick = frames.shift()!;
+          act(() => tick(started + step * 40));
+          if (latest?.state.phase === 'settling') {
+            act(() => latest?.onSettled({ generation, outcome: 'commit' }));
+          }
+        }
+      };
+
+      // Three clicks arrive faster than a fold settles. A queue that keeps only
+      // the most recent request drops the middle one and the reader silently
+      // loses a page.
+      act(() => {
+        result.requestTurn(1);
+      });
+      const first = latest?.state;
+      const firstGeneration = first && 'generation' in first ? first.generation : undefined;
+      act(() => {
+        latest?.onTexturesAndBackendReady(firstGeneration!);
+      });
+      act(() => {
+        latest?.requestTurn(1);
+        latest?.requestTurn(1);
+      });
+
+      drive(firstGeneration!);
+      act(() => {
+        latest?.acknowledgeNavigation();
+      });
+
+      const promoted = latest?.state;
+      const promotedGeneration = promoted && 'generation' in promoted ? promoted.generation : undefined;
+      expect(promotedGeneration, 'the counted turn must be promoted').toBeDefined();
+      act(() => {
+        latest?.onTexturesAndBackendReady(promotedGeneration!);
+      });
+      drive(promotedGeneration!);
+
+      expect(onNext, 'three requests must reach three pages').toHaveBeenCalledTimes(3);
+    } finally {
+      globalThis.requestAnimationFrame = originalRaf;
+      globalThis.cancelAnimationFrame = originalCancel;
+    }
   });
 
   it.each(['touch', 'pen'] as const)('ignores non-primary %s pointers before starting a turn', async (pointerType) => {

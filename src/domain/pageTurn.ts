@@ -196,7 +196,14 @@ type NavigationEffect = Extract<PageTurnEffect, { type: 'navigate' }>;
 
 export class PageTurnController {
   private state: PageTurnState = { phase: 'idle' };
-  private queuedTurn?: { generation: number; direction: TurnDirection };
+  /**
+   * Turns asked for while one is already running. `pending` counts them: a
+   * reader clicking faster than a fold settles must not lose pages, and a
+   * single slot silently dropped every request past the second. Opposite
+   * requests cancel each other, because a reader who goes back has undone the
+   * page they just asked for.
+   */
+  private queuedTurn?: { generation: number; direction: TurnDirection; pending: number };
   private readonly effect?: (effect: PageTurnEffect) => void;
   private readonly navigate: (effect: NavigationEffect) => void;
   private generation = 0;
@@ -233,10 +240,25 @@ export class PageTurnController {
     }
 
     if (this.state.phase !== 'disabled') {
-      this.queuedTurn = { generation, direction };
+      this.queuedTurn = this.queueTurn(this.queuedTurn, generation, direction);
     }
 
     return generation;
+  }
+
+  private queueTurn(
+    queued: { generation: number; direction: TurnDirection; pending: number } | undefined,
+    generation: number,
+    direction: TurnDirection,
+  ): { generation: number; direction: TurnDirection; pending: number } | undefined {
+    if (!queued) {
+      return { generation, direction, pending: 1 };
+    }
+    if (queued.direction === direction) {
+      return { generation, direction, pending: queued.pending + 1 };
+    }
+    const pending = queued.pending - 1;
+    return pending > 0 ? { ...queued, pending } : undefined;
   }
 
   texturesReady(generation: number): void {
@@ -339,6 +361,12 @@ export class PageTurnController {
 
     const queued = this.queuedTurn;
     this.queuedTurn = undefined;
+    // Everything that piled up beyond the next fold takes its page at once;
+    // animating a backlog one fold at a time would leave the reader watching
+    // the pages they already asked to pass.
+    for (let surplus = 1; surplus < queued.pending; surplus += 1) {
+      this.navigate({ type: 'navigate', direction: queued.direction, generation: queued.generation });
+    }
     this.applyResult(
       transitionPageTurn(this.state, {
         type: 'request',

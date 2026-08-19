@@ -65,13 +65,32 @@ it('cancels a fast motion away from the destination and commits a signed fling t
   expect(flingNavigate).toHaveBeenCalledTimes(1);
 });
 
-it('rejects a stale texture generation and keeps only the latest queued turn', () => {
-  const controller = new PageTurnController({ navigate: vi.fn() });
+it('rejects a stale texture generation and counts the turns asked for while one runs', () => {
+  const navigate = vi.fn();
+  const controller = new PageTurnController({ navigate });
   const first = controller.request('forward', false);
-  controller.request('backward', false);
+  controller.request('forward', false);
   controller.request('forward', false);
   controller.texturesReady(first + 1);
   expect(controller.snapshot().phase).toBe('preparing');
+
   controller.cancel('publication-change');
+
+  // Two turns were asked for while the first ran. One of them takes its page at
+  // once and the other animates, so no request is lost.
+  expect(navigate).toHaveBeenCalledTimes(1);
   expect(controller.snapshot()).toMatchObject({ phase: 'preparing', direction: 'forward' });
+});
+
+it('lets a turn back cancel the turn forward a reader just asked for', () => {
+  const navigate = vi.fn();
+  const controller = new PageTurnController({ navigate });
+  controller.request('forward', false);
+  controller.request('forward', false);
+  controller.request('backward', false);
+
+  controller.cancel('publication-change');
+
+  expect(navigate).not.toHaveBeenCalled();
+  expect(controller.snapshot().phase).toBe('idle');
 });
