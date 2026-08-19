@@ -4,6 +4,7 @@ coverage/
 target/
 artifacts/
 test-results/
+.impeccable/
 .worktrees/
 .superpowers/
 *.log
