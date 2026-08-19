@@ -16,7 +16,7 @@ O projeto já possui uma base funcional para Windows com:
 - Adaptive Flow geométrico com correção manual persistida;
 - enquadramento maior e virada de página com quina, confirmação e cancelamento revisados.
 
-Ainda faltam evidências de release em hardware Windows de referência, testes automatizados do instalador e aprovação visual final em diferentes resoluções. A próxima fase deve fechar essas lacunas antes de expandir muito o escopo.
+O teste de fumaça do instalador e a matriz visual passam de ponta a ponta, e a linha de base de performance abaixo foi medida em hardware real. Continuam abertas a validação em uma segunda máquina de referência (GPU integrada) e a assinatura do instalador.
 
 ## Critério de prioridade
 
@@ -28,19 +28,19 @@ Ainda faltam evidências de release em hardware Windows de referência, testes a
 
 ### P0 — Fechar a experiência de leitura
 
-1. **Teste de fumaça do instalador Windows**
+1. **Teste de fumaça do instalador Windows** — *concluído*
 
    Automatizar e também executar manualmente: instalar do zero, abrir, importar um CBZ e um PDF, fechar, reabrir, continuar da última página e remover uma publicação. O teste deve registrar diagnóstico quando o PDFium estiver ausente e confirmar que os arquivos de origem permanecem intactos.
 
    **Aceitação:** uma instalação limpa chega à leitura sem configuração manual; progresso e preferências sobrevivem ao reinício; falhas mostram uma ação compreensível.
 
-2. **Matriz visual de virada e fullscreen**
+2. **Matriz visual de virada e fullscreen** — *concluído*
 
    Criar fixtures e capturas para página única, spread, LTR, RTL, fullscreen, cancelamento, limite da publicação e movimento reduzido nos três backends de renderização. O objetivo é detectar regressões como página saindo pelo lado errado, corte, rolagem ou controles sobrepostos.
 
    **Aceitação:** nenhuma combinação aprovada apresenta clipping, página invertida, área vazia inesperada ou gesto iniciado fora da quina ativa.
 
-3. **Benchmark de fluidez e memória**
+3. **Benchmark de fluidez e memória** — *concluído em GPU dedicada; falta GPU integrada*
 
    Medir importação, abertura, navegação de 50 páginas, troca rápida de publicação e sessão longa em pelo menos um PC integrado e um PC com GPU dedicada. Registrar tempo de primeiro quadro, p95 do frame time, uso de memória e crescimento do cache.
 
@@ -97,6 +97,26 @@ Ainda faltam evidências de release em hardware Windows de referência, testes a
    Assinar o instalador, publicar artefatos em GitHub Releases, anexar checksum e documentar rollback. Um canal de atualização só deve ser considerado depois de a instalação offline e a migração de dados estarem comprovadas.
 
    **Aceitação:** cada release é reproduzível, identificável e instalável sem depender de arquivos gerados no diretório de desenvolvimento.
+
+## Linha de base de performance
+
+Primeira execução completa da harness (`npm run test:performance`), com o aplicativo instalado a partir do instalador NSIS. Antes disto a harness nunca havia produzido um relatório: ela rodava os cinco cenários e descartava o resultado ao montá-lo.
+
+**Máquina:** Intel Core i7-10700, 25 GB RAM, NVIDIA GeForce GTX 1650 (ANGLE/D3D11), Windows 11 Pro 10.0.26200. Classe de GPU: dedicada.
+
+| Cenário | Medido | Orçamento | Resultado |
+|---|---|---|---|
+| Importação (CBZ de 50 páginas) | 316 ms | — | passou |
+| Primeiro frame | 750 ms | 1500 ms | passou |
+| Navegação de 50 páginas | p95 17,0 ms · máx 17,1 ms | 33,4 ms | passou |
+| Troca rápida de publicação | p95 16,9 ms · p95 de troca 107 ms | 50 ms | passou |
+| Sessão longa | p95 16,9 ms · máx 17,2 ms · 3509 frames | 33,4 ms | passou |
+| Crescimento de memória em sessão longa | 5,09 MB | 256 MB | passou |
+| Crescimento do cache derivado | 0 | 512 MB | passou |
+
+**Ressalva:** é uma execução única. Uma corrida anterior registrou um frame isolado de 366 ms na navegação, que não se repetiu. Um cenário sensível à carga da máquina precisa de amostras repetidas antes de ser tratado como referência estável; estes números valem como ponto de partida, não como garantia.
+
+Falta medir em um PC com GPU integrada, que é o outro alvo declarado do v1.
 
 ## Listagem da biblioteca não carrega mais todas as páginas
 
