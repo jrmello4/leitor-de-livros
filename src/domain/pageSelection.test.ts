@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultProfile } from './profiles';
-import { createPageSelectionCoordinator, preparePageSelection, selectLatestPage } from './pageSelection';
+import { createPageSelectionCoordinator, preparePageSelection, selectLatestPage, warmWorkingSet, type EnsurePage } from './pageSelection';
 import { activeWorkingSetPageIds } from './reader';
 import type { PageDescriptor, Publication } from './types';
 
@@ -141,5 +141,48 @@ describe('race-safe page selection', () => {
     commit.resolve();
     expect(await selection).toBe(true);
     expect(completed).toBe(true);
+  });
+});
+
+describe('warmWorkingSet', () => {
+  it('prepares the pages a page turn needs, not just the one on screen', async () => {
+    const pages: PageDescriptor[] = Array.from({ length: 8 }, (_, index) => ({
+      id: `page-${index + 1}`,
+      index,
+      name: `page-${index + 1}.png`,
+      src: `blob:${index + 1}`,
+      width: 100,
+      height: 140,
+    }));
+    const publication: Publication = {
+      id: 'publication-1',
+      title: 'Long publication',
+      sourceLabel: 'long.cbz',
+      format: 'cbz',
+      pages,
+      pageCount: pages.length,
+      coverSrc: pages[0].src,
+      coverPageId: 'page-1',
+      currentPage: 3,
+      progress: 0.4,
+      direction: 'ltr',
+      addedAt: '2026-08-13T00:00:00.000Z',
+      updatedAt: '2026-08-13T00:00:00.000Z',
+      isFavorite: false,
+    };
+    const ensured: string[] = [];
+    const ensurePage: EnsurePage = async (_publicationId, pageId) => {
+      ensured.push(pageId);
+      return pages.find((page) => page.id === pageId) ?? null;
+    };
+
+    // The fold is drawn from the page being left, the one arriving and the one
+    // underneath. Only ever caching the visible page leaves those missing, and
+    // the turn fails with "Could not decode page-turn image".
+    await warmWorkingSet(publication, createDefaultProfile(), 3, ensurePage);
+
+    expect(ensured).toContain('page-5');
+    expect(ensured).toContain('page-3');
+    expect(ensured.length).toBeGreaterThan(1);
   });
 });

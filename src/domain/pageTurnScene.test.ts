@@ -242,3 +242,24 @@ describe('buildPageTurnScene', () => {
     }
   });
 });
+
+describe('pages the fold cannot draw yet', () => {
+  it('declines to build a scene when a page has no derived image', () => {
+    const pages: PageDescriptor[] = [
+      { id: 'page-1', index: 0, name: '1', src: 'asset://1', width: 800, height: 1200 },
+      // Not rebuilt yet: the derived cache has no file for it, so the fold has
+      // nothing to draw and would fail with "Could not decode page-turn image".
+      { id: 'page-2', index: 1, name: '2', src: '', width: 800, height: 1200 },
+    ];
+
+    const scene = buildPageTurnScene({
+      pages,
+      currentIndex: 0,
+      mode: 'single',
+      readingDirection: 'ltr',
+      turnDirection: 'forward',
+    });
+
+    expect(scene).toBeUndefined();
+  });
+});

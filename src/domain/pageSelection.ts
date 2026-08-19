@@ -27,6 +27,42 @@ export async function preparePageSelection(
   return preparedPage;
 }
 
+/**
+ * Prepares the pages around the one being read.
+ *
+ * A page turn is drawn from the page being left, the one arriving and the one
+ * underneath, and those come from the derived cache like any other page. Only
+ * ever caching the visible page leaves the neighbours missing — after the cache
+ * is cleared the fold cannot load them and the turn fails with "Could not
+ * decode page-turn image", so the reader keeps changing pages with no
+ * animation at all.
+ *
+ * Failures here are deliberately swallowed: this is a warm-up, and the page on
+ * screen has already been prepared by `preparePageSelection`.
+ */
+export async function warmWorkingSet(
+  publication: Publication,
+  profile: ReadingProfile,
+  pageIndex: number,
+  ensurePage: EnsurePage,
+): Promise<PageDescriptor[]> {
+  const working = activeWorkingSetPageIds(publication, profile, pageIndex);
+  const prepared: PageDescriptor[] = [];
+
+  for (const pageId of working) {
+    try {
+      const page = await ensurePage(publication.id, pageId, working);
+      if (page?.src) {
+        prepared.push(page);
+      }
+    } catch {
+      // A page that cannot be rebuilt must not stop the others warming.
+    }
+  }
+
+  return prepared;
+}
+
 export interface PageSelectionRequest {
   sequence: number;
   publicationId: string;

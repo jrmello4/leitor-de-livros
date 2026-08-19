@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createDemoPublication } from '../data/demo';
 import { canRunActionWhileSettingsOpen, InputMap } from '../domain/input';
-import { createPageSelectionCoordinator, preparePageSelection, selectLatestPage, type PageSelectionRequest } from '../domain/pageSelection';
+import { createPageSelectionCoordinator, preparePageSelection, selectLatestPage, warmWorkingSet, type PageSelectionRequest } from '../domain/pageSelection';
 import { activeWorkingSetPageIds, calculateProgress, movePage, clamp } from '../domain/reader';
 import { nextBookmark, type LibrarySort } from '../domain/library';
 import {
@@ -674,6 +674,19 @@ export function App() {
       cacheCleared = true;
       const { library: readyLibrary, incomplete } = await reloadNativeLibraryWithEssentials(profile.direction);
       setLibrary(readyLibrary);
+      // Clearing the cache deletes the images the fold draws from. Rebuilding
+      // the pages around the reader here means the next turn still animates,
+      // instead of failing to decode a file that was just removed.
+      const refreshed = readyLibrary.find((publication) => publication.id === activeIdRef.current);
+      if (refreshed) {
+        void warmWorkingSet(refreshed, profile, refreshed.currentPage, ensureNativePage)
+          .then((warmed) => {
+            if (warmed.length > 0) {
+              applyPreparedPages(refreshed.id, warmed);
+            }
+          })
+          .catch(() => undefined);
+      }
       void hydrateMetadata(readyLibrary);
       await refreshCacheInfo();
       if (incomplete) {
@@ -776,7 +789,20 @@ export function App() {
         if (!nativeRuntime) {
           return null;
         }
-        return preparePageSelection(publication, profile, nextPage, ensureNativePage);
+        const prepared = await preparePageSelection(publication, profile, nextPage, ensureNativePage);
+        // The page on screen is ready; its neighbours are what the next fold is
+        // drawn from, so they warm up behind it rather than holding it back.
+        // Rebuilding a page can move it in the derived cache, so the refreshed
+        // descriptors are merged back — a stale source is exactly what makes
+        // the fold fail to decode after the cache is cleared.
+        void warmWorkingSet(publication, profile, nextPage, ensureNativePage)
+          .then((warmed) => {
+            if (warmed.length > 0) {
+              applyPreparedPages(publication.id, warmed);
+            }
+          })
+          .catch(() => undefined);
+        return prepared;
       },
       onCommit,
       () => {
@@ -784,6 +810,21 @@ export function App() {
       },
     );
   }, [nativeRuntime, profile]);
+
+  const applyPreparedPages = useCallback((publicationId: string, prepared: PageDescriptor[]) => {
+    // A descriptor without a source is not a rebuilt page; merging it would
+    // replace a working source with an empty one and break the very fold this
+    // warm-up exists to keep alive.
+    const byId = new Map(prepared.filter((page) => page.src).map((page) => [page.id, page]));
+    if (byId.size === 0) {
+      return;
+    }
+    setLibrary((current) => current.map((entry) => (
+      entry.id === publicationId
+        ? { ...entry, pages: entry.pages.map((page) => byId.get(page.id) ?? page) }
+        : entry
+    )));
+  }, []);
 
   const commitActivePageSelection = useCallback(async (
     preparedPage: PageDescriptor | null,

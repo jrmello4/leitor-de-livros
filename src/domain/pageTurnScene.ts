@@ -36,11 +36,17 @@ export function buildPageTurnScene(input: PageTurnSceneInput): PageTurnScene | u
   const turningFront = input.pages[input.currentIndex];
   const turningVerso = input.pages[input.currentIndex + step];
 
-  if (!turningFront || !turningVerso) {
+  // A page whose derived image has not been rebuilt yet has no source to draw
+  // from. Building the scene anyway makes the surface fail to decode it, which
+  // reports a renderer failure and costs the reader the animation; declining
+  // here lets the turn fall back to a plain page change until the cache
+  // catches up.
+  if (!turningFront?.src || !turningVerso?.src) {
     return undefined;
   }
 
-  const under = input.pages[input.currentIndex + step * 2];
+  const underPage = input.pages[input.currentIndex + step * 2];
+  const under = underPage?.src ? underPage : undefined;
   const stationary = visiblePagesAt(input.pages, input.currentIndex, input.mode, input.readingDirection).filter(
     (page) => page.id !== turningFront.id && page.id !== turningVerso.id,
   );
