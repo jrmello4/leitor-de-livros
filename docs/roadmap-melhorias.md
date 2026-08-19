@@ -98,6 +98,26 @@ Ainda faltam evidências de release em hardware Windows de referência, testes a
 
    **Aceitação:** cada release é reproduzível, identificável e instalável sem depender de arquivos gerados no diretório de desenvolvimento.
 
+## Débito de performance aceito
+
+### Listagem da biblioteca carrega todas as páginas
+
+`LibraryDb::list_publications` faz uma consulta por publicação e materializa **toda página de toda publicação** só para desenhar a grade de capas. O resultado é serializado em JSON, cruza o IPC e é remapeado no front (`normalizePage`, depois `map` com `convertFileSrc` por página), ou seja, três materializações de dados que a tela da biblioteca não usa.
+
+Medido em build release, mediana de 7 execuções, cache do SQLite quente:
+
+| Biblioteca | Páginas totais | SQLite → Rust | JSON | `JSON.parse` |
+|---|---|---|---|---|
+| 5 × 40 | 200 | 0,2 ms | 26 KB | 0,1 ms |
+| 50 × 200 | 10.000 | 8,0 ms | 1,31 MB | 4,1 ms |
+| 200 × 400 | 80.000 | 71,5 ms | 10,57 MB | 35,2 ms |
+
+O custo cresce linearmente com o total de páginas, não com o número de publicações.
+
+**Decisão: adiado, não corrigido.** Contra o orçamento próprio do projeto (`firstFrameMs: 1500`), uma biblioteca de 50 publicações gasta cerca de 1% na abertura, e o v1 mira uma biblioteca pessoal pequena. A correção — devolver contagem e capa na listagem e carregar as páginas ao abrir a publicação — atravessa o modelo de domínio (`Publication.pages` tem 25 usos de `.length`, 15 acessos indexados e todo o caminho de leitura, cena e renderização), com risco de regressão desproporcional ao ganho medido nessa escala.
+
+**Reavaliar quando:** houver evidência de bibliotecas acima de ~100 publicações, a abertura passar de 300 ms em hardware de referência, ou o consumo de memória em sessão longa estourar o orçamento. A guarda `npm run test:scale-sweep` reproduz a medição.
+
 ## Sequência sugerida
 
 1. **Sprint 1:** smoke test do instalador, matriz visual, teste de arquivos originais e benchmark inicial.
