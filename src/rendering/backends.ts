@@ -29,6 +29,12 @@ class ImageStore {
       image = new Promise<HTMLImageElement>((resolve, reject) => {
         const element = new Image();
         element.decoding = 'async';
+        // Pages come from the asset protocol, a different origin from the app
+        // document. Without a CORS request the decode is origin-tainted, and
+        // both the WebGL2 upload and the raster `getImageData` fall over — the
+        // packaged app then drops to the static renderer and the reader loses
+        // the page turn entirely.
+        element.crossOrigin = 'anonymous';
         element.onload = () => resolve(element);
         element.onerror = () => reject(new Error(`Could not decode reader page: ${source}`));
         element.src = source;

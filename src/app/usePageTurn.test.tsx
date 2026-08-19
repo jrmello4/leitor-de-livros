@@ -330,15 +330,19 @@ describe('usePageTurn', () => {
     },
   );
 
-  it('routes adjacent automatic turns through the shared 62-percent synthetic grab and preserves only the latest queued request', async () => {
-    const result = await renderHook(createOptions());
+  it('routes adjacent automatic turns through the shared 62-percent synthetic grab', async () => {
+    const onNext = vi.fn();
+    const result = await renderHook(createOptions({ onNext }));
 
     act(() => {
       result.requestTurn(1);
-      result.requestTurn(-1);
+      result.requestTurn(1);
       result.requestTurn(1);
     });
 
+    // One fold runs, one waits in the single queue slot, and the third request
+    // takes its page at once rather than evicting the one already waiting.
+    expect(onNext).toHaveBeenCalledTimes(1);
     expect(latest?.syntheticTrajectory?.grab.y).toBeCloseTo(0.62, 2);
     expect(latest?.state).toMatchObject({ phase: 'preparing', direction: 'forward' });
 
@@ -455,6 +459,113 @@ describe('usePageTurn', () => {
       globalThis.requestAnimationFrame = originalRaf;
       globalThis.cancelAnimationFrame = originalCancel;
     }
+  });
+
+  it('turns one page even when the surface reports the same failure repeatedly', async () => {
+    const onNext = vi.fn();
+    const result = await renderHook(createOptions({ onNext }));
+
+    act(() => {
+      result.requestTurn(1);
+    });
+
+    // The surface re-runs its preparation effect several times per turn, and a
+    // page that keeps failing to prepare reports a failure from each run. Every
+    // report must not cost the reader another page.
+    act(() => {
+      latest?.onFailure({ reason: 'backend', diagnostic: 'Page-turn textures were not ready (slow).' });
+    });
+    act(() => {
+      latest?.onFailure({ reason: 'backend', diagnostic: 'Page-turn textures were not ready (slow).' });
+    });
+    act(() => {
+      latest?.onFailure({ reason: 'solver', diagnostic: 'Physical page-turn solver produced invalid-normal.' });
+    });
+
+    expect(onNext, 'one turn must advance the reader exactly one page').toHaveBeenCalledTimes(1);
+  });
+
+  it('does not lose a turn requested while another one is still running', async () => {
+    const frames: FrameRequestCallback[] = [];
+    const originalRaf = globalThis.requestAnimationFrame;
+    const originalCancel = globalThis.cancelAnimationFrame;
+    globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => frames.push(callback)) as typeof globalThis.requestAnimationFrame;
+    globalThis.cancelAnimationFrame = (() => undefined) as typeof globalThis.cancelAnimationFrame;
+
+    try {
+      const onNext = vi.fn();
+      const result = await renderHook(createOptions({ onNext }));
+
+      const drive = (generation: number) => {
+        const started = performance.now();
+        for (let step = 0; step <= 60 && frames.length > 0; step += 1) {
+          const tick = frames.shift()!;
+          act(() => tick(started + step * 40));
+          if (latest?.state.phase === 'settling') {
+            act(() => latest?.onSettled({ generation, outcome: 'commit' }));
+          }
+        }
+      };
+
+      act(() => {
+        result.requestTurn(1);
+      });
+      const first = latest?.state;
+      const firstGeneration = first && 'generation' in first ? first.generation : undefined;
+      act(() => {
+        latest?.onTexturesAndBackendReady(firstGeneration!);
+      });
+
+      // A reader clicking at a natural pace asks for the next page before the
+      // current turn has settled. That request is queued, and it must still
+      // reach the page once the first turn finishes.
+      act(() => {
+        latest?.requestTurn(1);
+      });
+
+      drive(firstGeneration!);
+      expect(onNext, 'the first turn must land').toHaveBeenCalledTimes(1);
+
+      act(() => {
+        latest?.acknowledgeNavigation();
+      });
+
+      const queued = latest?.state;
+      const queuedGeneration = queued && 'generation' in queued ? queued.generation : undefined;
+      expect(queuedGeneration, 'the queued turn must be promoted').toBeDefined();
+
+      act(() => {
+        latest?.onTexturesAndBackendReady(queuedGeneration!);
+      });
+      drive(queuedGeneration!);
+
+      expect(onNext, 'the queued turn must land too').toHaveBeenCalledTimes(2);
+    } finally {
+      globalThis.requestAnimationFrame = originalRaf;
+      globalThis.cancelAnimationFrame = originalCancel;
+    }
+  });
+
+  it('advances one page per request when a reader clicks faster than the fold', async () => {
+    const onNext = vi.fn();
+    const result = await renderHook(createOptions({ onNext }));
+
+    // Queuing kept only the most recent request, so a reader clicking at a
+    // natural pace silently lost pages. Every request has to reach the page.
+    act(() => {
+      result.requestTurn(1);
+    });
+    act(() => {
+      latest?.requestTurn(1);
+    });
+    act(() => {
+      latest?.requestTurn(1);
+    });
+
+    // The running fold and the queued one land on their own; only the third
+    // request has nowhere to wait, so it takes its page at once.
+    expect(onNext, 'a request with nowhere to queue must still take its page').toHaveBeenCalledTimes(1);
+    expect(latest?.state).toMatchObject({ phase: 'preparing', direction: 'forward' });
   });
 
   it.each(['touch', 'pen'] as const)('ignores non-primary %s pointers before starting a turn', async (pointerType) => {

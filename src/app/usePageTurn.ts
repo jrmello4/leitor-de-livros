@@ -204,6 +204,7 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
   const previousDirectionRef = useRef(readingDirection);
   const controllerRef = useRef<PageTurnController | undefined>(undefined);
   const startedGenerationRef = useRef(0);
+  const queuedGenerationRef = useRef<number | undefined>(undefined);
 
   const [state, setState] = useState<UsePageTurnResult['state']>({ phase: 'idle' });
   const [scene, setScene] = useState<PageTurnScene | undefined>(undefined);
@@ -251,6 +252,12 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
     }
 
     const snapshot = controller.snapshot();
+    // The queue slot frees up once the controller promoted that turn, or once
+    // it went back to rest.
+    if (snapshot.phase === 'idle'
+      || ('generation' in snapshot && snapshot.generation === queuedGenerationRef.current)) {
+      queuedGenerationRef.current = undefined;
+    }
     setState(snapshot as UsePageTurnResult['state']);
 
     if (snapshot.phase === 'idle' || snapshot.phase === 'disabled') {
@@ -467,6 +474,20 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
       return;
     }
 
+    // The controller holds exactly one queued turn, so a third request would
+    // replace the second and that page would never be read. The fold in flight
+    // and the one already queued each still land on their own; anything beyond
+    // them takes its page immediately, without a fold of its own.
+    //
+    // The controller's own phase decides this, not React state: a reader
+    // clicking faster than a render would otherwise be judged against a stale
+    // `idle` and lose the page.
+    const livePhase = controllerRef.current?.snapshot().phase ?? state.phase;
+    if (livePhase !== 'idle' && queuedGenerationRef.current !== undefined) {
+      callback();
+      return;
+    }
+
     const direction = logicalDeltaToTurnDirection(delta, readingDirection);
     const nextScene = buildPageTurnScene({
       pages: publication.pages,
@@ -485,6 +506,16 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
     const generation = controllerRef.current?.request(direction, false);
     if (!generation) {
       return;
+    }
+
+    // A busy controller queues the request rather than starting it. Remember
+    // which one is waiting so a further request knows the slot is taken.
+    const afterRequest = controllerRef.current?.snapshot();
+    const started = afterRequest !== undefined
+      && 'generation' in afterRequest
+      && afterRequest.generation === generation;
+    if (!started) {
+      queuedGenerationRef.current = generation;
     }
 
     plannedTurnsRef.current.set(generation, {

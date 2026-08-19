@@ -13,6 +13,7 @@ export type PageTurnCancelReason =
   | 'profile'
   | 'publication'
   | 'publication-change'
+  | 'overtaken'
   | 'hidden'
   | 'unmount'
   | 'backend'

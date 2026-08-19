@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import pageTurnSurfaceSource from './PageTurnSurface.tsx?raw';
+import backendsSource from '../backends.ts?raw';
+import flowAnalysisSource from '../../services/flowAnalysis.ts?raw';
 import { loadPreparedPageImage } from './PageTurnSurface';
 import { analyzePageFlow } from '../../services/flowAnalysis';
 
@@ -63,5 +66,28 @@ describe('page images are requested with CORS', () => {
 
     expect(instances).toHaveLength(1);
     expect(instances[0].crossOrigin).toBe('anonymous');
+  });
+});
+
+/**
+ * Every loader that feeds a canvas has to make the same CORS request. Missing
+ * one is enough to taint the canvas and drop the packaged app to the static
+ * renderer, which is exactly what shipped once already.
+ */
+describe('every page image loader asks for CORS', () => {
+  it('sets crossOrigin before src in each loader that reaches a canvas', () => {
+    const loaders = [
+      ['src/rendering/pageTurn/PageTurnSurface.tsx', pageTurnSurfaceSource],
+      ['src/rendering/backends.ts', backendsSource],
+      ['src/services/flowAnalysis.ts', flowAnalysisSource],
+    ] as const;
+
+    for (const [loader, source] of loaders) {
+      const crossOriginAt = source.indexOf('crossOrigin');
+      const srcAt = source.search(/\.src = /);
+      expect(crossOriginAt, `${loader} never sets crossOrigin`).toBeGreaterThan(-1);
+      expect(srcAt, `${loader} has no image src assignment`).toBeGreaterThan(-1);
+      expect(crossOriginAt, `${loader} sets crossOrigin after src`).toBeLessThan(srcAt);
+    }
   });
 });
