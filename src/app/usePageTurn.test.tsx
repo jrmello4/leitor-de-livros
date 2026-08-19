@@ -389,7 +389,7 @@ describe('usePageTurn', () => {
     expect(latest?.surfaceInput).toBeUndefined();
   });
 
-  it('disables the generation on renderer failure without navigating the current automatic turn', async () => {
+  it('retires the surface on renderer failure but still turns the page', async () => {
     const onNext = vi.fn();
     const result = await renderHook(createOptions({ onNext }));
 
@@ -399,13 +399,62 @@ describe('usePageTurn', () => {
 
     expect(latest?.state).toMatchObject({ phase: 'preparing', direction: 'forward' });
 
+    // Losing the animation is an acceptable degradation. Losing the page turn
+    // the reader asked for is not: a single solver or backend failure would
+    // otherwise leave the reader unable to move through the publication for the
+    // rest of the session, because the controller stays disabled.
     act(() => {
       latest?.onFailure({ reason: 'backend', diagnostic: 'WebGL2 is not available.' });
     });
 
-    expect(onNext).not.toHaveBeenCalled();
+    expect(onNext).toHaveBeenCalledTimes(1);
     expect(latest?.state).toEqual({ phase: 'disabled', reason: 'backend' });
     expect(latest?.surfaceInput).toBeUndefined();
+  });
+
+  it('does not navigate twice when a turn fails after it already committed', async () => {
+    const frames: FrameRequestCallback[] = [];
+    const originalRaf = globalThis.requestAnimationFrame;
+    const originalCancel = globalThis.cancelAnimationFrame;
+    globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => frames.push(callback)) as typeof globalThis.requestAnimationFrame;
+    globalThis.cancelAnimationFrame = (() => undefined) as typeof globalThis.cancelAnimationFrame;
+
+    try {
+      const onNext = vi.fn();
+      const result = await renderHook(createOptions({ onNext }));
+
+      act(() => {
+        result.requestTurn(1);
+      });
+      const state = latest?.state;
+      const generation = state && 'generation' in state ? state.generation : undefined;
+
+      act(() => {
+        latest?.onTexturesAndBackendReady(generation!);
+      });
+
+      const started = performance.now();
+      for (let step = 0; step <= 60 && frames.length > 0; step += 1) {
+        const tick = frames.shift()!;
+        act(() => tick(started + step * 40));
+        if (latest?.state.phase === 'settling') {
+          act(() => latest?.onSettled({ generation: generation!, outcome: 'commit' }));
+        }
+      }
+
+      expect(onNext, 'the turn must have navigated on its own').toHaveBeenCalledTimes(1);
+
+      // A failure arriving after the turn already moved the reader must not
+      // move it a second time.
+      act(() => {
+        latest?.onFailure({ reason: 'solver', diagnostic: 'Physical page-turn solver produced invalid-normal.' });
+      });
+
+      expect(onNext).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.requestAnimationFrame = originalRaf;
+      globalThis.cancelAnimationFrame = originalCancel;
+    }
   });
 
   it.each(['touch', 'pen'] as const)('ignores non-primary %s pointers before starting a turn', async (pointerType) => {

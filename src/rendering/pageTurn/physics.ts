@@ -665,7 +665,7 @@ function cylinderPoint(rest: Vec2, pointer: Vec2, grabY: number): Vec3 {
   };
 }
 
-function createNormals(points: readonly Vec3[], columns: number, rows: number): Vec3[] | undefined {
+export function createNormals(points: readonly Vec3[], columns: number, rows: number): Vec3[] | undefined {
   const normals: Vec3[] = [];
 
   for (let row = 0; row < rows; row += 1) {
@@ -680,11 +680,13 @@ function createNormals(points: readonly Vec3[], columns: number, rows: number): 
       const tangentY = subtract(down, up);
       const normal = normalize(cross(tangentX, tangentY));
 
-      if (!normal) {
-        return undefined;
-      }
-
-      normals.push(normal);
+      // Neighbours that collapse onto each other leave no cross product to
+      // normalize. The points are still finite — the patch is momentarily flat
+      // or folded onto itself — so the sheet's resting normal stands in for
+      // this vertex. Failing the frame instead would report `invalid-normal`,
+      // and a single one of those retires the physical page turn for the rest
+      // of the session.
+      normals.push(normal ?? { x: 0, y: 0, z: 1 });
     }
   }
 

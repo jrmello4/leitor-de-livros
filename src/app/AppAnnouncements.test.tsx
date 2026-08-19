@@ -68,17 +68,15 @@ describe('application live-region wiring', () => {
     expect(rendererStatus?.textContent).not.toMatch(/backend|quality/i);
     expect(rendererDiagnostic?.textContent).toContain('backend=static');
 
+    // The renderer cannot start, so this turn loses its animation. It must not
+    // lose the page: the reader still moves, and both the diagnostic and the
+    // page announcement reach their live regions.
     await act(async () => {
       host.querySelector<HTMLButtonElement>('[aria-label="Next page"]')?.click();
       await flushReact(500);
     });
 
     expect(host.querySelector('[data-testid="renderer-diagnostic"]')?.textContent).toContain('fallback=WebGL2 is not available.');
-
-    await act(async () => {
-      host.querySelector<HTMLButtonElement>('[aria-label="Next page"]')?.click();
-      await flushReact(500);
-    });
 
     const statusMessages = [...host.querySelectorAll('[role="status"]')].map((node) => node.textContent ?? '');
     expect(statusMessages.some((message) => /^Integration page 2\/\d+$/.test(message))).toBe(true);

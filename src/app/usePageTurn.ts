@@ -545,14 +545,34 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
       state.phase === 'dragging' ? state.pointerId : pendingPointer?.pointerId,
     );
     setFailure(failure);
+
+    // Retiring the surface is right — a backend or solver that just failed will
+    // keep failing — but the reader asked for a page, not for an animation. A
+    // turn that is still in flight and has not navigated yet is completed
+    // without the fold, so a single failure costs the effect rather than
+    // leaving the reader unable to move through the publication for the rest of
+    // the session.
+    const strandedDirection = 'direction' in state ? state.direction : undefined;
+    // The controller is the authority on whether this turn already emitted its
+    // navigation; React state can still be a render behind.
+    const controllerPhase = controllerRef.current?.snapshot().phase;
+    const alreadyNavigated = awaitingNavigationGenerationRef.current !== undefined
+      || state.phase === 'committed'
+      || controllerPhase === 'committed';
+
     if (state.phase !== 'idle' && state.phase !== 'disabled' && 'generation' in state) {
       plannedTurnsRef.current.delete(state.generation);
     }
     plannedTurnsRef.current.clear();
 
     controllerRef.current?.disable(failure.reason === 'backend' ? 'backend' : 'performance');
+
+    if (strandedDirection && !alreadyNavigated) {
+      turnDirectionToCallback(strandedDirection, readingDirection, onNextRef.current, onPreviousRef.current)();
+    }
+
     syncFromController();
-  }, [clearAnimation, pendingPointer?.pointerId, releasePointerCapture, state, syncFromController]);
+  }, [clearAnimation, pendingPointer?.pointerId, readingDirection, releasePointerCapture, state, syncFromController]);
 
   const acknowledgeNavigation = useCallback((generation?: number) => {
     const acknowledged = generation ?? awaitingNavigationGenerationRef.current;
