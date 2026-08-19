@@ -132,6 +132,15 @@ fn ensure_pdfium() -> CoreResult<()> {
 }
 
 fn pdfium_library_candidates() -> Vec<PathBuf> {
+    pdfium_library_candidates_for(cfg!(debug_assertions))
+}
+
+/// `CARGO_MANIFEST_DIR` is baked in when the crate is compiled, so the
+/// source-tree copy is only a sensible candidate while developing. Shipping it
+/// would put the build machine's absolute path in the released binary and let a
+/// developer machine silently satisfy an import that a reader's machine could
+/// not, which is exactly the failure the installer smoke test has to observe.
+fn pdfium_library_candidates_for(include_source_tree: bool) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(path) = PDFIUM_RESOURCE_PATH.get() {
         candidates.push(path.clone());
@@ -141,12 +150,14 @@ fn pdfium_library_candidates() -> Vec<PathBuf> {
             candidates.push(Pdfium::pdfium_platform_library_name_at_path(directory));
         }
     }
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("resources")
-            .join("pdfium")
-            .join(Pdfium::pdfium_platform_library_name()),
-    );
+    if include_source_tree {
+        candidates.push(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("resources")
+                .join("pdfium")
+                .join(Pdfium::pdfium_platform_library_name()),
+        );
+    }
     candidates.dedup();
     candidates
 }
@@ -505,6 +516,32 @@ pub(crate) fn rebuild_cbr_page(path: &Path, member: &str) -> CoreResult<importer
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_released_build_never_looks_for_pdfium_in_the_build_machine_source_tree() {
+        let source_tree = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
+
+        let development = pdfium_library_candidates_for(true);
+        assert!(
+            development
+                .iter()
+                .any(|candidate| candidate.starts_with(&source_tree)),
+            "a development build should still find the checked-in runtime"
+        );
+
+        let released = pdfium_library_candidates_for(false);
+        assert!(
+            !released
+                .iter()
+                .any(|candidate| candidate.starts_with(&source_tree)),
+            "a released build must not depend on the machine that built it"
+        );
+        assert!(
+            !released.is_empty(),
+            "a released build still resolves the bundled and side-by-side runtimes"
+        );
+    }
+
     use std::{
         fs,
         time::{SystemTime, UNIX_EPOCH},

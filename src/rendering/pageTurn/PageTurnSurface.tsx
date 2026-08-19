@@ -283,7 +283,7 @@ function viewportForCanvas(canvas: HTMLCanvasElement) {
   };
 }
 
-async function loadPreparedPageImage(request: { src: string; width: number; height: number }): Promise<PreparedPageImage> {
+export async function loadPreparedPageImage(request: { src: string; width: number; height: number }): Promise<PreparedPageImage> {
   const image = await loadImage(request.src);
   const bitmap = typeof createImageBitmap === 'function'
     ? await createImageBitmap(image)
@@ -306,6 +306,12 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image();
     image.decoding = 'async';
+  // Page images are served from the asset protocol, which is a different
+  // origin from the app document. Without a CORS request the decoded image is
+  // origin-tainted, and the first texture upload fails with "The ImageBitmap
+  // contains cross-origin data" — which takes the whole physical page turn down
+  // in the packaged app while every same-origin browser test still passes.
+    image.crossOrigin = 'anonymous';
     image.onload = () => resolve(image);
     image.onerror = () => reject(new Error(`Could not decode page-turn image ${src}.`));
     image.src = src;

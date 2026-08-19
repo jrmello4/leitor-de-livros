@@ -28,6 +28,9 @@ function loadImage(source: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image();
     image.decoding = 'async';
+    // Same-origin taint would make `getImageData` throw, silently costing the
+    // reader panel guidance in the packaged app.
+    image.crossOrigin = 'anonymous';
     image.onload = () => resolve(image);
     image.onerror = () => reject(new Error('Page image could not be decoded for local flow analysis.'));
     image.src = source;
