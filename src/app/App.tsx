@@ -32,6 +32,7 @@ import {
   importNativePaths,
   isNativeRuntime,
   listNativePublications,
+  loadNativePublicationPages,
   loadNativeProfileStore,
   saveNativeProfileStore,
   saveNativeProgress,
@@ -67,13 +68,37 @@ import { SmokeHarness } from './SmokeHarness';
 import { isSmokeMode } from '../release/testModes';
 import { resolveNativeImportRequest, type NativeImportRequest } from './nativeImportFlow';
 
+/**
+ * Fills in the page list of one publication. A native listing reports counts
+ * and a cover but not the pages, so the reader loads the pages of the single
+ * publication it opens rather than every page in the library.
+ */
+async function hydratePublicationPages(
+  library: Publication[],
+  publicationId: string,
+): Promise<Publication[]> {
+  const target = library.find((publication) => publication.id === publicationId);
+  if (!target || target.pages.length > 0) {
+    return library;
+  }
+
+  const pages = await loadNativePublicationPages(publicationId).catch(() => []);
+  if (pages.length === 0) {
+    return library;
+  }
+
+  return library.map((publication) => (
+    publication.id === publicationId ? { ...publication, pages } : publication
+  ));
+}
+
 function initialLibrary(direction: ReadingProfile['direction']): Publication[] {
   const demo = createDemoPublication();
   demo.isFavorite = loadFavorites().includes(demo.id);
   demo.customCover = loadCustomCover(demo.id);
   const savedPage = loadProgress(demo.id);
-  demo.currentPage = direction === 'rtl' && savedPage === 0 ? demo.pages.length - 1 : Math.min(savedPage, demo.pages.length - 1);
-  demo.progress = calculateProgress(demo.currentPage, demo.pages.length, direction);
+  demo.currentPage = direction === 'rtl' && savedPage === 0 ? demo.pageCount - 1 : Math.min(savedPage, demo.pageCount - 1);
+  demo.progress = calculateProgress(demo.currentPage, demo.pageCount, direction);
   return [demo];
 }
 
@@ -192,14 +217,17 @@ export function App() {
   const reloadNativeLibraryWithEssentials = useCallback(async (direction: ReadingProfile['direction']) => {
     const initial = await listNativePublications(direction);
     let incomplete = false;
-    const activePageId = activePublication?.pages[activePublication.currentPage]?.id;
+    const activePageId = activePublication?.pages[activePublication.currentPage]?.id
+      ?? activePublication?.currentPageId;
     const activeProtectedPageIds = activePublication
       ? activeWorkingSetPageIds(activePublication, profile, activePublication.currentPage)
       : [];
     for (const publication of initial) {
+      // A listing does not carry pages, so the resume page and the cover come
+      // from the identifiers the listing reports.
       const pageIds = new Set([
-        publication.pages[publication.currentPage]?.id,
-        publication.pages.find((page) => page.id === publication.coverPageId)?.id,
+        publication.currentPageId,
+        publication.coverPageId,
         ...(publication.id === activePublication?.id ? activeProtectedPageIds : []),
       ].filter((pageId): pageId is string => Boolean(pageId)));
       const protectedPageIds = publication.id === activePublication?.id
@@ -235,10 +263,15 @@ export function App() {
         incomplete = true;
       }
     }
-    const refreshed = await listNativePublications(direction);
+    const listed = await listNativePublications(direction);
+    // The reader needs the pages of the publication it is showing, so the one
+    // open publication is hydrated while the rest stay as summaries.
+    const refreshed = activePublication
+      ? await hydratePublicationPages(listed, activePublication.id)
+      : listed;
     // The final native relist is authoritative: an earlier ensured descriptor
     // may already have been evicted by a later LRU rebuild step.
-    if (refreshed.some((publication) => publication.pages.some((page) => !page.src))) {
+    if (refreshed.some((publication) => publication.pageCount > 0 && !publication.coverSrc)) {
       incomplete = true;
     }
     const activeRefreshed = activePublication
@@ -770,10 +803,10 @@ export function App() {
         ? publication.pages.map((page) => page.id === preparedPage.id ? preparedPage : page)
         : publication.pages,
       currentPage: request.pageIndex,
-      progress: calculateProgress(request.pageIndex, publication.pages.length, profile.direction),
+      progress: calculateProgress(request.pageIndex, publication.pageCount, profile.direction),
       updatedAt: new Date().toISOString(),
     }));
-    setAnnouncement(t('app.pageReady', { page: request.pageIndex + 1, count: latest.pages.length }));
+    setAnnouncement(t('app.pageReady', { page: request.pageIndex + 1, count: latest.pageCount }));
   }, [persistProgress, profile.direction, updatePublication]);
 
   const moveActivePage = useCallback(
@@ -785,7 +818,7 @@ export function App() {
         return;
       }
 
-      const nextPage = movePage(current.currentPage, current.pages.length, profile.direction, delta);
+      const nextPage = movePage(current.currentPage, current.pageCount, profile.direction, delta);
       if (nextPage === current.currentPage) {
         pageSelectionCoordinatorRef.current.cancel();
         setAnnouncement(delta > 0 ? t('app.endOfPublication') : t('app.beginningOfPublication'));
@@ -999,16 +1032,28 @@ export function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [capturingAction, handleAction, inputMap, updateProfile]);
 
-  const openPublication = async (publication: Publication) => {
+  const openPublication = async (summary: Publication) => {
+    // The library lists summaries; reading needs the actual pages, so they are
+    // loaded for this one publication as it opens.
+    const publication = summary.pages.length > 0 || !nativeRuntime
+      ? summary
+      : { ...summary, pages: await loadNativePublicationPages(summary.id).catch(() => []) };
+
+    if (publication.pages.length === 0 && publication.pageCount > 0) {
+      setDiagnostic(t('app.publicationPagesError'));
+      return;
+    }
+
+    const lastPage = Math.max(publication.pageCount - 1, 0);
     const startsAtFreshRtlPage =
       profile.direction === 'rtl' &&
       publication.currentPage === 0 &&
-      publication.progress <= 1 / Math.max(publication.pages.length, 1);
+      publication.progress <= 1 / Math.max(publication.pageCount, 1);
     const openingPublication = startsAtFreshRtlPage
       ? {
           ...publication,
-          currentPage: Math.max(publication.pages.length - 1, 0),
-          progress: calculateProgress(Math.max(publication.pages.length - 1, 0), publication.pages.length, 'rtl'),
+          currentPage: lastPage,
+          progress: calculateProgress(lastPage, publication.pageCount, 'rtl'),
         }
       : publication;
 
@@ -1019,7 +1064,7 @@ export function App() {
           ? openingPublication.pages.map((page) => page.id === preparedPage.id ? preparedPage : page)
           : openingPublication.pages,
         currentPage: request.pageIndex,
-        progress: calculateProgress(request.pageIndex, openingPublication.pages.length, profile.direction),
+        progress: calculateProgress(request.pageIndex, openingPublication.pageCount, profile.direction),
       };
       setLibrary((current) => {
         if (current.some((entry) => entry.id === readyPublication.id)) {
@@ -1027,13 +1072,13 @@ export function App() {
         }
         return [readyPublication, ...current];
       });
-      if (readyPublication.currentPage !== publication.currentPage || readyPublication !== publication) {
+      if (readyPublication.currentPage !== summary.currentPage || readyPublication !== summary) {
         await persistProgress(readyPublication.id, readyPublication.currentPage);
       }
       setActiveId(readyPublication.id);
       setShowProfile(false);
       setDiagnostic(undefined);
-      setAnnouncement(t('app.publicationOpened', { title: readyPublication.title, page: readyPublication.currentPage + 1, count: readyPublication.pages.length }));
+      setAnnouncement(t('app.publicationOpened', { title: readyPublication.title, page: readyPublication.currentPage + 1, count: readyPublication.pageCount }));
     });
   };
 
@@ -1060,8 +1105,8 @@ export function App() {
     const openingPublication = profile.direction === 'rtl'
       ? {
           ...importedPublication,
-          currentPage: Math.max(importedPublication.pages.length - 1, 0),
-          progress: calculateProgress(Math.max(importedPublication.pages.length - 1, 0), importedPublication.pages.length, 'rtl'),
+          currentPage: Math.max(importedPublication.pageCount - 1, 0),
+          progress: calculateProgress(Math.max(importedPublication.pageCount - 1, 0), importedPublication.pageCount, 'rtl'),
         }
       : importedPublication;
     setLibrary((current) => [openingPublication, ...current]);

@@ -40,6 +40,9 @@ interface NativePublicationDto {
   title: string;
   sourceLabel: string;
   sourceNames?: unknown;
+  pageCount?: unknown;
+  coverSrc?: unknown;
+  currentPageId?: unknown;
   format: Publication['format'];
   pages: NativePageDto[];
   coverPageId: string;
@@ -104,6 +107,33 @@ export async function listNativePublications(direction: ReadingDirection): Promi
   return Array.isArray(publications)
     ? publications.map((publication) => mapPublication(publication, direction))
     : [];
+}
+
+/**
+ * Loads the pages of one publication. A listing deliberately omits them, so the
+ * reader asks for the pages of the publication it is about to open.
+ */
+export async function loadNativePublicationPages(publicationId: string): Promise<PageDescriptor[]> {
+  if (!isNativeRuntime()) {
+    return [];
+  }
+
+  const pages = await invoke<unknown>('list_publication_pages', { publicationId });
+  if (!Array.isArray(pages)) {
+    return [];
+  }
+
+  return pages
+    .map(normalizePage)
+    .filter((page): page is NativePageDto => Boolean(page))
+    .map((page) => ({
+      id: page.id,
+      index: page.index,
+      name: page.name,
+      src: page.cachePath ? convertFileSrc(page.cachePath) : '',
+      width: page.width,
+      height: page.height,
+    }));
 }
 
 export async function importNativePaths(
@@ -332,10 +362,14 @@ export async function touchNativePages(publicationId: string, pageIds: string[])
 function mapPublication(value: unknown, direction: ReadingDirection): Publication {
   const publication = isNativePublication(value) ? value : emptyPublicationDto();
   const pages = Array.isArray(publication.pages) ? publication.pages.map(normalizePage).filter(Boolean) as NativePageDto[] : [];
-  const currentPage = pages.length === 0
+  // A listing reports its own count; an import result carries the pages it just
+  // wrote. Trusting `pages.length` alone would report an empty library.
+  const pageCount = Math.max(normalizeInteger(publication.pageCount), pages.length);
+  const currentPage = pageCount === 0
     ? 0
-    : Math.max(0, Math.min(normalizeInteger(publication.currentPage), pages.length - 1));
+    : Math.max(0, Math.min(normalizeInteger(publication.currentPage), pageCount - 1));
   const sourceLabel = safeSourceName(publication.sourceLabel);
+  const coverCachePath = normalizeString(publication.coverSrc) || pages[0]?.cachePath || '';
   return {
     id: normalizeString(publication.id),
     title: normalizeString(publication.title, 'Untitled publication'),
@@ -349,9 +383,12 @@ function mapPublication(value: unknown, direction: ReadingDirection): Publicatio
       width: page.width,
       height: page.height,
     })),
+    pageCount,
+    coverSrc: coverCachePath ? convertFileSrc(coverCachePath) : '',
+    currentPageId: normalizeString(publication.currentPageId) || pages[currentPage]?.id || undefined,
     coverPageId: normalizeString(publication.coverPageId, pages[0]?.id ?? ''),
     currentPage,
-    progress: calculateProgress(currentPage, pages.length, direction),
+    progress: calculateProgress(currentPage, pageCount, direction),
     direction,
     addedAt: normalizeString(publication.addedAt),
     updatedAt: normalizeString(publication.updatedAt),

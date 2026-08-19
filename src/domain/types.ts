@@ -37,7 +37,18 @@ export interface Publication {
   title: string;
   sourceLabel: string;
   format: PublicationFormat;
+  /**
+   * Empty until the reader opens this publication. A library listing carries
+   * `pageCount` and `coverSrc` instead, so opening the library does not load
+   * every page of every publication.
+   */
   pages: PageDescriptor[];
+  /** Authoritative page total; `pages.length` is only valid once loaded. */
+  pageCount: number;
+  /** Cover image source, available without loading the page list. */
+  coverSrc: string;
+  /** Page the reader resumes on, used to protect it from cache eviction. */
+  currentPageId?: string;
   coverPageId: string;
   currentPage: number;
   progress: number;

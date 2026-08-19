@@ -19,6 +19,8 @@ function publication(
     sourceLabel: 'Test source',
     format: 'images',
     pages: [{ id: `${id}-page`, index: 0, name: 'cover.png', src: 'data:image/gif;base64,R0lGODlhAQABAAD/ACw=', width: 1, height: 1 }],
+    pageCount: 1,
+    coverSrc: 'data:image/gif;base64,R0lGODlhAQABAAD/ACw=',
     coverPageId: `${id}-page`,
     currentPage: 0,
     progress: 0,

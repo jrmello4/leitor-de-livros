@@ -22,6 +22,8 @@ function publication(overrides: Partial<Publication> = {}): Publication {
     sourceNames: ['physical-page-curl.cbz'],
     format: 'cbz',
     pages,
+    pageCount: pages.length,
+    coverSrc: pages[0].src,
     coverPageId: pages[0].id,
     currentPage: 1,
     progress: 0.4,

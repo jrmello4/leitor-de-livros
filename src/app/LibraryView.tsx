@@ -196,7 +196,7 @@ export function LibraryView({
           <div>
             <span className="eyebrow">{t('library.pickUp')}</span>
             <strong className="continue-title">{continuePublication.title}</strong>
-            <p>{formatProgress(continuePublication.progress)} · {t('library.pages', { count: continuePublication.pages.length })}</p>
+            <p>{formatProgress(continuePublication.progress)} · {t('library.pages', { count: continuePublication.pageCount })}</p>
           </div>
           <button className="continue-button" type="button" onClick={() => onOpen(continuePublication)}>
             {t('library.continue')} <span aria-hidden="true">↗</span>
@@ -296,7 +296,7 @@ export function LibraryView({
                   alt=""
                   onError={(event) => {
                     event.currentTarget.onerror = null;
-                    event.currentTarget.src = publication.pages[0]?.src ?? '';
+                    event.currentTarget.src = publication.coverSrc ?? '';
                     if (publication.customCover) {
                       onCoverError(publication);
                     }
@@ -345,7 +345,7 @@ export function LibraryView({
                 <span style={{ width: `${publication.progress * 100}%` }} />
               </div>
               <div className="card-footer">
-                <span>{t('library.pages', { count: publication.pages.length })}</span>
+                <span>{t('library.pages', { count: publication.pageCount })}</span>
                 <span>{formatProgress(publication.progress)}</span>
                 <button
                   className="delete-link"

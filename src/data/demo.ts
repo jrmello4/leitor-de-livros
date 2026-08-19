@@ -44,6 +44,9 @@ export function createDemoPublication(): Publication {
   }));
 
   return {
+    pageCount: pages.length,
+    coverSrc: pages[0]?.src ?? '',
+    currentPageId: pages[0]?.id,
     id: 'demo-paper-study',
     title: 'The Quiet Hour',
     sourceLabel: 'Built-in paper study',

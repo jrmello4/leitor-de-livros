@@ -16,6 +16,16 @@ fn list_publications(database: State<'_, LibraryDb>) -> Result<Vec<NativePublica
 }
 
 #[tauri::command]
+fn list_publication_pages(
+    publication_id: String,
+    database: State<'_, LibraryDb>,
+) -> Result<Vec<models::NativePage>, String> {
+    database
+        .list_publication_pages(&publication_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn import_publications(
     paths: Vec<String>,
     database: State<'_, LibraryDb>,
@@ -231,6 +241,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_publications,
+            list_publication_pages,
             import_publications,
             save_progress,
             set_publication_favorite,
@@ -288,6 +299,9 @@ mod tests {
             source_names: vec!["Source".to_owned()],
             format: "images".to_owned(),
             pages: Vec::new(),
+            page_count: 1,
+            cover_src: Some("cover.png".to_owned()),
+            current_page_id: Some("page-1".to_owned()),
             cover_page_id: "page-1".to_owned(),
             current_page: 0,
             progress: 0.0,

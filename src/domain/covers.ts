@@ -42,7 +42,12 @@ export function normalizeCustomCover(value: unknown): CustomCover | undefined {
 }
 
 export function publicationCoverSrc(publication: Publication): string {
-  return normalizeCustomCover(publication.customCover)?.src ?? publication.pages[0]?.src ?? '';
+  // `coverSrc` is what a library listing carries; `pages` is only populated for
+  // a publication the reader has opened.
+  return normalizeCustomCover(publication.customCover)?.src
+    ?? publication.coverSrc
+    ?? publication.pages[0]?.src
+    ?? '';
 }
 
 function isSafeCoverSource(src: string): boolean {

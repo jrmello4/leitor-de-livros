@@ -98,25 +98,23 @@ Ainda faltam evidências de release em hardware Windows de referência, testes a
 
    **Aceitação:** cada release é reproduzível, identificável e instalável sem depender de arquivos gerados no diretório de desenvolvimento.
 
-## Débito de performance aceito
+## Listagem da biblioteca não carrega mais todas as páginas
 
-### Listagem da biblioteca carrega todas as páginas
+`LibraryDb::list_publications` fazia uma consulta por publicação e materializava **toda página de toda publicação** só para desenhar a grade de capas. O resultado era serializado em JSON, cruzava o IPC e era remapeado no front, ou seja, três materializações de dados que a tela da biblioteca não usa.
 
-`LibraryDb::list_publications` faz uma consulta por publicação e materializa **toda página de toda publicação** só para desenhar a grade de capas. O resultado é serializado em JSON, cruza o IPC e é remapeado no front (`normalizePage`, depois `map` com `convertFileSrc` por página), ou seja, três materializações de dados que a tela da biblioteca não usa.
+A listagem agora devolve `pageCount`, `coverSrc` e `currentPageId`; o leitor pede as páginas da única publicação que abre, via `list_publication_pages`.
 
 Medido em build release, mediana de 7 execuções, cache do SQLite quente:
 
-| Biblioteca | Páginas totais | SQLite → Rust | JSON | `JSON.parse` |
-|---|---|---|---|---|
-| 5 × 40 | 200 | 0,2 ms | 26 KB | 0,1 ms |
-| 50 × 200 | 10.000 | 8,0 ms | 1,31 MB | 4,1 ms |
-| 200 × 400 | 80.000 | 71,5 ms | 10,57 MB | 35,2 ms |
+| Biblioteca | Páginas totais | SQLite antes | SQLite depois | JSON antes | JSON depois |
+|---|---|---|---|---|---|
+| 5 × 40 | 200 | 0,2 ms | 0,1 ms | 26 KB | 2,0 KB |
+| 50 × 200 | 10.000 | 8,0 ms | 1,3 ms | 1,31 MB | 20 KB |
+| 200 × 400 | 80.000 | 71,5 ms | 10,3 ms | 10,57 MB | 82 KB |
 
-O custo cresce linearmente com o total de páginas, não com o número de publicações.
+O custo da abertura deixou de crescer com o total de páginas e passou a crescer com o número de publicações. Uma publicação de pasta de imagens continua reportando os nomes dos arquivos, porque a busca da biblioteca procura por eles.
 
-**Decisão: adiado, não corrigido.** Contra o orçamento próprio do projeto (`firstFrameMs: 1500`), uma biblioteca de 50 publicações gasta cerca de 1% na abertura, e o v1 mira uma biblioteca pessoal pequena. A correção — devolver contagem e capa na listagem e carregar as páginas ao abrir a publicação — atravessa o modelo de domínio (`Publication.pages` tem 25 usos de `.length`, 15 acessos indexados e todo o caminho de leitura, cena e renderização), com risco de regressão desproporcional ao ganho medido nessa escala.
-
-**Reavaliar quando:** houver evidência de bibliotecas acima de ~100 publicações, a abertura passar de 300 ms em hardware de referência, ou o consumo de memória em sessão longa estourar o orçamento. A guarda `npm run test:scale-sweep` reproduz a medição.
+A guarda `npm run test:scale-sweep` reproduz a medição.
 
 ## Sequência sugerida
 

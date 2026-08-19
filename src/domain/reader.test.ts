@@ -36,6 +36,8 @@ const publicationAtPageTwo: Publication = {
   sourceLabel: 'long.cbz',
   format: 'cbz',
   pages: longPages,
+  pageCount: (longPages).length,
+  coverSrc: (longPages)[0]?.src ?? '',
   coverPageId: longPages[0].id,
   currentPage: 1,
   progress: 0.25,

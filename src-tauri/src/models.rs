@@ -31,7 +31,17 @@ pub struct NativePublication {
     pub source_label: String,
     pub source_names: Vec<String>,
     pub format: String,
+    /// Empty for a library listing. The reader loads the pages of the one
+    /// publication it opens; shipping every page of every publication to draw a
+    /// grid of covers costs far more than the grid needs.
     pub pages: Vec<NativePage>,
+    pub page_count: usize,
+    /// Cache path of the page the cover is drawn from, so a listing can render
+    /// a cover without carrying the page list.
+    pub cover_src: Option<String>,
+    /// Page the reader would resume on, kept so the cache can protect it
+    /// without the listing loading every page.
+    pub current_page_id: Option<String>,
     pub cover_page_id: String,
     pub current_page: usize,
     pub progress: f64,

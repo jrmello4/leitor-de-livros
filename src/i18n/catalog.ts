@@ -57,6 +57,7 @@ const ENGLISH_CATALOG: MessageCatalog = {
   'app.cacheClearRefreshError': 'Cache was cleared, but the library could not be refreshed. Reopen the app to reload it; original files were preserved.',
   'app.cacheClearError': 'Cache could not be cleared. Your original files were not modified.',
   'app.progressSaveError': 'Reading progress could not be saved to the native library.',
+  'app.publicationPagesError': 'This publication could not be opened because its pages could not be read. Try again, or rebuild the derived cache in settings.',
   'app.readerStateSaveError': 'Zoom and pan could not be saved. Reading can continue, but this change may not survive closing.',
   'app.bookmarkSaveError': 'Page bookmark could not be saved. Your other reading data was not changed.',
   'app.coverSaved': ({ title }) => `${title} cover updated. The original file was preserved.`,

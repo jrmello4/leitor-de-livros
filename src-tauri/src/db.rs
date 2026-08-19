@@ -91,7 +91,7 @@ impl LibraryDb {
 
         let mut publications = Vec::new();
         for row in rows {
-            publications.push(self.read_publication(&connection, row?)?);
+            publications.push(self.read_publication_summary(&connection, row?)?);
         }
         Ok(publications)
     }
@@ -1320,8 +1320,143 @@ impl LibraryDb {
             } else {
                 None
             },
+            page_count: pages.len(),
+            cover_src: pages.first().map(|page| page.cache_path.clone()),
+            current_page_id: pages
+                .get(current_page.min(pages.len().saturating_sub(1)))
+                .map(|page| page.id.clone()),
             pages,
         })
+    }
+
+    /// Reads everything a library listing shows without materializing the page
+    /// list. Only the counts, the cover source and the resume page cross the
+    /// boundary; the reader asks for the pages of the publication it opens.
+    fn read_publication_summary(
+        &self,
+        connection: &Connection,
+        row: PublicationRow,
+    ) -> CoreResult<NativePublication> {
+        let page_count: usize = connection.query_row(
+            "SELECT COUNT(*) FROM pages WHERE publication_id = ?1",
+            [&row.id],
+            |count| count.get::<_, i64>(0),
+        )? as usize;
+
+        let current_page = connection
+            .query_row(
+                "SELECT current_page FROM progress WHERE publication_id = ?1",
+                [&row.id],
+                |progress| progress.get::<_, i64>(0),
+            )
+            .optional()?
+            .unwrap_or(0)
+            .max(0) as usize;
+        let current_page = current_page.min(page_count.saturating_sub(1));
+
+        let cover_src = connection
+            .query_row(
+                "SELECT cache_path FROM pages WHERE publication_id = ?1
+                  ORDER BY page_index ASC LIMIT 1",
+                [&row.id],
+                |page| page.get::<_, String>(0),
+            )
+            .optional()?;
+
+        let current_page_id = connection
+            .query_row(
+                "SELECT id FROM pages WHERE publication_id = ?1
+                  ORDER BY page_index ASC LIMIT 1 OFFSET ?2",
+                params![&row.id, current_page as i64],
+                |page| page.get::<_, String>(0),
+            )
+            .optional()?;
+
+        // An image-folder publication is searchable by the names of the files it
+        // was built from, so those names are still read. Every other format is
+        // searchable by its single source label.
+        let source_names = if row.format == "images" {
+            let mut statement = connection.prepare(
+                "SELECT name FROM pages WHERE publication_id = ?1 ORDER BY page_index ASC",
+            )?;
+            let names = statement
+                .query_map([&row.id], |page| page.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            names
+        } else {
+            vec![row.source_label.clone()]
+        };
+
+        let progress = calculate_progress(current_page, page_count, &row.direction);
+        let custom_cover_path = row
+            .custom_cover_cache
+            .as_deref()
+            .and_then(|path| self.valid_custom_cover_path(path));
+        let mut diagnostic = row.diagnostic;
+        if row.custom_cover_cache.is_some() && custom_cover_path.is_none() {
+            diagnostic = Some(match diagnostic {
+                Some(existing) if !existing.contains(CUSTOM_COVER_MISSING_DIAGNOSTIC) => {
+                    format!("{existing} {CUSTOM_COVER_MISSING_DIAGNOSTIC}")
+                }
+                Some(existing) => existing,
+                None => CUSTOM_COVER_MISSING_DIAGNOSTIC.to_owned(),
+            });
+        }
+        let has_custom_cover_path = custom_cover_path.is_some();
+
+        Ok(NativePublication {
+            id: row.id,
+            title: row.title,
+            source_label: row.source_label,
+            source_names,
+            format: row.format,
+            cover_page_id: row.cover_page_id,
+            current_page,
+            progress,
+            direction: row.direction,
+            added_at: row.added_at,
+            updated_at: row.updated_at,
+            is_favorite: row.is_favorite,
+            diagnostic,
+            custom_cover_path,
+            custom_cover_name: if has_custom_cover_path {
+                row.custom_cover_name
+            } else {
+                None
+            },
+            page_count,
+            cover_src,
+            current_page_id,
+            pages: Vec::new(),
+        })
+    }
+
+    /// Pages of one publication, read when the reader opens it.
+    pub fn list_publication_pages(&self, publication_id: &str) -> CoreResult<Vec<NativePage>> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| CoreError::from("database lock poisoned"))?;
+        let mut statement = connection.prepare(
+            "SELECT id, page_index, name, cache_path, source_ref, width, height
+               FROM pages
+              WHERE publication_id = ?1
+              ORDER BY page_index ASC",
+        )?;
+        let pages = statement
+            .query_map([publication_id], |page| {
+                Ok(NativePage {
+                    id: page.get(0)?,
+                    index: page.get::<_, i64>(1)? as usize,
+                    name: page.get(2)?,
+                    cache_path: page.get(3)?,
+                    source_ref: decode_source_ref(&page.get::<_, String>(4)?),
+                    width: page.get::<_, i64>(5)? as u32,
+                    height: page.get::<_, i64>(6)? as u32,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(pages)
     }
 
     fn valid_custom_cover_path(&self, path: &str) -> Option<String> {
@@ -3588,6 +3723,111 @@ mod tests {
 
         drop(database);
         std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+}
+
+#[cfg(test)]
+mod listing {
+    use super::*;
+    use crate::models::{NewPage, PageSourceRef};
+
+    fn temporary_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("tactile-reader-{label}-{}", now()))
+    }
+
+    fn seed(database: &LibraryDb, publication_id: &str, format: &str, page_count: usize) {
+        let pages: Vec<NewPage> = (0..page_count)
+            .map(|index| {
+                let cache_path = database
+                    .cache_dir()
+                    .join(publication_id)
+                    .join(format!("page-{index}.png"));
+                std::fs::create_dir_all(cache_path.parent().expect("cache parent"))
+                    .expect("cache directory");
+                std::fs::write(&cache_path, b"derived page").expect("cache page");
+                NewPage {
+                    id: format!("{publication_id}-page-{index}"),
+                    index,
+                    name: format!("page-{index}.png"),
+                    cache_path,
+                    source_ref: PageSourceRef::Image {
+                        path: format!("C:/library/{publication_id}/page-{index}.png"),
+                    },
+                    width: 800,
+                    height: 1200,
+                }
+            })
+            .collect();
+        database
+            .insert_publication(&NewPublication {
+                id: publication_id.to_owned(),
+                title: "Listing publication".to_owned(),
+                source_label: format!("{publication_id}.cbz"),
+                source_path: format!("C:/library/{publication_id}"),
+                format: format.to_owned(),
+                cover_page_id: pages[0].id.clone(),
+                pages,
+                current_page: 0,
+                direction: "ltr".to_owned(),
+                added_at: "0".to_owned(),
+                updated_at: "0".to_owned(),
+                diagnostic: None,
+            })
+            .expect("insert publication");
+    }
+
+    #[test]
+    fn listing_reports_pages_without_carrying_them() {
+        let root = temporary_root("listing-summary");
+        let database = LibraryDb::open(root.clone()).expect("open");
+        seed(&database, "publication-1", "cbz", 4);
+        database.save_progress("publication-1", 2).expect("progress");
+
+        let listed = database.list_publications().expect("list");
+        let publication = listed.first().expect("one publication");
+
+        assert!(
+            publication.pages.is_empty(),
+            "a listing must not carry the page list"
+        );
+        assert_eq!(publication.page_count, 4);
+        assert_eq!(publication.current_page, 2);
+        assert_eq!(
+            publication.current_page_id.as_deref(),
+            Some("publication-1-page-2")
+        );
+        assert!(publication
+            .cover_src
+            .as_deref()
+            .expect("cover source")
+            .ends_with("page-0.png"));
+        assert_eq!(publication.source_names, vec!["publication-1.cbz"]);
+
+        let pages = database
+            .list_publication_pages("publication-1")
+            .expect("pages");
+        assert_eq!(pages.len(), 4);
+        assert_eq!(pages[0].id, "publication-1-page-0");
+        assert_eq!(pages[3].index, 3);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_image_folder_stays_searchable_by_its_file_names() {
+        let root = temporary_root("listing-images");
+        let database = LibraryDb::open(root.clone()).expect("open");
+        seed(&database, "publication-2", "images", 3);
+
+        let listed = database.list_publications().expect("list");
+        let publication = listed.first().expect("one publication");
+
+        assert_eq!(
+            publication.source_names,
+            vec!["page-0.png", "page-1.png", "page-2.png"]
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 

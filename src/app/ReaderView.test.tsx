@@ -66,6 +66,8 @@ function createPublication(format: Publication['format']): Publication {
       { id: 'page-1', index: 1, name: 'Page 2', src: `${format}://page-1`, width: 800, height: 1200 },
       { id: 'page-2', index: 2, name: 'Page 3', src: `${format}://page-2`, width: 800, height: 1200 },
     ],
+    pageCount: 3,
+    coverSrc: `${format}://page-0`,
     coverPageId: 'page-0',
     currentPage: 1,
     progress: 0.5,

@@ -70,6 +70,8 @@ const importedPublication: Publication = {
   sourceNames: ['native-book.cbz'],
   format: 'cbz',
   pages: [{ id: 'page-1', index: 0, name: 'page-1.jpg', src: 'native://page-1', width: 100, height: 100 }],
+  pageCount: 1,
+  coverSrc: 'native://page-1',
   coverPageId: 'page-1',
   currentPage: 0,
   progress: 0,

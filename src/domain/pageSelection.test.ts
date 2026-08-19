@@ -28,6 +28,8 @@ describe('race-safe page selection', () => {
       sourceLabel: 'long.cbz',
       format: 'cbz',
       pages,
+      pageCount: pages.length,
+      coverSrc: pages[0]?.src ?? '',
       coverPageId: 'page-1',
       currentPage: 1,
       progress: 0.25,
