@@ -44,10 +44,14 @@ assert.match(releaseJobText, /npm run test:installer-smoke/, 'Release does not g
 assert.match(releaseJobText, /npm run tauri:build/, 'Release does not build the installer.');
 assert.match(releaseJobText, /sha256sum/, 'Release does not publish a checksum beside the installer.');
 assert.match(releaseJobText, /softprops\/action-gh-release/, 'Release does not publish a GitHub release.');
+assert.match(releaseJobText, /gate-smoke\.mjs/, 'Release does not judge the smoke evidence before publishing.');
 
 const smokeIndex = releaseJob.steps.findIndex((step) => /test:installer-smoke/.test(JSON.stringify(step)));
 const buildIndex = releaseJob.steps.findIndex((step) => /tauri:build/.test(JSON.stringify(step)));
+const gateIndex = releaseJob.steps.findIndex((step) => /gate-smoke\.mjs/.test(JSON.stringify(step)));
 const publishIndex = releaseJob.steps.findIndex((step) => /action-gh-release/.test(JSON.stringify(step)));
+assert.ok(gateIndex > smokeIndex, 'Release judges the smoke evidence before it exists.');
+assert.ok(buildIndex > gateIndex, 'Release builds before the smoke evidence is judged.');
 assert.ok(smokeIndex >= 0 && buildIndex > smokeIndex, 'Release builds before it proves the app installs.');
 assert.ok(publishIndex > buildIndex, 'Release publishes before it builds.');
 

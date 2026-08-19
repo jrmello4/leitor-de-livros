@@ -9,6 +9,11 @@ on:
         description: 'Release tag to build and publish, for example v0.1.0'
         required: true
         type: string
+      allow_untested_runner:
+        description: 'Publish even though this runner cannot launch and drive the installed app'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -57,10 +62,21 @@ jobs:
 
       # Never publish a build that cannot install, import and resume. This is
       # the same isolated lifecycle the CI smoke job runs.
+      # A hosted runner has no desktop session, so it usually cannot launch and
+      # drive the installed app. That is not evidence about the build, so the
+      # run is allowed to fail here and the gate below decides what it means.
       - name: Run installer smoke
+        id: smoke
+        continue-on-error: true
         env:
           SMOKE_EVIDENCE_DIR: ${{ github.workspace }}/artifacts/installer-smoke
         run: npm run test:installer-smoke
+
+      - name: Decide whether the smoke evidence allows a release
+        env:
+          SMOKE_EVIDENCE_DIR: ${{ github.workspace }}/artifacts/installer-smoke
+          ALLOW_UNTESTED_RUNNER: ${{ inputs.allow_untested_runner }}
+        run: node scripts/release/gate-smoke.mjs
 
       - name: Upload installer smoke evidence
         if: always()
