@@ -333,18 +333,20 @@ export function ReaderView({
     }
   }, [pageTurn.acknowledgeNavigation, publication.currentPage]);
 
+  // The renderer status is refreshed on every frame sample, so folding the
+  // page-turn failure into it meant the reason vanished before anyone could
+  // read it. It is kept alongside instead, and stays until a turn succeeds.
+  const [foldFailure, setFoldFailure] = useState<string>();
   useEffect(() => {
-    if (!pageTurn.failure) {
-      return;
+    if (pageTurn.failure) {
+      setFoldFailure(`page-turn ${pageTurn.failure.reason}: ${pageTurn.failure.diagnostic}`);
     }
-
-    setRendererStatus((current) => ({
-      backend: 'static',
-      quality: current.quality,
-      fps: current.fps,
-      fallbackReason: pageTurn.failure?.diagnostic,
-    }));
   }, [pageTurn.failure]);
+  useEffect(() => {
+    if (pageTurn.state.phase === 'committed') {
+      setFoldFailure(undefined);
+    }
+  }, [pageTurn.state.phase]);
 
   return (
     <main
@@ -500,11 +502,11 @@ export function ReaderView({
           testId="renderer-status-announcement"
         />
         <p className="sr-only" data-testid="renderer-diagnostic">
-          {rendererAnnouncement.diagnostic}
+          {foldFailure ? `${rendererAnnouncement.diagnostic} · ${foldFailure}` : rendererAnnouncement.diagnostic}
         </p>
         <details className="renderer-diagnostic-panel">
           <summary>{t('reader.rendererDiagnostics')}</summary>
-          <code>{rendererAnnouncement.diagnostic}</code>
+          <code>{foldFailure ? `${rendererAnnouncement.diagnostic} · ${foldFailure}` : rendererAnnouncement.diagnostic}</code>
         </details>
       </section>
 

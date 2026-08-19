@@ -393,7 +393,7 @@ describe('usePageTurn', () => {
     expect(latest?.surfaceInput).toBeUndefined();
   });
 
-  it('retires the surface on renderer failure but still turns the page', async () => {
+  it('abandons the fold on renderer failure but still turns the page', async () => {
     const onNext = vi.fn();
     const result = await renderHook(createOptions({ onNext }));
 
@@ -412,7 +412,8 @@ describe('usePageTurn', () => {
     });
 
     expect(onNext).toHaveBeenCalledTimes(1);
-    expect(latest?.state).toEqual({ phase: 'disabled', reason: 'backend' });
+    // The fold is abandoned, not retired: the next turn gets to try again.
+    expect(latest?.state).toEqual({ phase: 'idle' });
     expect(latest?.surfaceInput).toBeUndefined();
   });
 
@@ -602,6 +603,46 @@ describe('usePageTurn', () => {
       globalThis.requestAnimationFrame = originalRaf;
       globalThis.cancelAnimationFrame = originalCancel;
     }
+  });
+
+  it('tries the fold again after a failure instead of retiring it for the session', async () => {
+    const onNext = vi.fn();
+    const result = await renderHook(createOptions({ onNext }));
+
+    act(() => {
+      result.requestTurn(1);
+    });
+    // A page that failed to prepare once may well prepare next time. Retiring
+    // the fold on the first failure leaves the reader with no animation at all
+    // until they restart the app.
+    act(() => {
+      latest?.onFailure({ reason: 'backend', diagnostic: 'Page-turn textures were not ready (slow).' });
+    });
+    expect(onNext, 'the failed turn still takes its page').toHaveBeenCalledTimes(1);
+
+    act(() => {
+      latest?.requestTurn(1);
+    });
+    expect(latest?.state, 'the next turn must be allowed to animate').toMatchObject({ phase: 'preparing' });
+  });
+
+  it('retires the fold once failures stop being an accident', async () => {
+    const result = await renderHook(createOptions({ onNext: vi.fn() }));
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      act(() => {
+        result.requestTurn(1);
+      });
+      act(() => {
+        latest?.onFailure({ reason: 'solver', diagnostic: 'Physical page-turn solver produced invalid-normal.' });
+      });
+    }
+
+    act(() => {
+      latest?.requestTurn(1);
+    });
+
+    expect(latest?.state).toMatchObject({ phase: 'disabled' });
   });
 
   it.each(['touch', 'pen'] as const)('ignores non-primary %s pointers before starting a turn', async (pointerType) => {

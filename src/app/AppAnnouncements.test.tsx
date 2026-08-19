@@ -76,7 +76,9 @@ describe('application live-region wiring', () => {
       await flushReact(500);
     });
 
-    expect(host.querySelector('[data-testid="renderer-diagnostic"]')?.textContent).toContain('fallback=WebGL2 is not available.');
+    // The diagnostic now says which layer failed, so a reader reporting a problem
+    // can tell the page-turn surface apart from the page renderer.
+    expect(host.querySelector('[data-testid="renderer-diagnostic"]')?.textContent).toContain('page-turn backend: WebGL2 is not available.');
 
     const statusMessages = [...host.querySelectorAll('[role="status"]')].map((node) => node.textContent ?? '');
     expect(statusMessages.some((message) => /^Integration page 2\/\d+$/.test(message))).toBe(true);

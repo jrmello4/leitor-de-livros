@@ -109,6 +109,7 @@ const SYNTHETIC_GRAB_Y = 0.62;
 const HOVER_PROGRESS_LIMIT = 0.03;
 const AUTOMATIC_POINTER_ID = -1;
 const SYNTHETIC_DURATION_MS = 180;
+const FOLD_FAILURES_BEFORE_RETIRING = 3;
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
@@ -204,6 +205,13 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
   const previousDirectionRef = useRef(readingDirection);
   const controllerRef = useRef<PageTurnController | undefined>(undefined);
   const startedGenerationRef = useRef(0);
+  /**
+   * Consecutive fold failures. A page that failed to prepare once may prepare
+   * next time, so retiring the surface on the first failure costs the reader
+   * every remaining animation of the session for what is often a transient
+   * stall. Repeated failures are a different story and do retire it.
+   */
+  const foldFailuresRef = useRef(0);
 
   const [state, setState] = useState<UsePageTurnResult['state']>({ phase: 'idle' });
   const [scene, setScene] = useState<PageTurnScene | undefined>(undefined);
@@ -567,7 +575,12 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
     }
     plannedTurnsRef.current.clear();
 
-    controllerRef.current?.disable(failure.reason === 'backend' ? 'backend' : 'performance');
+    foldFailuresRef.current += 1;
+    if (foldFailuresRef.current >= FOLD_FAILURES_BEFORE_RETIRING) {
+      controllerRef.current?.disable(failure.reason === 'backend' ? 'backend' : 'performance');
+    } else {
+      controllerRef.current?.cancel(failure.reason === 'backend' ? 'backend' : 'solver');
+    }
 
     if (strandedDirection && !alreadyNavigated) {
       turnDirectionToCallback(strandedDirection, readingDirection, onNextRef.current, onPreviousRef.current)();
@@ -577,6 +590,9 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
   }, [clearAnimation, pendingPointer?.pointerId, readingDirection, releasePointerCapture, state, syncFromController]);
 
   const acknowledgeNavigation = useCallback((generation?: number) => {
+    // A turn that reached its page proves the surface is working, so earlier
+    // failures no longer count against it.
+    foldFailuresRef.current = 0;
     const acknowledged = generation ?? awaitingNavigationGenerationRef.current;
     if (acknowledged === undefined) {
       return;
