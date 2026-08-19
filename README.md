@@ -2,6 +2,33 @@
 
 > A local-first Windows reader built around the feeling of touching and turning a real comic page.
 
+## Install
+
+Windows 10/11 x64. Download `TactileReader_<version>_x64-setup.exe` from the
+[latest release](https://github.com/jrmello4/leitor-de-livros/releases/latest) and run it.
+The PDFium runtime needed for PDF reading ships inside the installer; nothing else to set up.
+
+The installer is **not code signed**, so Windows SmartScreen shows "Windows protected your PC".
+Verify the download against the `.sha256` file published beside it before choosing
+**More info → Run anyway**:
+
+```powershell
+Get-FileHash .\TactileReader_0.1.0_x64-setup.exe -Algorithm SHA256
+```
+
+To remove it, use Windows Settings › Apps, or the `uninstall.exe` in the install directory.
+Uninstalling leaves your comics untouched: the reader never writes to the files you import.
+
+### Build it yourself
+
+```bash
+npm ci
+npm run tauri:build
+```
+
+The installer lands in `src-tauri/target/release/bundle/nsis/`. Building needs Node 24 and a
+stable Rust toolchain.
+
 ## The idea
 
 Most digital readers treat comics as static images inside a file browser. Tactile Reader is designed around the reading moment itself: a page that bends under the pointer, a transition that follows the reader's gesture, and an adaptive flow that understands panel order without taking control away.
