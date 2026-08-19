@@ -4,7 +4,7 @@ import {
   mkdtemp,
   writeFile,
 } from 'node:fs/promises';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -163,47 +163,90 @@ $gpus = @(Get-CimInstance Win32_VideoController | ForEach-Object { [ordered]@{ n
   }
 }
 
-function readProcessTreeMemoryBytes(rootPid) {
-  const script = `
-$root = ${Number(rootPid)}
-$processes = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId)
-$ids = New-Object System.Collections.Generic.HashSet[int]
-[void]$ids.Add($root)
-$changed = $true
-while ($changed) {
-  $changed = $false
-  foreach ($process in $processes) {
-    if ($ids.Contains([int]$process.ParentProcessId) -and $ids.Add([int]$process.ProcessId)) { $changed = $true }
-  }
-}
-$total = [int64]0
-foreach ($id in $ids) {
-  try { $total += (Get-Process -Id $id -ErrorAction Stop).PrivateMemorySize64 } catch {}
-}
-$total
-`;
-  try {
-    const value = Number(commandOutput('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script]));
-    return Number.isFinite(value) && value > 0 ? value : undefined;
-  } catch {
+/**
+ * Samples the private memory of the application process tree.
+ *
+ * This used to spawn a PowerShell process per sample, twice a second, and each
+ * one enumerated every process on the machine over WMI. PowerShell takes longer
+ * than that to start, so the samplers piled up, saturated the CPU and made the
+ * app unresponsive — the reader stopped answering clicks and the harness blamed
+ * the app for the stall it had caused. One long-lived process now emits a sample
+ * per second and re-resolves the tree only every tenth sample, so the
+ * measurement no longer dominates what it measures.
+ */
+export const MEMORY_SAMPLE_INTERVAL_MS = 1000;
+const MEMORY_TREE_REFRESH_EVERY = 10;
+
+export function parseMemorySampleLine(line) {
+  const parts = String(line).trim().split(" ");
+  if (parts.length !== 2) {
     return undefined;
   }
+  const atMs = Number(parts[0]);
+  const bytes = Number(parts[1]);
+  return Number.isFinite(atMs) && Number.isFinite(bytes) && bytes > 0 ? { atMs, bytes } : undefined;
+}
+
+function memorySamplerScript(rootPid) {
+  return `
+$root = ${Number(rootPid)}
+$ids = $null
+$iteration = 0
+while ($true) {
+  if ($null -eq $ids -or ($iteration % ${MEMORY_TREE_REFRESH_EVERY}) -eq 0) {
+    $processes = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId)
+    $set = New-Object System.Collections.Generic.HashSet[int]
+    [void]$set.Add($root)
+    $changed = $true
+    while ($changed) {
+      $changed = $false
+      foreach ($process in $processes) {
+        if ($set.Contains([int]$process.ParentProcessId) -and $set.Add([int]$process.ProcessId)) { $changed = $true }
+      }
+    }
+    $ids = @($set)
+  }
+  $total = [int64]0
+  foreach ($id in $ids) {
+    try { $total += (Get-Process -Id $id -ErrorAction Stop).PrivateMemorySize64 } catch {}
+  }
+  [Console]::Out.WriteLine(('{0} {1}' -f [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(), $total))
+  [Console]::Out.Flush()
+  Start-Sleep -Milliseconds ${MEMORY_SAMPLE_INTERVAL_MS}
+  $iteration = $iteration + 1
+}
+`;
 }
 
 function startMemorySampler(pid) {
   const samples = [];
-  const sample = () => {
-    const bytes = readProcessTreeMemoryBytes(pid);
-    if (bytes !== undefined) {
-      samples.push({ atMs: Date.now(), bytes });
+  const child = spawn(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-Command', memorySamplerScript(pid)],
+    { stdio: ['ignore', 'pipe', 'ignore'] },
+  );
+  let pending = '';
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => {
+    pending += chunk;
+    const lines = pending.split(String.fromCharCode(10));
+    pending = lines.pop() ?? '';
+    for (const line of lines) {
+      const sample = parseMemorySampleLine(line);
+      if (sample) {
+        samples.push(sample);
+      }
     }
-  };
-  sample();
-  const interval = setInterval(sample, 500);
+  });
+  child.on('error', () => undefined);
+
   return {
     stop() {
-      clearInterval(interval);
-      sample();
+      try {
+        child.kill();
+      } catch {
+        // The sampler is best-effort evidence; never fail a run over it.
+      }
       return samples;
     },
   };
@@ -401,21 +444,54 @@ function summarizeFrames(frames) {
   };
 }
 
+/**
+ * Explains the verdict rather than restating the happy path. The previous
+ * wording claimed the quality transition came before the stall whenever any
+ * transition existed, so a failing scenario carried a rationale that
+ * contradicted its own result.
+ */
+export function describeQualityEvidence({ sampleCount, transitionCount, stallAt, stallFrameMs, firstDegradation, degradedBeforeStall }) {
+  if (sampleCount === 0) {
+    return 'Quality sampler produced no valid samples.';
+  }
+  if (stallAt === undefined) {
+    return 'No quality reduction was required because interaction frame times stayed below the stall threshold.';
+  }
+  const stall = `a ${Math.round(stallFrameMs ?? 0)}ms frame at ${Math.round(stallAt)}ms`;
+  if (degradedBeforeStall) {
+    return `Quality dropped at ${Math.round(firstDegradation ?? 0)}ms, before ${stall}.`;
+  }
+  if (transitionCount === 0) {
+    return `Quality never dropped, and interaction stalled on ${stall}.`;
+  }
+  return `Quality dropped only at ${Math.round(firstDegradation ?? 0)}ms, after ${stall}.`;
+}
+
 function qualityEvidence(qualityEvents, frames, frameSummary, threshold = PERFORMANCE_THRESHOLDS.navigationFrameTimeP95Ms) {
   const transitions = qualityEvents.filter((event, index) => index > 0 && event.quality !== qualityEvents[index - 1].quality);
   const stallAt = frames.find((sample) => sample.frameMs > threshold)?.atMs;
   const degradedBeforeStall = qualityEvents.length > 0 && (transitions.some((event) => event.quality !== 'rich' && (stallAt === undefined || event.atMs <= stallAt))
     || stallAt === undefined);
+  const stallFrameMs = frames.find((sample) => sample.frameMs > threshold)?.frameMs;
+  const firstDegradation = transitions.find((event) => event.quality !== 'rich')?.atMs;
   return {
     transitions,
     qualitySampleCount: qualityEvents.length,
     frameSampleCount: frames.length,
+    // Reported so a failure can be judged: without the timings there is no way
+    // to tell whether adaptation was late or the stall was simply unavoidable.
+    stallAtMs: stallAt,
+    stallFrameMs,
+    firstDegradationAtMs: firstDegradation,
     qualityDegradedBeforeInteractionStall: degradedBeforeStall,
-    rationale: qualityEvents.length === 0
-      ? 'Quality sampler produced no valid samples.'
-      : transitions.length === 0 && stallAt === undefined
-      ? 'No quality reduction was required because interaction frame times stayed below the stall threshold.'
-      : 'Quality transition was observed before the first unacceptable frame-time sample.',
+    rationale: describeQualityEvidence({
+      sampleCount: qualityEvents.length,
+      transitionCount: transitions.length,
+      stallAt,
+      stallFrameMs,
+      firstDegradation,
+      degradedBeforeStall,
+    }),
   };
 }
 
@@ -580,7 +656,9 @@ async function runPerformanceScenarios(session, fixtures) {
   } finally {
     memorySamples = memorySampler?.stop() ?? memorySamples;
   }
-  return { scenarioResults, memory: memorySummary(memorySamples), qualitySummary };
+  // `buildReport` reads this as `scenarios`; returning it under any other name
+  // throws while assembling the report, after every scenario has already run.
+  return { scenarios: scenarioResults, memory: memorySummary(memorySamples), qualitySummary };
 }
 
 function buildReport({ runId, hardware, build, scenarios, memory, qualitySummary }) {
@@ -594,7 +672,10 @@ function buildReport({ runId, hardware, build, scenarios, memory, qualitySummary
     steadyMemoryBytes: longSession?.steadyMemoryBytes ?? memory.steadyMemoryBytes,
     derivedCacheGrowthBytes: longSession?.cacheGrowthBytes ?? 0,
     qualityDegradedBeforeInteractionStall: Boolean(qualitySummary?.qualityDegradedBeforeInteractionStall),
-    longSessionMemoryBounded: (longSession?.memorySampleCount ?? 0) > 1
+    // The scenario stores the sampler's own `sampleCount`; reading
+    // `memorySampleCount` here always found nothing, so the summary reported
+    // memory as unbounded no matter how flat the trend actually was.
+    longSessionMemoryBounded: (longSession?.sampleCount ?? 0) > 1
       && (longSession?.memoryGrowthBytes ?? Number.POSITIVE_INFINITY) <= PERFORMANCE_THRESHOLDS.longSessionMemoryGrowthBytes,
     longSessionCacheBounded: (longSession?.cacheGrowthBytes ?? Number.POSITIVE_INFINITY) <= PERFORMANCE_THRESHOLDS.longSessionCacheGrowthBytes,
   };
