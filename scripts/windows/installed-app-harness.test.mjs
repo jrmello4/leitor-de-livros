@@ -5,7 +5,7 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { createInstalledAppHarness, InstalledAppLifecycleError } from './installed-app-harness.mjs';
+import { createInstalledAppHarness, describeChildState, InstalledAppLifecycleError } from './installed-app-harness.mjs';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -254,7 +254,7 @@ test('records a cleanup failure without replacing a connection deadline', async 
     harness.launchApp(launchOptions(harness, 'connection')),
     (error) => error instanceof InstalledAppLifecycleError
       && error.stage === 'connection'
-      && /CDP endpoint timed out/.test(error.message)
+      && /CDP endpoint timed out on port \d+ \(process /.test(error.message)
       && error.cleanupFailure?.message === 'taskkill failed',
   );
   assert.deepEqual(events, ['port-closed', 'stdout', 'stderr']);
@@ -497,4 +497,24 @@ test('cleanup closes the session, uninstalls NSIS, and removes the run root even
   );
 
   assert.deepEqual(events, ['session-close', 'uninstall', 'remove-root']);
+});
+
+test('a connection timeout reports how the launched process was doing', () => {
+  assert.equal(describeChildState(undefined), 'process was never spawned');
+  assert.equal(
+    describeChildState({ exitCode: null, signalCode: 'SIGKILL', pid: 11 }),
+    'process was killed by SIGKILL',
+  );
+  assert.equal(
+    describeChildState({ exitCode: 3, signalCode: null, pid: 12 }),
+    'process had already exited with code 3',
+  );
+  assert.equal(
+    describeChildState({ exitCode: 0, signalCode: null, pid: 13 }),
+    'process had already exited with code 0',
+  );
+  assert.equal(
+    describeChildState({ exitCode: null, signalCode: null, pid: 14 }),
+    'process was still running as pid 14',
+  );
 });
