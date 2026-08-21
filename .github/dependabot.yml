@@ -1,0 +1,38 @@
+version: 2
+
+# The reader ships a Windows installer built from three dependency trees, and
+# the only one with an automatic alarm today is npm audit in CI. These keep the
+# other two visible without turning every patch release into a pull request.
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      dev-tooling:
+        patterns:
+          - '@playwright/*'
+          - '@types/*'
+          - '@vitejs/*'
+          - eslint*
+          - jsdom
+          - typescript
+          - vite
+          - vitest
+
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    ignore:
+      # The PDFium runtime shipped in the installer is built against this exact
+      # binding, so the crate and the bundled DLL move together or not at all.
+      - dependency-name: pdfium-render
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
