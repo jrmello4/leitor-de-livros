@@ -33,7 +33,8 @@
     "targets": ["nsis"],
     "resources": {
       "resources/pdfium/pdfium.dll": "pdfium.dll",
-      "resources/licenses/pdfium/": "licenses/pdfium/"
+      "resources/licenses/pdfium/": "licenses/pdfium/",
+      "resources/licenses/unrar/": "licenses/unrar/"
     }
   }
 }

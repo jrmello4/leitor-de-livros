@@ -2,3 +2,4 @@
 src-tauri/tests/fixtures/*.pdf -text -diff
 src-tauri/resources/pdfium/*.dll -text -diff
 src-tauri/resources/licenses/pdfium/** -whitespace
+src-tauri/resources/licenses/unrar/** -whitespace
