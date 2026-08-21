@@ -25,6 +25,10 @@
      starts at `--text-micro`. */
   --text-nano: 10px;
   --text-micro: 11px;
+  /* The reader's notes read against the page, so they answer to the contrast
+     setting instead of carrying their own baked-in alpha. */
+  --note: rgba(190, 205, 198, 0.82);
+  --note-line: rgba(190, 205, 198, 0.4);
 }
 
 * {
@@ -88,6 +92,8 @@ img {
   --mist: #d2dfd8;
   --line: rgba(255, 255, 255, 0.32);
   --copper-bright: #ffbb83;
+  --note: #e8f1ea;
+  --note-line: rgba(255, 255, 255, 0.52);
 }
 
 .ambient-mark {
@@ -1038,14 +1044,14 @@ img {
   align-items: center;
   gap: 10px;
   justify-self: start;
-  color: rgba(190, 205, 198, 0.86);
+  color: var(--note);
   font-size: var(--text-micro);
 }
 
 .stage-meta__divider {
   width: 12px;
   height: 1px;
-  background: rgba(190, 205, 198, 0.4);
+  background: var(--note-line);
 }
 
 .paper-spread {
@@ -1355,7 +1361,7 @@ html:fullscreen .reader-controls:focus-within {
   display: flex;
   align-items: center;
   gap: 10px;
-  color: rgba(190, 205, 198, 0.82);
+  color: var(--note);
   font-family: var(--utility);
   font-size: var(--text-micro);
   letter-spacing: 0.16em;
@@ -1379,7 +1385,7 @@ html:fullscreen .reader-controls:focus-within {
   max-width: 100%;
   margin: 0;
   overflow: hidden;
-  color: rgba(190, 205, 198, 0.82);
+  color: var(--note);
   font-size: var(--text-micro);
   text-align: center;
   text-overflow: ellipsis;
@@ -1389,7 +1395,7 @@ html:fullscreen .reader-controls:focus-within {
 .renderer-diagnostic-panel {
   justify-self: end;
   max-width: 100%;
-  color: rgba(206, 220, 212, 0.86);
+  color: var(--note);
   font-family: var(--utility);
   font-size: var(--text-micro);
   letter-spacing: 0.08em;
@@ -1718,7 +1724,7 @@ html:fullscreen .reader-controls:focus-within {
   max-width: 42%;
   margin: 0 24px;
   overflow: hidden;
-  color: rgba(190, 205, 198, 0.8);
+  color: var(--note);
   font-size: var(--text-micro);
   text-align: center;
   text-overflow: ellipsis;
