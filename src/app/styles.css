@@ -1499,11 +1499,23 @@ html:fullscreen .reader-controls:focus-within {
   font-weight: 500;
 }
 
+/* Without an explicit background this rendered as the browser's default grey
+   button, the one opaque control in an interface made of hairlines. */
 .page-navigator__close {
   width: 34px;
   height: 34px;
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--paper);
   font-size: 24px;
+  line-height: 1;
+  transition: border-color 180ms ease, color 180ms ease;
+}
+
+.page-navigator__close:hover,
+.page-navigator__close:focus-visible {
+  border-color: var(--copper);
+  color: var(--copper-bright);
 }
 
 .page-navigator__tools {
@@ -1544,16 +1556,19 @@ html:fullscreen .reader-controls:focus-within {
   scrollbar-color: var(--copper) transparent;
 }
 
+/* 76px wide is too small to tell two comic pages apart, which is the only job
+   a thumbnail has. The strip already scrolls, so a long publication is
+   unaffected by the larger tile. */
 .page-navigator__item {
   position: relative;
-  flex: 0 0 76px;
+  flex: 0 0 104px;
 }
 
 .page-thumb {
   position: relative;
   display: block;
-  width: 76px;
-  height: 96px;
+  width: 104px;
+  height: 132px;
   overflow: hidden;
   border: 1px solid var(--line);
   background: var(--paper);
@@ -1842,6 +1857,29 @@ html:fullscreen .reader-controls:focus-within {
   min-height: 32px;
   padding: 0 8px;
   font-size: var(--text-micro);
+}
+
+/* Delete sat in a 2x2 grid of bordered buttons wearing no border at all, so the
+   row read as broken and the one destructive action was the least visible. */
+.profile-actions .quiet-button {
+  border: 1px solid rgba(240, 161, 138, 0.42);
+  color: #f0a18a;
+  letter-spacing: 0.13em;
+  transition: border-color 180ms ease, background 180ms ease, color 180ms ease;
+}
+
+.profile-actions .quiet-button:hover:not(:disabled),
+.profile-actions .quiet-button:focus-visible:not(:disabled) {
+  border-color: #f0a18a;
+  background: rgba(240, 161, 138, 0.12);
+  color: #ffc7b6;
+  transform: none;
+}
+
+.profile-actions .quiet-button:disabled {
+  border-color: var(--line);
+  color: rgba(168, 185, 178, 0.42);
+  cursor: not-allowed;
 }
 
 .profile-error {
@@ -2147,7 +2185,36 @@ html:fullscreen .reader-controls:focus-within {
 
   .reading-stage {
     --stage-gap: 40px;
-    padding: 22px 20px 16px;
+    /* A floating panel has nowhere to float on a phone: it printed over the
+       artwork and ran off the right edge. It becomes the stage's first row and
+       stops covering the page it zooms. */
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    row-gap: 0;
+    padding: 14px 16px 14px;
+  }
+
+  .reading-stage > .paper-spread {
+    margin: var(--stage-gap) 0;
+  }
+
+  .zoom-controls {
+    position: static;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 8px 12px;
+    width: 100%;
+    padding: 8px 10px;
+    opacity: 1;
+  }
+
+  .zoom-controls__reset {
+    justify-self: auto;
+    margin-inline-start: auto;
+  }
+
+  .zoom-controls__manual input {
+    width: min(140px, 34vw);
   }
 
   /* A narrow rail cannot hold three columns without truncating all of them, so
@@ -2167,12 +2234,19 @@ html:fullscreen .reader-controls:focus-within {
     height: auto;
   }
 
+  /* Top bar, controls, stage padding, the docked zoom row, and the margins the
+     corner hint hangs into. The paper is bound by height here, so this number
+     is what keeps it off the rail underneath it. */
+  .reader-view {
+    --stage-chrome: 368px;
+  }
+
   .paper-spread--single {
-    width: min(94vw, calc((100vh - 236px) * var(--spread-aspect, 0.705)));
+    width: min(94vw, calc((100vh - var(--stage-chrome)) * var(--spread-aspect, 0.705)));
   }
 
   .paper-spread--spread {
-    width: min(98vw, calc((100vh - 236px) * var(--spread-aspect, 1.41)));
+    width: min(98vw, calc((100vh - var(--stage-chrome)) * var(--spread-aspect, 1.41)));
   }
 
   .paper-spread--spread .page-sheet {
