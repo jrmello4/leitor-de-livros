@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { createManualPanelGraph, swapPanelOrder, type PanelGraph } from '../domain/flow';
+import { addPanelRegion, createManualPanelGraph, removePanelRegion, swapPanelOrder, type PanelGraph } from '../domain/flow';
 import type { PageDescriptor, ReadingDirection } from '../domain/types';
 import { analyzePageFlow } from '../services/flowAnalysis';
 import { loadFlowGraph, saveFlowGraph } from '../services/flowStorage';
@@ -109,5 +109,33 @@ export function useAdaptiveFlow({ publicationId, page, direction, nativeRuntime,
     });
   }, [nativeRuntime, publicationId]);
 
-  return { graph, state, swapOrder, useManualRoute };
+  const addPanel = useCallback((bounds: { x: number; y: number; width: number; height: number }) => {
+    setGraph((current) => {
+      if (!current) {
+        return current;
+      }
+      const updated = addPanelRegion(current, bounds);
+      saveFlowGraph(publicationId, updated);
+      if (nativeRuntime) {
+        void saveNativePanelGraph(publicationId, updated).catch(() => undefined);
+      }
+      return updated;
+    });
+  }, [nativeRuntime, publicationId]);
+
+  const removePanel = useCallback((panelId: string) => {
+    setGraph((current) => {
+      if (!current) {
+        return current;
+      }
+      const updated = removePanelRegion(current, panelId);
+      saveFlowGraph(publicationId, updated);
+      if (nativeRuntime) {
+        void saveNativePanelGraph(publicationId, updated).catch(() => undefined);
+      }
+      return updated;
+    });
+  }, [nativeRuntime, publicationId]);
+
+  return { graph, state, swapOrder, useManualRoute, addPanel, removePanel };
 }

@@ -182,6 +182,16 @@ fn touch_pages(
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command(async)]
+fn rebuild_publication_cache(
+    publication_id: String,
+    database: State<'_, LibraryDb>,
+) -> Result<usize, String> {
+    database
+        .rebuild_publication_cache(&publication_id)
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 fn delete_publication(
     publication_id: String,
@@ -257,6 +267,7 @@ pub fn run() {
             clear_cache,
             ensure_page_cache,
             touch_pages,
+            rebuild_publication_cache,
             delete_publication,
             load_profile,
             save_profile,

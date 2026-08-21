@@ -53,6 +53,7 @@ function libraryProps(overrides: Partial<LibraryProps> = {}): LibraryProps {
     onReplaceCover: vi.fn(),
     onChooseNativeCover: vi.fn(),
     onResetCover: vi.fn(),
+    onRebuildCache: vi.fn(),
     favoriteOnly: false,
     onFavoriteOnlyChange: vi.fn(),
     formatFilter: 'all',
@@ -384,5 +385,17 @@ describe('LibraryView favorites and safe deletion', () => {
 
     expect(onDelete).toHaveBeenCalledWith(book);
     expect(document.activeElement).toBe(host.querySelector('main.library-view'));
+  });
+
+  it('triggers onRebuildCache when rebuild cache button is clicked in native runtime', () => {
+    const book = publication('book-a', 'Book A', false, { format: 'cbz' });
+    const onRebuildCache = vi.fn();
+    root = renderLibrary(host, [book], { isNativeRuntime: true, onRebuildCache });
+
+    const rebuildBtn = host.querySelector<HTMLButtonElement>('[aria-label="Rebuild cache"]');
+    expect(rebuildBtn).not.toBeNull();
+    act(() => rebuildBtn?.click());
+
+    expect(onRebuildCache).toHaveBeenCalledWith(book);
   });
 });

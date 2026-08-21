@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { flowResolution, orderedPanels, type PanelGraph } from '../domain/flow';
+import { flowResolution, orderedPanels, type PanelBounds, type PanelGraph } from '../domain/flow';
 import { t } from '../i18n/catalog';
 
 interface AdaptiveFlowOverlayProps {
@@ -10,6 +10,8 @@ interface AdaptiveFlowOverlayProps {
   pageCount: number;
   onSwap: (firstId: string, secondId: string) => void;
   onUseManualRoute: () => void;
+  onAddPanel?: (bounds: PanelBounds) => void;
+  onRemovePanel?: (panelId: string) => void;
 }
 
 function statusLabel(graph: PanelGraph): string {
@@ -49,6 +51,8 @@ export function AdaptiveFlowOverlay({
   pageCount,
   onSwap,
   onUseManualRoute,
+  onAddPanel,
+  onRemovePanel,
 }: AdaptiveFlowOverlayProps) {
   const [firstSelection, setFirstSelection] = useState<string>();
 
@@ -87,23 +91,60 @@ export function AdaptiveFlowOverlay({
     setFirstSelection(undefined);
   };
 
+  const deleteSelectedPanel = () => {
+    if (firstSelection && onRemovePanel) {
+      onRemovePanel(firstSelection);
+      setFirstSelection(undefined);
+    }
+  };
+
+  const handleAddPanel = () => {
+    if (onAddPanel) {
+      onAddPanel({ x: 0.1, y: 0.1, width: 0.8, height: 0.4 });
+    }
+  };
+
   return (
     <div className="flow-overlay" aria-label={t('flow.label')}>
       <section className="flow-overlay-legend" data-flow-control aria-labelledby="flow-overlay-title">
         <span id="flow-overlay-title">{t('flow.count', { count: panels.length })}</span>
         <strong>{statusLabel(graph)}</strong>
         <p>{guidanceLabel(graph, canCorrectOrder, Boolean(firstSelection))}</p>
-        {canUseManualRoute && (
-          <button
-            className="flow-manual-route"
-            data-flow-control
-            type="button"
-            onClick={onUseManualRoute}
-            aria-label={t('flow.readFullPage')}
-          >
-            {t('flow.readFullPageButton')}
-          </button>
-        )}
+        <div className="flow-legend-actions">
+          {firstSelection && onRemovePanel && panels.length > 1 && (
+            <button
+              className="flow-manual-route flow-delete-panel-btn"
+              data-flow-control
+              type="button"
+              onClick={deleteSelectedPanel}
+              aria-label={t('flow.deletePanel')}
+            >
+              {t('flow.deletePanel')}
+            </button>
+          )}
+          {onAddPanel && (
+            <button
+              className="flow-manual-route flow-add-panel-btn"
+              data-flow-control
+              type="button"
+              onClick={handleAddPanel}
+              aria-label={t('flow.addPanel')}
+            >
+              + {t('flow.addPanel')}
+            </button>
+          )}
+          {canUseManualRoute && (
+            <button
+              className="flow-manual-route"
+              data-flow-control
+              type="button"
+              onClick={onUseManualRoute}
+              aria-label={t('flow.readFullPage')}
+            >
+              {t('flow.readFullPageButton')}
+            </button>
+          )}
+        </div>
       </section>
       {panels.map((panel, index) => (
         <button

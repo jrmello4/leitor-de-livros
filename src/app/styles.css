@@ -1176,6 +1176,13 @@ img {
   letter-spacing: 0.06em;
 }
 
+.flow-legend-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 .flow-manual-route {
   justify-self: start;
   margin-top: 2px;
@@ -1189,10 +1196,20 @@ img {
   letter-spacing: 0.1em;
   line-height: 1.5;
   text-transform: uppercase;
+  cursor: pointer;
 }
 
 .flow-manual-route:hover {
   color: var(--paper);
+}
+
+.flow-delete-panel-btn {
+  color: #e57373;
+  border-bottom-color: rgba(229, 115, 115, 0.52);
+}
+
+.flow-delete-panel-btn:hover {
+  color: #ff8a80;
 }
 
 .flow-panel-marker {

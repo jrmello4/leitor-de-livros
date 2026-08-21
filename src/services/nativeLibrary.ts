@@ -324,6 +324,14 @@ export async function clearNativeCache(protectedPageIds: string[] = []): Promise
   await invoke('clear_cache', { protectedPageIds });
 }
 
+export async function rebuildNativePublicationCache(publicationId: string): Promise<number> {
+  if (!isNativeRuntime()) {
+    return 0;
+  }
+  const rebuiltCount = await invoke<number>('rebuild_publication_cache', { publicationId });
+  return typeof rebuiltCount === 'number' ? rebuiltCount : 0;
+}
+
 export async function ensureNativePage(
   publicationId: string,
   pageId: string,

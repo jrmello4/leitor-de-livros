@@ -171,7 +171,7 @@ export function ReaderView({
       .filter((id): id is string => Boolean(id));
     void touchNativePages(publication.id, ids).catch(() => undefined);
   }, [nativeRuntime, publication.currentPage, publication.id, publication.pages]);
-  const { graph: flowGraph, state: flowState, swapOrder, useManualRoute } = useAdaptiveFlow({
+  const { graph: flowGraph, state: flowState, swapOrder, useManualRoute, addPanel, removePanel } = useAdaptiveFlow({
     publicationId: publication.id,
     page: currentPage,
     direction: profile.direction,
@@ -487,6 +487,8 @@ export function ReaderView({
               pageCount={visiblePages.length}
               onSwap={correctFlowOrder}
               onUseManualRoute={useManualFlowRoute}
+              onAddPanel={addPanel}
+              onRemovePanel={removePanel}
             />
           </div>
           <div className="corner-hint" style={turnHintStyle} aria-hidden="true">

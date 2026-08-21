@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addPanelRegion,
   analyzePanelRaster,
   createManualPanelGraph,
   flowResolution,
   orderedPanels,
+  removePanelRegion,
   swapPanelOrder,
+  updatePanelBounds,
   type RasterImage,
 } from './flow';
 
@@ -74,5 +77,27 @@ describe('Adaptive Flow geometry', () => {
     expect(flowResolution(ready)).toBe('ready');
     expect(flowResolution(review)).toBe('review');
     expect(flowResolution(manual)).toBe('manual');
+  });
+
+  it('adds, removes and updates panel regions dynamically', () => {
+    const graph = analyzePanelRaster('page-1', rasterWithPanels(), 'ltr');
+    const initialCount = graph.regions.length;
+
+    // Add region
+    const withAdded = addPanelRegion(graph, { x: 0.1, y: 0.1, width: 0.3, height: 0.4 });
+    expect(withAdded.regions).toHaveLength(initialCount + 1);
+    expect(withAdded.source).toBe('manual');
+    expect(withAdded.corrections).toBe(1);
+
+    // Update region
+    const addedId = withAdded.regions[withAdded.regions.length - 1].id;
+    const withUpdated = updatePanelBounds(withAdded, addedId, { x: 0.2, y: 0.2, width: 0.5, height: 0.6 });
+    const updated = withUpdated.regions.find((r) => r.id === addedId);
+    expect(updated?.bounds).toEqual({ x: 0.2, y: 0.2, width: 0.5, height: 0.6 });
+
+    // Remove region
+    const withRemoved = removePanelRegion(withUpdated, addedId);
+    expect(withRemoved.regions).toHaveLength(initialCount);
+    expect(withRemoved.regions.find((r) => r.id === addedId)).toBeUndefined();
   });
 });

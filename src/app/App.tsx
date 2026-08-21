@@ -41,6 +41,7 @@ import {
   deleteNativePublication,
   ensureNativePage,
   getNativeCacheInfo,
+  rebuildNativePublicationCache,
   setNativeCacheLimit,
   setNativeCover,
 } from '../services/nativeLibrary';
@@ -1221,6 +1222,19 @@ export function App() {
     setCapturingAction(null);
   };
 
+  const handleRebuildPublicationCache = async (publication: Publication) => {
+    if (!nativeRuntime) {
+      return;
+    }
+    try {
+      await rebuildNativePublicationCache(publication.id);
+      await refreshCacheInfo();
+      setAnnouncement(t('app.cacheRebuilt', { title: publication.title }));
+    } catch {
+      setDiagnostic(t('app.pageRebuildError'));
+    }
+  };
+
   return (
     <div className="app-shell" data-contrast={profile.contrast}>
       {isSmokeMode(import.meta.env.VITE_SMOKE_TEST === '1', nativeRuntime) && (
@@ -1291,6 +1305,7 @@ export function App() {
             onCoverError={handleBrowserCoverError}
             onChooseNativeCover={replaceNativeCover}
             onResetCover={resetPublicationCover}
+            onRebuildCache={handleRebuildPublicationCache}
             favoriteOnly={favoriteOnly}
             onFavoriteOnlyChange={setFavoriteOnly}
             formatFilter={formatFilter}

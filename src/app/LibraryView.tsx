@@ -24,6 +24,7 @@ interface LibraryViewProps {
   onCoverError?: (publication: Publication) => void;
   onChooseNativeCover: (publication: Publication) => void | Promise<void>;
   onResetCover: (publication: Publication) => void | Promise<void>;
+  onRebuildCache?: (publication: Publication) => void | Promise<void>;
   favoriteOnly: boolean;
   onFavoriteOnlyChange: (favoriteOnly: boolean) => void;
   formatFilter: FormatFilter;
@@ -57,6 +58,7 @@ export function LibraryView({
   onCoverError = () => undefined,
   onChooseNativeCover,
   onResetCover,
+  onRebuildCache,
   favoriteOnly,
   onFavoriteOnlyChange,
   formatFilter,
@@ -375,6 +377,11 @@ export function LibraryView({
                 {(publication.customCover || publication.diagnostic?.toLowerCase().includes('custom cover')) && (
                   <button className="quiet-button" type="button" aria-label={t('library.resetCover')} onClick={() => void onResetCover(publication)}>
                     {t('library.resetCover')}
+                  </button>
+                )}
+                {isNativeRuntime && onRebuildCache && publication.format !== 'demo' && (
+                  <button className="quiet-button" type="button" aria-label={t('library.rebuildCache')} onClick={() => void onRebuildCache(publication)}>
+                    {t('library.rebuildCache')}
                   </button>
                 )}
               </div>

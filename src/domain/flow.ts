@@ -283,6 +283,68 @@ export function swapPanelOrder(graph: PanelGraph, firstId: string, secondId: str
   };
 }
 
+export function addPanelRegion(graph: PanelGraph, bounds: PanelBounds): PanelGraph {
+  const newId = `${graph.pageId}:panel-custom-${Date.now()}`;
+  const newOrder = graph.regions.length;
+  const newRegion: PanelRegion = {
+    id: newId,
+    order: newOrder,
+    bounds: {
+      x: clamp(bounds.x, 0, 1),
+      y: clamp(bounds.y, 0, 1),
+      width: clamp(bounds.width, 0.01, 1),
+      height: clamp(bounds.height, 0.01, 1),
+    },
+  };
+
+  return {
+    ...graph,
+    source: 'manual',
+    corrections: graph.corrections + 1,
+    regions: [...graph.regions, newRegion],
+    updatedAt: now(),
+  };
+}
+
+export function removePanelRegion(graph: PanelGraph, regionId: string): PanelGraph {
+  const remaining = graph.regions.filter((region) => region.id !== regionId);
+  // Re-index order
+  const reordered = remaining.map((region, index) => ({
+    ...region,
+    order: index,
+  }));
+
+  return {
+    ...graph,
+    source: 'manual',
+    corrections: graph.corrections + 1,
+    regions: reordered,
+    updatedAt: now(),
+  };
+}
+
+export function updatePanelBounds(graph: PanelGraph, regionId: string, bounds: PanelBounds): PanelGraph {
+  return {
+    ...graph,
+    source: 'manual',
+    corrections: graph.corrections + 1,
+    regions: graph.regions.map((region) => (
+      region.id === regionId
+        ? {
+          ...region,
+          bounds: {
+            x: clamp(bounds.x, 0, 1),
+            y: clamp(bounds.y, 0, 1),
+            width: clamp(bounds.width, 0.01, 1),
+            height: clamp(bounds.height, 0.01, 1),
+          },
+        }
+        : region
+    )),
+    updatedAt: now(),
+  };
+}
+
 export function isPanelGraph(value: unknown): value is PanelGraph {
   if (!value || typeof value !== 'object') {
     return false;

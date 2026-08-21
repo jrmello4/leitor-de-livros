@@ -923,6 +923,20 @@ impl LibraryDb {
         Ok(page)
     }
 
+    pub fn rebuild_publication_cache(&self, publication_id: &str) -> CoreResult<usize> {
+        let pages = self.list_publication_pages(publication_id)?;
+        let mut count = 0;
+        for page in &pages {
+            if let Ok(path) = std::fs::canonicalize(&page.cache_path) {
+                let _ = std::fs::remove_file(path);
+            }
+            if self.ensure_page_cache_with_protected(publication_id, &page.id, &[]).is_ok() {
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
     #[allow(dead_code)]
     pub fn clear_cache(&self) -> CoreResult<()> {
         self.clear_cache_with_protected(&[])
@@ -3723,6 +3737,39 @@ mod tests {
 
         drop(database);
         std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
+    fn rebuild_publication_cache_rebuilds_all_pages_for_publication() {
+        let root = temporary_root("rebuild-cache");
+        let source_dir = temporary_root("rebuild-source");
+        std::fs::create_dir_all(&source_dir).expect("source dir");
+        let source_file = source_dir.join("page.png");
+        let png_bytes = [
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+        std::fs::write(&source_file, png_bytes).expect("write source");
+
+        let database = LibraryDb::open(root.clone()).expect("open database");
+        insert_test_publication(&database, &source_file.to_string_lossy());
+
+        let pages = database
+            .list_publication_pages("publication-1")
+            .expect("pages");
+        assert_eq!(pages.len(), 1);
+
+        let count = database
+            .rebuild_publication_cache("publication-1")
+            .expect("rebuild");
+        assert_eq!(count, 1);
+
+        drop(database);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&source_dir);
     }
 }
 

@@ -100,4 +100,34 @@ describe('useAdaptiveFlow', () => {
     expect(analyzePageFlow).toHaveBeenCalledTimes(1);
     expect(latest?.state).toBe('ready');
   });
+
+  it('allows adding and removing panel regions through hook actions', async () => {
+    analyzePageFlow.mockResolvedValue({
+      version: 1,
+      pageId: 'page-1',
+      direction: 'ltr',
+      source: 'geometry',
+      confidence: 0.8,
+      corrections: 0,
+      regions: [
+        { id: 'page-1:panel-1', order: 0, bounds: { x: 0, y: 0, width: 0.5, height: 1 } },
+        { id: 'page-1:panel-2', order: 1, bounds: { x: 0.5, y: 0, width: 0.5, height: 1 } },
+      ],
+      updatedAt: '2026-08-12T00:00:00.000Z',
+    });
+
+    await render(true);
+    expect(latest?.graph?.regions).toHaveLength(2);
+
+    act(() => {
+      latest?.addPanel({ x: 0, y: 0, width: 1, height: 0.5 });
+    });
+    expect(latest?.graph?.regions).toHaveLength(3);
+
+    act(() => {
+      latest?.removePanel('page-1:panel-1');
+    });
+    expect(latest?.graph?.regions).toHaveLength(2);
+    expect(latest?.graph?.regions.find((r) => r.id === 'page-1:panel-1')).toBeUndefined();
+  });
 });
