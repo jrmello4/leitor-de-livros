@@ -65,7 +65,10 @@ jobs:
   native:
     name: Rust and Tauri Windows verification
     runs-on: windows-latest
-    timeout-minutes: 30
+    # The installer build alone used 27m35s of a 30 minute budget before the
+    # release profile was tuned, so this was already one slow runner away from
+    # failing on time rather than on merit.
+    timeout-minutes: 60
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -150,7 +153,8 @@ jobs:
   installer-smoke:
     name: Windows installer smoke evidence
     runs-on: windows-latest
-    timeout-minutes: 45
+    # This job builds its own installer before it can drive one.
+    timeout-minutes: 60
     steps:
       - name: Check out repository
         uses: actions/checkout@v7

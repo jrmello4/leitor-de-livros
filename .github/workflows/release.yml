@@ -26,7 +26,9 @@ jobs:
   windows:
     name: Windows x64 installer
     runs-on: windows-latest
-    timeout-minutes: 60
+    # The release builds the installer twice: once for the smoke gate and once
+    # for the artifact it publishes.
+    timeout-minutes: 120
     steps:
       - name: Check out repository
         uses: actions/checkout@v7

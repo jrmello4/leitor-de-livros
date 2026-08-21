@@ -26,6 +26,11 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # The reader ships as a single Windows installer, so the release build is
 # optimised for the artifact a reader downloads rather than for build time.
+# Measured on the reference machine: default 17.87 MB, thin LTO 18.68 MB,
+# whole-program LTO with one codegen unit 13.59 MB. Thin LTO is the worst of
+# both, so this takes the build time and the 24% smaller download. `strip`
+# earns little on Windows, where symbols already live in a separate PDB, but
+# costs nothing.
 [profile.release]
 codegen-units = 1
 lto = true
