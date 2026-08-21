@@ -42,7 +42,9 @@ async function openDemo(page: Page, scenario: VisualScenario): Promise<void> {
 
 type Box = { x: number; y: number; width: number; height: number; right: number; bottom: number };
 
-function overlap(left: Box, right: Box): boolean {
+type Edges = { x: number; y: number; right: number; bottom: number };
+
+function overlap(left: Edges, right: Edges): boolean {
   const overlapWidth = Math.min(left.right, right.right) - Math.max(left.x, right.x);
   const overlapHeight = Math.min(left.bottom, right.bottom) - Math.max(left.y, right.y);
   return overlapWidth > 2 && overlapHeight > 2;
@@ -116,6 +118,35 @@ async function assertReaderGeometry(page: Page): Promise<void> {
     expect(control.y, 'reader control is clipped at the top').toBeGreaterThanOrEqual(0);
     expect(control.right, 'reader control is clipped on the right').toBeLessThanOrEqual(viewport.width + 1);
     expect(control.bottom, 'reader control is clipped at the bottom').toBeLessThanOrEqual(viewport.height + 1);
+  }
+
+  await assertStageNotesDoNotCollide(page);
+}
+
+// The stage's notes each used to be positioned absolutely against the same
+// bottom edge, so the renderer status printed over the diagnostics and the
+// corner hint printed over both. They share one row now; this keeps them there.
+async function assertStageNotesDoNotCollide(page: Page): Promise<void> {
+  const notes = await page.locator(
+    '.stage-rail .stage-meta:visible, .stage-rail .stage-note:visible, .stage-rail .renderer-diagnostic-panel:visible, .corner-hint:visible, .reader-announcement:visible',
+  ).evaluateAll((elements) => elements.map((element) => {
+    const box = element.getBoundingClientRect();
+    return {
+      label: element.className.toString().split(/\s+/)[0] ?? 'note',
+      x: box.x,
+      y: box.y,
+      right: box.right,
+      bottom: box.bottom,
+    };
+  }));
+
+  for (let index = 0; index < notes.length; index += 1) {
+    for (let next = index + 1; next < notes.length; next += 1) {
+      expect(
+        overlap(notes[index], notes[next]),
+        `stage notes overlap: ${notes[index].label} over ${notes[next].label}`,
+      ).toBe(false);
+    }
   }
 }
 
@@ -247,25 +278,41 @@ async function runScenarioSetup(page: Page, scenario: VisualScenario): Promise<s
   }
 }
 
+const OPTIONAL_BACKENDS = ['webgl2', 'webgpu'];
+
+// The reader's contract is WebGPU → WebGL2 → static, each step stating why it
+// stepped down. Demanding the requested backend hangs the whole 45s timeout on
+// any machine without that adapter — which is most CI runners — so wait for the
+// ladder to settle and then insist the reader explained itself.
 async function rendererState(page: Page, requestedBackend: string): Promise<{ actualBackend: string; skipReason?: string }> {
   const renderer = page.locator('.render-surface');
   await expect(renderer).toBeVisible();
-  if (requestedBackend === 'webgl2' || requestedBackend === 'webgpu') {
-    await page.waitForFunction((requested) => {
-      const element = document.querySelector('.render-surface');
-      const actual = element?.getAttribute('data-renderer');
-      const diagnostic = document.querySelector('[data-testid="renderer-diagnostic"]')?.textContent ?? '';
-      return actual === requested || (actual === 'static' && diagnostic.includes('Skipped ' + requested));
-    }, requestedBackend);
-  } else {
+  if (!OPTIONAL_BACKENDS.includes(requestedBackend)) {
     await page.waitForTimeout(120);
+    return { actualBackend: await renderer.getAttribute('data-renderer') ?? 'unknown' };
   }
+
+  await page.waitForFunction((requested) => {
+    const element = document.querySelector('.render-surface');
+    const actual = element?.getAttribute('data-renderer');
+    if (!actual || actual === 'pending') {
+      return false;
+    }
+    const diagnostic = document.querySelector('[data-testid="renderer-diagnostic"]')?.textContent ?? '';
+    return actual === requested || diagnostic.trim().length > 0;
+  }, requestedBackend);
+
   const actualBackend = await renderer.getAttribute('data-renderer') ?? 'unknown';
-  if ((requestedBackend === 'webgl2' || requestedBackend === 'webgpu') && actualBackend === 'static') {
-    const diagnostic = await page.getByTestId('renderer-diagnostic').textContent();
-    return { actualBackend, skipReason: diagnostic?.trim() || 'Optional renderer fell back to static.' };
+  if (actualBackend === requestedBackend) {
+    return { actualBackend };
   }
-  return { actualBackend };
+
+  const diagnostic = (await page.getByTestId('renderer-diagnostic').textContent())?.trim() ?? '';
+  expect(
+    diagnostic.length > 0,
+    `${requestedBackend} was replaced by ${actualBackend} without a diagnostic`,
+  ).toBe(true);
+  return { actualBackend, skipReason: diagnostic };
 }
 
 test.beforeAll(async () => {
