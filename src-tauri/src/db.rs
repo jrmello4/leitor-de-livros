@@ -3781,7 +3781,9 @@ mod listing {
         let root = temporary_root("listing-summary");
         let database = LibraryDb::open(root.clone()).expect("open");
         seed(&database, "publication-1", "cbz", 4);
-        database.save_progress("publication-1", 2).expect("progress");
+        database
+            .save_progress("publication-1", 2)
+            .expect("progress");
 
         let listed = database.list_publications().expect("list");
         let publication = listed.first().expect("one publication");
