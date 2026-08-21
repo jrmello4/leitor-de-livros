@@ -139,7 +139,9 @@ async function waitFor(predicate, description, options, dependencies) {
   const { intervalMs = 250, timeoutMs = 180_000, stage = 'execution' } = options ?? {};
   const started = dependencies.now();
   let lastError;
-  while (dependencies.now() - started < timeoutMs) {
+  // Always attempt the predicate at least once: a caller-supplied deadline must
+  // never skip the work it is timing, even when the budget expires immediately.
+  do {
     try {
       const value = await predicate();
       if (value) {
@@ -148,8 +150,11 @@ async function waitFor(predicate, description, options, dependencies) {
     } catch (error) {
       lastError = error;
     }
+    if (dependencies.now() - started >= timeoutMs) {
+      break;
+    }
     await dependencies.delay(intervalMs);
-  }
+  } while (true);
   throw lifecycleError(stage, description + (lastError ? ': ' + errorMessage(lastError) : '.'), lastError);
 }
 
