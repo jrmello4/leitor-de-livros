@@ -26,13 +26,15 @@ jobs:
   windows:
     name: Windows x64 installer
     runs-on: windows-latest
-    timeout-minutes: 60
+    # The release builds the installer twice: once for the smoke gate and once
+    # for the artifact it publishes.
+    timeout-minutes: 120
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -44,6 +46,14 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+
+      # Every Rust job compiles the same tree from scratch and two of them also
+      # build the installer, so caching the registry and target directory is the
+      # difference between a twenty minute job and a short one.
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
 
       # The installer is named by the versions in the manifests, so a tag that
       # disagrees with them would publish an asset that does not match its
@@ -80,7 +90,7 @@ jobs:
 
       - name: Upload installer smoke evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-installer-smoke-evidence
           path: artifacts/installer-smoke/**
@@ -102,7 +112,7 @@ jobs:
           cat "artifacts/release/$name.sha256"
 
       - name: Publish the release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Tactile Reader ${{ steps.version.outputs.version }}

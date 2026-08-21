@@ -139,7 +139,9 @@ async function waitFor(predicate, description, options, dependencies) {
   const { intervalMs = 250, timeoutMs = 180_000, stage = 'execution' } = options ?? {};
   const started = dependencies.now();
   let lastError;
-  while (dependencies.now() - started < timeoutMs) {
+  // Always attempt the predicate at least once: a caller-supplied deadline must
+  // never skip the work it is timing, even when the budget expires immediately.
+  do {
     try {
       const value = await predicate();
       if (value) {
@@ -148,8 +150,11 @@ async function waitFor(predicate, description, options, dependencies) {
     } catch (error) {
       lastError = error;
     }
+    if (dependencies.now() - started >= timeoutMs) {
+      break;
+    }
     await dependencies.delay(intervalMs);
-  }
+  } while (true);
   throw lifecycleError(stage, description + (lastError ? ': ' + errorMessage(lastError) : '.'), lastError);
 }
 
@@ -255,7 +260,25 @@ async function closeSession({ browser, child, stdout, stderr }, dependencies) {
   }
 }
 
-async function waitForCdpConnection(port, label, timeoutMs, dependencies) {
+// A launched application that never opens its debugging port leaves nothing
+// behind but a timeout: the streams can be empty because it wrote nothing, or
+// because it was never alive to write. Reporting whether the process is still
+// running, and how it left if it is not, is the difference between a diagnosis
+// and a guess.
+export function describeChildState(child) {
+  if (!child) {
+    return 'process was never spawned';
+  }
+  if (child.signalCode) {
+    return 'process was killed by ' + child.signalCode;
+  }
+  if (child.exitCode !== null && child.exitCode !== undefined) {
+    return 'process had already exited with code ' + child.exitCode;
+  }
+  return 'process was still running as pid ' + (child.pid ?? 'unknown');
+}
+
+async function waitForCdpConnection(port, label, timeoutMs, dependencies, child) {
   try {
     await waitFor(async () => {
       try {
@@ -265,7 +288,7 @@ async function waitForCdpConnection(port, label, timeoutMs, dependencies) {
       }
     }, label + ' CDP endpoint did not answer', { timeoutMs }, dependencies);
   } catch (error) {
-    throw lifecycleError('connection', 'CDP endpoint timed out', error);
+    throw lifecycleError('connection', 'CDP endpoint timed out on port ' + port + ' (' + describeChildState(child) + ')', error);
   }
 }
 
@@ -306,7 +329,7 @@ async function launchApp(options, dependencies) {
     });
     child.stdout?.pipe(stdout);
     child.stderr?.pipe(stderr);
-    await waitForCdpConnection(port, label, timeoutMs, dependencies);
+    await waitForCdpConnection(port, label, timeoutMs, dependencies, child);
     browser = await dependencies.chromium.connectOverCDP('http://127.0.0.1:' + port);
     const page = await waitFor(async () => {
       const pages = browser.contexts().flatMap((context) => context.pages());

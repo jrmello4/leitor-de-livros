@@ -33,10 +33,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -65,13 +65,16 @@ jobs:
   native:
     name: Rust and Tauri Windows verification
     runs-on: windows-latest
-    timeout-minutes: 30
+    # The installer build alone used 27m35s of a 30 minute budget before the
+    # release profile was tuned, so this was already one slow runner away from
+    # failing on time rather than on merit.
+    timeout-minutes: 60
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -84,6 +87,14 @@ jobs:
         with:
           toolchain: stable
           components: rustfmt, clippy
+
+      # Every Rust job compiles the same tree from scratch and two of them also
+      # build the installer, so caching the registry and target directory is the
+      # difference between a twenty minute job and a short one.
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
 
       - name: Check Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
@@ -98,7 +109,7 @@ jobs:
         run: npm run tauri build
 
       - name: Upload Windows installer artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tactile-reader-windows-installer
           path: src-tauri/target/release/bundle/**
@@ -111,10 +122,10 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -130,7 +141,7 @@ jobs:
 
       - name: Upload visual evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tactile-reader-visual-evidence
           path: |
@@ -142,13 +153,14 @@ jobs:
   installer-smoke:
     name: Windows installer smoke evidence
     runs-on: windows-latest
-    timeout-minutes: 45
+    # This job builds its own installer before it can drive one.
+    timeout-minutes: 60
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -161,6 +173,14 @@ jobs:
         with:
           toolchain: stable
 
+      # Every Rust job compiles the same tree from scratch and two of them also
+      # build the installer, so caching the registry and target directory is the
+      # difference between a twenty minute job and a short one.
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
       - name: Install Playwright Chromium
         run: npx playwright install chromium
 
@@ -171,7 +191,7 @@ jobs:
 
       - name: Upload installer smoke evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tactile-reader-installer-smoke-evidence
           path: |
@@ -187,10 +207,10 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -200,6 +220,14 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+
+      # Every Rust job compiles the same tree from scratch and two of them also
+      # build the installer, so caching the registry and target directory is the
+      # difference between a twenty minute job and a short one.
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
 
       - name: Install Playwright Chromium
         run: npx playwright install chromium
@@ -216,7 +244,7 @@ jobs:
 
       - name: Upload performance evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tactile-reader-performance-${{ inputs.performance_gpu_class }}
           path: |
