@@ -3,7 +3,7 @@ import { createDemoPublication } from '../data/demo';
 import { canRunActionWhileSettingsOpen, InputMap } from '../domain/input';
 import { createPageSelectionCoordinator, preparePageSelection, selectLatestPage, warmWorkingSet, type PageSelectionRequest } from '../domain/pageSelection';
 import { activeWorkingSetPageIds, calculateProgress, movePage, clamp } from '../domain/reader';
-import { nextBookmark, type LibrarySort } from '../domain/library';
+import { nextBookmark, type FormatFilter, type LibrarySort, type ReadingStatusFilter } from '../domain/library';
 import {
   createDefaultProfile,
   createProfile,
@@ -23,6 +23,7 @@ import {
 import { defaultReaderState } from '../domain/readerState';
 import type { ActionName, Bookmark, CacheInfo, PageDescriptor, Publication, ReaderState, ReadingProfile } from '../domain/types';
 import { actionLabel, t } from '../i18n/catalog';
+import '../i18n/register-locales';
 import { importFiles } from '../services/importers';
 import {
   chooseNativeFiles,
@@ -141,6 +142,8 @@ export function App() {
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<LibrarySort>('recent');
   const [favoriteOnly, setFavoriteOnly] = useState(false);
+  const [formatFilter, setFormatFilter] = useState<FormatFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<ReadingStatusFilter>('all');
   const [bookmarks, setBookmarks] = useState<Record<string, Bookmark[]>>({});
   const [readerStates, setReaderStates] = useState<Record<string, ReaderState>>({});
   const [cacheInfo, setCacheInfo] = useState<CacheInfo>(DEFAULT_CACHE_INFO);
@@ -1290,6 +1293,10 @@ export function App() {
             onResetCover={resetPublicationCover}
             favoriteOnly={favoriteOnly}
             onFavoriteOnlyChange={setFavoriteOnly}
+            formatFilter={formatFilter}
+            onFormatFilterChange={setFormatFilter}
+            statusFilter={statusFilter}
+            onStatusFilterChange={setStatusFilter}
             settingsTriggerRef={settingsTriggerRef}
           />
         )}

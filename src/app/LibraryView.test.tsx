@@ -2,7 +2,7 @@ import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Publication } from '../domain/types';
-import type { LibrarySort } from '../domain/library';
+import type { FormatFilter, LibrarySort, ReadingStatusFilter } from '../domain/library';
 import { LibraryView } from './LibraryView';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -55,6 +55,10 @@ function libraryProps(overrides: Partial<LibraryProps> = {}): LibraryProps {
     onResetCover: vi.fn(),
     favoriteOnly: false,
     onFavoriteOnlyChange: vi.fn(),
+    formatFilter: 'all',
+    onFormatFilterChange: vi.fn(),
+    statusFilter: 'all',
+    onStatusFilterChange: vi.fn(),
     settingsTriggerRef: { current: null },
     ...overrides,
   };
@@ -69,7 +73,23 @@ function renderLibrary(host: HTMLDivElement, publications: Publication[], overri
 function ControlledLibrary({ publications }: { publications: Publication[] }) {
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<LibrarySort>('recent');
-  return <LibraryView {...libraryProps({ publications, query, sort, onQueryChange: setQuery, onSortChange: setSort })} />;
+  const [formatFilter, setFormatFilter] = useState<FormatFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<ReadingStatusFilter>('all');
+  return (
+    <LibraryView
+      {...libraryProps({
+        publications,
+        query,
+        sort,
+        formatFilter,
+        statusFilter,
+        onQueryChange: setQuery,
+        onSortChange: setSort,
+        onFormatFilterChange: setFormatFilter,
+        onStatusFilterChange: setStatusFilter,
+      })}
+    />
+  );
 }
 
 function setInputValue(input: HTMLInputElement, value: string) {
@@ -244,6 +264,42 @@ describe('LibraryView favorites and safe deletion', () => {
     act(() => filter?.click());
 
     expect(onFavoriteOnlyChange).toHaveBeenCalledWith(true);
+  });
+
+  it('filters the shelf by format', () => {
+    const cbzBook = publication('cbz-book', 'CBZ Book', false, { format: 'cbz' });
+    const pdfBook = publication('pdf-book', 'PDF Book', false, { format: 'pdf' });
+    const onFormatFilterChange = vi.fn();
+    root = renderLibrary(host, [cbzBook, pdfBook], { onFormatFilterChange });
+
+    const formatSelect = host.querySelector<HTMLSelectElement>('select[aria-label="Format"]');
+    expect(formatSelect).not.toBeNull();
+    act(() => {
+      if (formatSelect) {
+        formatSelect.value = 'cbz';
+        formatSelect.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+
+    expect(onFormatFilterChange).toHaveBeenCalledWith('cbz');
+  });
+
+  it('filters the shelf by reading status', () => {
+    const unreadBook = publication('unread-book', 'Unread Book', false, { progress: 0 });
+    const completedBook = publication('completed-book', 'Completed Book', false, { progress: 1 });
+    const onStatusFilterChange = vi.fn();
+    root = renderLibrary(host, [unreadBook, completedBook], { onStatusFilterChange });
+
+    const statusSelect = host.querySelector<HTMLSelectElement>('select[aria-label="Status"]');
+    expect(statusSelect).not.toBeNull();
+    act(() => {
+      if (statusSelect) {
+        statusSelect.value = 'completed';
+        statusSelect.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+
+    expect(onStatusFilterChange).toHaveBeenCalledWith('completed');
   });
 
   it('renders a custom cover and exposes replacement/reset controls', () => {

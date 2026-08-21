@@ -296,6 +296,16 @@ const ENGLISH_CATALOG: MessageCatalog = {
   'render.ready': 'Reading ready.',
   'render.fallback': 'Compatibility mode is active. Reading remains available.',
   'render.recovering': 'Preparing reading. Content remains available.',
+  'profile.language': 'Interface language',
+  'profile.languageEn': 'English',
+  'profile.languagePtBR': 'Português (Brasil)',
+  'library.filterFormat': 'Format',
+  'library.filterFormatAll': 'All formats',
+  'library.filterStatus': 'Status',
+  'library.filterStatusAll': 'All',
+  'library.filterStatusUnread': 'Unread',
+  'library.filterStatusReading': 'Reading',
+  'library.filterStatusCompleted': 'Completed',
 };
 
 const catalogues = new Map<Locale, MessageCatalog>([['en', ENGLISH_CATALOG]]);
@@ -328,4 +338,11 @@ export function t(key: string, params: MessageParams = {}): string {
 
 export function actionLabel(action: string): string {
   return t(`input.${action}`);
+}
+
+export function availableLocales(): { code: Locale; label: string }[] {
+  return [
+    { code: 'en', label: 'English' },
+    { code: 'pt-BR', label: 'Português (Brasil)' },
+  ];
 }

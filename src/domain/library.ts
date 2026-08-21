@@ -1,6 +1,35 @@
-import type { Bookmark, PageDescriptor, Publication } from './types';
+import type { Bookmark, PageDescriptor, Publication, PublicationFormat } from './types';
 
 export type LibrarySort = 'recent' | 'title' | 'added';
+export type FormatFilter = 'all' | PublicationFormat;
+export type ReadingStatus = 'unread' | 'reading' | 'completed';
+export type ReadingStatusFilter = 'all' | ReadingStatus;
+
+export function readingStatus(publication: Publication): ReadingStatus {
+  if (publication.progress >= 1) {
+    return 'completed';
+  }
+  if (publication.progress > 0) {
+    return 'reading';
+  }
+  return 'unread';
+}
+
+export function filterPublications(
+  publications: Publication[],
+  formatFilter: FormatFilter,
+  statusFilter: ReadingStatusFilter,
+): Publication[] {
+  return publications.filter((publication) => {
+    if (formatFilter !== 'all' && publication.format !== formatFilter) {
+      return false;
+    }
+    if (statusFilter !== 'all' && readingStatus(publication) !== statusFilter) {
+      return false;
+    }
+    return true;
+  });
+}
 
 export function safeSourceName(value: string): string {
   return value.split(/[\\/]/).pop() ?? value;

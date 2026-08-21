@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { mostRecentPublication, safeSourceName, visiblePublications as getVisiblePublications, type LibrarySort } from '../domain/library';
+import { filterPublications, mostRecentPublication, safeSourceName, visiblePublications as getVisiblePublications, type FormatFilter, type LibrarySort, type ReadingStatusFilter } from '../domain/library';
 import { publicationCoverSrc } from '../domain/covers';
 import type { Publication } from '../domain/types';
 import { t } from '../i18n/catalog';
@@ -26,6 +26,10 @@ interface LibraryViewProps {
   onResetCover: (publication: Publication) => void | Promise<void>;
   favoriteOnly: boolean;
   onFavoriteOnlyChange: (favoriteOnly: boolean) => void;
+  formatFilter: FormatFilter;
+  onFormatFilterChange: (filter: FormatFilter) => void;
+  statusFilter: ReadingStatusFilter;
+  onStatusFilterChange: (filter: ReadingStatusFilter) => void;
   settingsTriggerRef: RefObject<HTMLButtonElement | null>;
 }
 
@@ -55,6 +59,10 @@ export function LibraryView({
   onResetCover,
   favoriteOnly,
   onFavoriteOnlyChange,
+  formatFilter,
+  onFormatFilterChange,
+  statusFilter,
+  onStatusFilterChange,
   settingsTriggerRef,
 }: LibraryViewProps) {
   const [pendingDelete, setPendingDelete] = useState<Publication | null>(null);
@@ -78,9 +86,10 @@ export function LibraryView({
     }
   };
   const visiblePublications = useMemo(() => {
-    const visible = getVisiblePublications(publications, query, sort);
+    const filtered = filterPublications(publications, formatFilter, statusFilter);
+    const visible = getVisiblePublications(filtered, query, sort);
     return favoriteOnly ? visible.filter((publication) => publication.isFavorite) : visible;
-  }, [favoriteOnly, publications, query, sort]);
+  }, [favoriteOnly, formatFilter, publications, query, sort, statusFilter]);
   const continuePublication = useMemo(() => mostRecentPublication(publications), [publications]);
 
   useLayoutEffect(() => {
@@ -263,6 +272,35 @@ export function LibraryView({
               <option value="recent">{t('library.sortRecent')}</option>
               <option value="title">{t('library.sortTitle')}</option>
               <option value="added">{t('library.sortAdded')}</option>
+            </select>
+          </label>
+          <label className="sort-field format-filter-field">
+            <span>{t('library.filterFormat')}</span>
+            <select
+              className="library-focus-control"
+              aria-label={t('library.filterFormat')}
+              value={formatFilter}
+              onChange={(event) => onFormatFilterChange(event.target.value as FormatFilter)}
+            >
+              <option value="all">{t('library.filterFormatAll')}</option>
+              <option value="cbz">CBZ</option>
+              <option value="cbr">CBR</option>
+              <option value="pdf">PDF</option>
+              <option value="images">Images</option>
+            </select>
+          </label>
+          <label className="sort-field status-filter-field">
+            <span>{t('library.filterStatus')}</span>
+            <select
+              className="library-focus-control"
+              aria-label={t('library.filterStatus')}
+              value={statusFilter}
+              onChange={(event) => onStatusFilterChange(event.target.value as ReadingStatusFilter)}
+            >
+              <option value="all">{t('library.filterStatusAll')}</option>
+              <option value="unread">{t('library.filterStatusUnread')}</option>
+              <option value="reading">{t('library.filterStatusReading')}</option>
+              <option value="completed">{t('library.filterStatusCompleted')}</option>
             </select>
           </label>
           <label className="favorite-filter" htmlFor="favorite-only">

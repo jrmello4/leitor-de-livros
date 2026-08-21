@@ -153,4 +153,34 @@ describe('ProfilePanel focus management', () => {
     expect(onExportProfiles).toHaveBeenCalledTimes(1);
     expect(host.textContent).toContain('Previewing unsaved changes');
   });
+
+  it('renders interface language selector and allows changing language', () => {
+    act(() => {
+      root.render(
+        <ProfilePanel
+          profile={loadProfile()}
+          capturingAction={null}
+          onChange={vi.fn()}
+          onStartCapture={vi.fn()}
+          onReset={vi.fn()}
+          onClose={vi.fn()}
+          triggerRef={{ current: null }}
+        />,
+      );
+    });
+
+    const langSelect = host.querySelector<HTMLSelectElement>('#interface-language');
+    expect(langSelect).not.toBeNull();
+    expect(langSelect?.textContent).toContain('English');
+    expect(langSelect?.textContent).toContain('Português (Brasil)');
+
+    act(() => {
+      if (langSelect) {
+        langSelect.value = 'pt-BR';
+        langSelect.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+
+    expect(langSelect?.value).toBe('pt-BR');
+  });
 });

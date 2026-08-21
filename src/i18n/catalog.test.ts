@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { getLocale, hasTranslation, registerLocale, setLocale, t } from './catalog';
+import { availableLocales, getLocale, hasTranslation, registerLocale, setLocale, t } from './catalog';
+import { PT_BR_CATALOG } from './pt-BR';
 
 describe('interface message catalogue', () => {
   afterEach(() => setLocale('en'));
@@ -23,5 +24,22 @@ describe('interface message catalogue', () => {
     expect(getLocale()).toBe('test');
     expect(t('app.libraryReady')).toBe('Shelf ready in test locale.');
     expect(t('library.pages', { count: 2 })).toBe('2 pages');
+  });
+
+  it('provides available locales list including pt-BR', () => {
+    const locales = availableLocales();
+    expect(locales.map((l) => l.code)).toEqual(['en', 'pt-BR']);
+  });
+
+  it('translates messages and formats plurals in Portuguese (pt-BR)', () => {
+    registerLocale('pt-BR', PT_BR_CATALOG);
+    setLocale('pt-BR');
+    expect(getLocale()).toBe('pt-BR');
+    expect(t('app.libraryReady')).toBe('Biblioteca pronta.');
+    expect(t('library.pages', { count: 1 })).toBe('1 página');
+    expect(t('library.pages', { count: 5 })).toBe('5 páginas');
+    expect(t('reader.pageOf', { page: 3, count: 10 })).toBe('Página 3 de 10.');
+    expect(t('library.filterFormat')).toBe('Formato');
+    expect(t('library.filterStatus')).toBe('Status');
   });
 });

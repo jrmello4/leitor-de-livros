@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import type { ActionName, CacheInfo, ReadingProfile } from '../domain/types';
 import { bindingLabel } from '../domain/input';
-import { actionLabel, t } from '../i18n/catalog';
+import { actionLabel, availableLocales, getLocale, setLocale, t } from '../i18n/catalog';
 import type { NamedReadingProfile } from '../domain/profiles';
 
 interface ProfilePanelProps {
@@ -93,6 +93,7 @@ export function ProfilePanel({
   const panelRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const [nameDraft, setNameDraft] = useState(profile.name);
+  const [currentLocale, setCurrentLocale] = useState(getLocale);
   const [profileError, setProfileError] = useState<string | undefined>();
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -309,6 +310,21 @@ export function ProfilePanel({
             <select id="contrast-mode" value={profile.contrast} onChange={(event) => onChange({ contrast: event.target.value as ReadingProfile['contrast'] })}>
               <option value="standard">{t('profile.standard')}</option>
               <option value="high">{t('profile.highContrast')}</option>
+            </select>
+          </label>
+          <label className="setting-row" htmlFor="interface-language">
+            <span>{t('profile.language')}</span>
+            <select
+              id="interface-language"
+              value={currentLocale}
+              onChange={(event) => {
+                setLocale(event.target.value);
+                setCurrentLocale(event.target.value);
+              }}
+            >
+              {availableLocales().map((locale) => (
+                <option key={locale.code} value={locale.code}>{locale.label}</option>
+              ))}
             </select>
           </label>
         </section>

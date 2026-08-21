@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mostRecentPublication, nextBookmark, sortBookmarks, visiblePublications } from './library';
+import { filterPublications, mostRecentPublication, nextBookmark, readingStatus, sortBookmarks, visiblePublications } from './library';
 import type { Bookmark, Publication } from './types';
 
 const publications: Publication[] = [
@@ -125,6 +125,30 @@ describe('library view contracts', () => {
       .toEqual(['older-added', 'a', 'b']);
     expect(visiblePublications(tied, '', 'added').map((publication) => publication.id))
       .toEqual(['a', 'b', 'older-added']);
+  });
+
+  it('determines reading status from progress value', () => {
+    expect(readingStatus({ ...publications[0], progress: 0 })).toBe('unread');
+    expect(readingStatus({ ...publications[0], progress: 0.5 })).toBe('reading');
+    expect(readingStatus({ ...publications[0], progress: 1.0 })).toBe('completed');
+  });
+
+  it('filters publications by format and reading status', () => {
+    const mixedPublications: Publication[] = [
+      { ...publications[0], id: 'unread-cbz', format: 'cbz', progress: 0 },
+      { ...publications[0], id: 'reading-cbz', format: 'cbz', progress: 0.5 },
+      { ...publications[0], id: 'completed-pdf', format: 'pdf', progress: 1.0 },
+      { ...publications[0], id: 'unread-cbr', format: 'cbr', progress: 0 },
+    ];
+
+    expect(filterPublications(mixedPublications, 'all', 'all')).toHaveLength(4);
+    expect(filterPublications(mixedPublications, 'cbz', 'all').map((p) => p.id)).toEqual(['unread-cbz', 'reading-cbz']);
+    expect(filterPublications(mixedPublications, 'pdf', 'all').map((p) => p.id)).toEqual(['completed-pdf']);
+    expect(filterPublications(mixedPublications, 'all', 'unread').map((p) => p.id)).toEqual(['unread-cbz', 'unread-cbr']);
+    expect(filterPublications(mixedPublications, 'all', 'reading').map((p) => p.id)).toEqual(['reading-cbz']);
+    expect(filterPublications(mixedPublications, 'all', 'completed').map((p) => p.id)).toEqual(['completed-pdf']);
+    expect(filterPublications(mixedPublications, 'cbz', 'unread').map((p) => p.id)).toEqual(['unread-cbz']);
+    expect(filterPublications(mixedPublications, 'pdf', 'unread')).toEqual([]);
   });
 });
 
