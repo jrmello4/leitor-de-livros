@@ -19,6 +19,12 @@
   --line-dark: rgba(16, 33, 40, 0.16);
   --display: Georgia, "Times New Roman", serif;
   --utility: "Arial Narrow", "Segoe UI", sans-serif;
+  /* Type floor. The reader chrome used to sit at 7-9px, which is unreadable
+     beside the page it annotates. `--text-nano` is for badge glyphs that carry
+     a number or a single letter; everything a reader has to actually read
+     starts at `--text-micro`. */
+  --text-nano: 10px;
+  --text-micro: 11px;
 }
 
 * {
@@ -179,7 +185,7 @@ img {
   margin-top: 4px;
   color: var(--mist);
   font-family: var(--utility);
-  font-size: 9px;
+  font-size: var(--text-micro);
   letter-spacing: 0.15em;
   text-transform: uppercase;
 }
@@ -231,7 +237,7 @@ img {
   margin: 0;
   color: var(--mist);
   font-family: var(--utility);
-  font-size: 9px;
+  font-size: var(--text-micro);
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -265,7 +271,7 @@ img {
 .section-heading strong,
 .card-footer,
 .reader-counter,
-.stage-caption,
+.stage-meta,
 .stage-note,
 .reader-announcement,
 .settings-label,
@@ -334,16 +340,19 @@ img {
 .eyebrow {
   margin: 0;
   color: var(--copper-bright);
-  font-size: 9px;
+  font-size: var(--text-micro);
   font-weight: 800;
 }
 
+/* The masthead used to run past the fold on a 1440x960 window, so opening the
+   app showed a statement and no books. It keeps its weight but now ends above
+   the shelf, which is the thing a reader came for. */
 .library-intro {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 270px;
-  gap: 80px;
+  gap: 64px;
   align-items: end;
-  padding: clamp(80px, 12vh, 160px) 7.5% 94px;
+  padding: clamp(36px, 5vh, 68px) 7.5% 48px;
 }
 
 .intro-copy {
@@ -351,13 +360,13 @@ img {
 }
 
 .intro-copy h1 {
-  margin: 20px 0 26px;
+  margin: 14px 0 20px;
   color: var(--paper);
   font-family: var(--display);
-  font-size: clamp(3.5rem, 7vw, 7.8rem);
+  font-size: clamp(2.75rem, 4.6vw, 5.25rem);
   font-weight: 500;
-  letter-spacing: -0.07em;
-  line-height: 0.88;
+  letter-spacing: -0.055em;
+  line-height: 0.92;
 }
 
 .intro-copy h1 em {
@@ -376,7 +385,7 @@ img {
 .intro-actions {
   flex-wrap: wrap;
   gap: 18px;
-  margin-top: 34px;
+  margin-top: 24px;
 }
 
 .primary-button {
@@ -439,7 +448,7 @@ img {
 
 .shortcut-note {
   color: rgba(168, 185, 178, 0.68);
-  font-size: 9px;
+  font-size: var(--text-micro);
   line-height: 1.6;
 }
 
@@ -451,7 +460,7 @@ img {
 .aside-index,
 .aside-caption {
   color: var(--mist);
-  font-size: 9px;
+  font-size: var(--text-micro);
 }
 
 .intro-aside p {
@@ -529,7 +538,7 @@ img {
   gap: 12px;
   color: var(--mist);
   font-family: var(--utility);
-  font-size: 9px;
+  font-size: var(--text-micro);
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -551,7 +560,7 @@ img {
   min-height: 38px;
   color: var(--mist);
   font-family: var(--utility);
-  font-size: 9px;
+  font-size: var(--text-micro);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -631,7 +640,7 @@ img {
   background: rgba(12, 23, 29, 0.72);
   color: var(--paper);
   font-family: var(--utility);
-  font-size: 8px;
+  font-size: var(--text-micro);
   letter-spacing: 0.16em;
 }
 
@@ -708,7 +717,7 @@ img {
   gap: 8px;
   margin-top: 9px;
   color: rgba(168, 185, 178, 0.7);
-  font-size: 8px;
+  font-size: var(--text-micro);
 }
 
 .delete-link {
@@ -716,7 +725,7 @@ img {
   padding: 0;
   color: rgba(240, 175, 145, 0.8);
   font-family: var(--utility);
-  font-size: 8px;
+  font-size: var(--text-micro);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -801,13 +810,17 @@ img {
   padding-top: 16px;
   border-top: 1px solid var(--line);
   color: rgba(168, 185, 178, 0.56);
-  font-size: 8px;
+  font-size: var(--text-micro);
 }
 
 .reader-view {
   position: relative;
   z-index: 1;
   display: grid;
+  /* The single column is capped at the viewport. Without `minmax(0, 1fr)` the
+     column sizes to max-content, so one long unwrapped status line in the
+     stage widens the whole reader past the window. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: 72px 1fr 82px;
   height: 100vh;
   min-height: 100vh;
@@ -987,11 +1000,19 @@ img {
 }
 
 .reading-stage {
+  /* Two rows: the paper takes whatever height is left, the rail below it is
+     the single owner of the bottom edge. `--stage-gap` is also the room the
+     corner hint hangs into, so the hint and the rail cannot meet. */
+  --stage-gap: 46px;
+  --stage-rail-height: 20px;
   position: relative;
   display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
-  place-items: center;
-  padding: 58px 90px 54px;
+  align-content: center;
+  justify-items: center;
+  row-gap: var(--stage-gap);
+  padding: 28px 56px 18px;
   cursor: grab;
   touch-action: none;
   user-select: none;
@@ -1001,19 +1022,30 @@ img {
   cursor: grabbing;
 }
 
-.stage-caption {
-  position: absolute;
-  top: 30px;
-  color: rgba(168, 185, 178, 0.6);
-  font-size: 8px;
+.stage-rail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr);
+  align-items: center;
+  column-gap: 24px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--stage-rail-height);
 }
 
-.stage-caption--left {
-  left: 34px;
+.stage-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-self: start;
+  color: rgba(190, 205, 198, 0.86);
+  font-size: var(--text-micro);
 }
 
-.stage-caption--right {
-  right: 34px;
+.stage-meta__divider {
+  width: 12px;
+  height: 1px;
+  background: rgba(190, 205, 198, 0.4);
 }
 
 .paper-spread {
@@ -1029,12 +1061,20 @@ img {
   perspective: 1600px;
 }
 
+/* Everything the stage spends on chrome before the paper gets its height:
+   top bar, stage padding, the corner-hint gap, the rail, and the controls. A
+   portrait page in a landscape window is height-bound, so every pixel taken
+   back here is a visibly larger page. */
+.reader-view {
+  --stage-chrome: 256px;
+}
+
 .paper-spread--single {
-  width: min(900px, 72vw, calc((100vh - 266px) * var(--spread-aspect, 0.705)));
+  width: min(980px, 84vw, calc((100vh - var(--stage-chrome)) * var(--spread-aspect, 0.705)));
 }
 
 .paper-spread--spread {
-  width: min(1200px, 72vw, calc((100vh - 266px) * var(--spread-aspect, 1.41)));
+  width: min(1320px, 92vw, calc((100vh - var(--stage-chrome)) * var(--spread-aspect, 1.41)));
 }
 
 .render-surface,
@@ -1104,7 +1144,7 @@ img {
   background: rgba(12, 23, 29, 0.88);
   box-shadow: 0 8px 22px rgba(5, 12, 15, 0.3);
   font-family: var(--utility);
-  font-size: 8px;
+  font-size: var(--text-micro);
   letter-spacing: 0.11em;
   line-height: 1.4;
   pointer-events: auto;
@@ -1113,20 +1153,20 @@ img {
 
 .flow-overlay-legend > span {
   color: var(--copper-bright);
-  font-size: 7px;
+  font-size: var(--text-nano);
   font-weight: 800;
 }
 
 .flow-overlay-legend strong {
   color: var(--sage);
-  font-size: 8px;
+  font-size: var(--text-micro);
   font-weight: 700;
 }
 
 .flow-overlay-legend p {
   margin: 0;
   color: var(--mist);
-  font-size: 7px;
+  font-size: var(--text-nano);
   letter-spacing: 0.06em;
 }
 
@@ -1138,7 +1178,7 @@ img {
   color: var(--copper-bright);
   background: transparent;
   font-family: var(--utility);
-  font-size: 7px;
+  font-size: var(--text-nano);
   font-weight: 800;
   letter-spacing: 0.1em;
   line-height: 1.5;
@@ -1187,7 +1227,7 @@ img {
   color: var(--night);
   background: var(--copper-bright);
   font-family: var(--utility);
-  font-size: 8px;
+  font-size: var(--text-micro);
   font-weight: 800;
   letter-spacing: 0.1em;
   line-height: 1;
@@ -1236,7 +1276,7 @@ img {
   bottom: 13px;
   color: rgba(16, 33, 40, 0.58);
   font-family: var(--utility);
-  font-size: 9px;
+  font-size: var(--text-micro);
   letter-spacing: 0.14em;
 }
 
@@ -1267,6 +1307,19 @@ html:fullscreen .paper-spread--spread {
   width: min(94vw, calc((100dvh - 74px) * var(--spread-aspect, 1.41)));
 }
 
+/* The fullscreen top bar is a 44px strip with no room to spare beside the
+   tools, so the status echo stays in the accessibility tree and leaves the
+   layout. The live region keeps announcing it either way. */
+html:fullscreen .reader-announcement {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 html:fullscreen .reader-controls {
   position: absolute;
   z-index: 9;
@@ -1293,16 +1346,18 @@ html:fullscreen .reader-controls:focus-within {
 }
 
 .corner-hint {
+  /* Hangs into the stage row gap so it stays attached to the corner it names
+     without reaching the rail underneath it. */
   position: absolute;
   right: var(--turn-hint-right, auto);
-  bottom: -44px;
+  bottom: -38px;
   left: var(--turn-hint-left, auto);
   display: flex;
   align-items: center;
   gap: 10px;
-  color: rgba(168, 185, 178, 0.65);
+  color: rgba(190, 205, 198, 0.82);
   font-family: var(--utility);
-  font-size: 8px;
+  font-size: var(--text-micro);
   letter-spacing: 0.16em;
 }
 
@@ -1320,26 +1375,44 @@ html:fullscreen .reader-controls:focus-within {
 }
 
 .stage-note {
-  position: absolute;
-  bottom: 22px;
-  left: 50%;
+  justify-self: center;
+  max-width: 100%;
   margin: 0;
-  color: rgba(168, 185, 178, 0.45);
-  font-size: 8px;
-  transform: translateX(-50%);
+  overflow: hidden;
+  color: rgba(190, 205, 198, 0.82);
+  font-size: var(--text-micro);
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .renderer-diagnostic-panel {
-  position: absolute;
-  right: 22px;
-  bottom: 18px;
-  z-index: 10;
-  max-width: min(360px, 42vw);
-  color: rgba(206, 220, 212, 0.66);
+  justify-self: end;
+  max-width: 100%;
+  color: rgba(206, 220, 212, 0.86);
   font-family: var(--utility);
-  font-size: 8px;
+  font-size: var(--text-micro);
   letter-spacing: 0.08em;
+  text-align: right;
   text-transform: uppercase;
+}
+
+/* Expanding the diagnostics must not push the paper around, so the body lifts
+   out of the rail and sits above it. */
+.renderer-diagnostic-panel[open] {
+  position: relative;
+}
+
+.renderer-diagnostic-panel[open] code {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 10;
+  width: max-content;
+  max-width: min(420px, 46vw);
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  background: rgba(12, 23, 29, 0.96);
 }
 
 .renderer-diagnostic-panel summary {
@@ -1441,7 +1514,7 @@ html:fullscreen .reader-controls:focus-within {
   gap: 8px;
   color: var(--mist);
   font-family: var(--utility);
-  font-size: 9px;
+  font-size: var(--text-micro);
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
@@ -1503,7 +1576,7 @@ html:fullscreen .reader-controls:focus-within {
   bottom: 3px;
   color: var(--night);
   font-family: var(--utility);
-  font-size: 8px;
+  font-size: var(--text-micro);
   letter-spacing: 0.1em;
 }
 
@@ -1533,36 +1606,46 @@ html:fullscreen .reader-controls:focus-within {
   background: var(--night-soft);
   color: var(--mist);
   font-family: var(--utility);
-  font-size: 9px;
+  font-size: var(--text-micro);
 }
 
 .zoom-controls {
   position: absolute;
   z-index: 7;
-  top: 22px;
-  right: 24px;
+  top: 20px;
+  right: 22px;
   display: grid;
   gap: 8px;
-  padding: 8px 10px;
-  border: 1px solid rgba(240, 230, 208, 0.14);
-  background: rgba(12, 23, 29, 0.82);
+  padding: 10px 12px;
+  border: 1px solid rgba(240, 230, 208, 0.2);
+  background: rgba(12, 23, 29, 0.9);
   font-family: var(--utility);
-  font-size: 8px;
+  font-size: var(--text-micro);
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  opacity: 0.72;
+  transition: opacity 200ms ease, border-color 200ms ease;
+}
+
+/* The zoom panel is a tool, not a headline: it recedes until the reader
+   reaches for it, so it stops competing with the page for attention. */
+.zoom-controls:hover,
+.zoom-controls:focus-within {
+  border-color: rgba(240, 230, 208, 0.34);
+  opacity: 1;
 }
 
 .zoom-controls__modes,
 .zoom-controls__manual {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 
 .zoom-controls button {
-  min-width: 26px;
-  min-height: 26px;
-  padding: 3px 6px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 4px 8px;
   border: 1px solid transparent;
   color: var(--mist);
   background: transparent;
@@ -1589,7 +1672,7 @@ html:fullscreen .reader-controls:focus-within {
 .zoom-controls__reset {
   justify-self: end;
   color: var(--copper-bright) !important;
-  font-size: 8px;
+  font-size: var(--text-micro);
 }
 
 .nav-button:disabled {
@@ -1605,7 +1688,7 @@ html:fullscreen .reader-controls:focus-within {
   width: min(420px, 40vw);
   color: rgba(168, 185, 178, 0.7);
   font-family: var(--utility);
-  font-size: 8px;
+  font-size: var(--text-micro);
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -1615,12 +1698,16 @@ html:fullscreen .reader-controls:focus-within {
 }
 
 .reader-announcement {
-  position: absolute;
-  right: 34px;
-  bottom: 92px;
-  margin: 0;
-  color: rgba(168, 185, 178, 0.45);
-  font-size: 8px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 42%;
+  margin: 0 24px;
+  overflow: hidden;
+  color: rgba(190, 205, 198, 0.8);
+  font-size: var(--text-micro);
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .profile-panel {
@@ -1673,7 +1760,7 @@ html:fullscreen .reader-controls:focus-within {
   display: block;
   margin-bottom: 18px;
   color: var(--copper-bright);
-  font-size: 9px;
+  font-size: var(--text-micro);
   font-weight: 800;
 }
 
@@ -1754,7 +1841,7 @@ html:fullscreen .reader-controls:focus-within {
 .profile-actions button {
   min-height: 32px;
   padding: 0 8px;
-  font-size: 9px;
+  font-size: var(--text-micro);
 }
 
 .profile-error {
@@ -1801,7 +1888,7 @@ html:fullscreen .reader-controls:focus-within {
 .settings-help {
   margin: -5px 0 16px;
   color: var(--mist);
-  font-size: 9px;
+  font-size: var(--text-micro);
   line-height: 1.6;
   text-transform: none;
 }
@@ -1813,7 +1900,7 @@ html:fullscreen .reader-controls:focus-within {
   gap: 12px;
   color: var(--mist);
   font-family: var(--utility);
-  font-size: 9px;
+  font-size: var(--text-micro);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -1856,7 +1943,7 @@ html:fullscreen .reader-controls:focus-within {
 .cache-clear-button {
   min-height: 34px;
   padding: 0 12px;
-  font-size: 9px;
+  font-size: var(--text-micro);
 }
 
 .binding-list {
@@ -1879,7 +1966,7 @@ html:fullscreen .reader-controls:focus-within {
   background: transparent;
   color: var(--copper-bright);
   font-family: var(--utility);
-  font-size: 9px;
+  font-size: var(--text-micro);
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
@@ -1896,12 +1983,12 @@ html:fullscreen .reader-controls:focus-within {
   padding: 16px 26px;
   border-top: 1px solid var(--line);
   color: rgba(168, 185, 178, 0.64);
-  font-size: 8px;
+  font-size: var(--text-micro);
 }
 
 .panel-footer .quiet-button {
   color: var(--copper-bright);
-  font-size: 9px;
+  font-size: var(--text-micro);
 }
 
 .sr-only {
@@ -2059,15 +2146,21 @@ html:fullscreen .reader-controls:focus-within {
   }
 
   .reading-stage {
-    padding: 54px 20px 60px;
+    --stage-gap: 40px;
+    padding: 22px 20px 16px;
   }
 
-  .stage-caption--left {
-    left: 16px;
+  /* A narrow rail cannot hold three columns without truncating all of them, so
+     the mode meta and the centred note fold away and the rail keeps the two
+     notes that report a problem. */
+  .stage-rail {
+    grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+    column-gap: 14px;
   }
 
-  .stage-caption--right {
-    right: 16px;
+  .stage-meta__divider,
+  .stage-meta span:last-child {
+    display: none;
   }
 
   .paper-spread {
@@ -2075,11 +2168,11 @@ html:fullscreen .reader-controls:focus-within {
   }
 
   .paper-spread--single {
-    width: min(90vw, calc((100vh - 254px) * var(--spread-aspect, 0.705)));
+    width: min(94vw, calc((100vh - 236px) * var(--spread-aspect, 0.705)));
   }
 
   .paper-spread--spread {
-    width: min(96vw, calc((100vh - 254px) * var(--spread-aspect, 1.41)));
+    width: min(98vw, calc((100vh - 236px) * var(--spread-aspect, 1.41)));
   }
 
   .paper-spread--spread .page-sheet {
@@ -2095,13 +2188,13 @@ html:fullscreen .reader-controls:focus-within {
   }
 
   .flow-overlay-legend strong {
-    font-size: 7px;
+    font-size: var(--text-nano);
   }
 
   .flow-panel-marker span {
     min-width: 21px;
     padding: 4px 5px 3px;
-    font-size: 7px;
+    font-size: var(--text-nano);
   }
 
   .stage-note,

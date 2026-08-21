@@ -362,6 +362,11 @@ export function ReaderView({
             <strong>{publication.title}</strong>
           </div>
         </div>
+        {/* The status echo lives in the top bar's free middle. Pinned above the
+            controls it landed on the stage rail and overprinted the renderer
+            diagnostics. The spoken announcement is the live region below. */}
+        <p className="reader-announcement" data-testid="reader-announcement" aria-hidden="true">{announcement}</p>
+
         <div className="reader-topbar-end">
           <span className="reader-counter" data-testid="reader-current-page" data-page-index={publication.currentPage}>{readerCounter}</span>
           <button
@@ -441,9 +446,6 @@ export function ReaderView({
         data-turn-progress={pageTurn.surfaceInput?.progress ?? 0}
         aria-label={t('reader.canvas')}
       >
-        <div className="stage-caption stage-caption--left">{profile.direction === 'rtl' ? t('reader.rightToLeft') : t('reader.leftToRight')}</div>
-        <div className="stage-caption stage-caption--right">{profile.mode === 'spread' ? t('reader.spreadView') : t('reader.singlePage')}</div>
-
         <ZoomControls
           mode={safeReaderState.zoomMode}
           scale={safeReaderState.zoomScale}
@@ -492,11 +494,25 @@ export function ReaderView({
           <span>{t('reader.dragCorner')}</span>
           </div>
         </div>
-        <p className="stage-note">
-          {profile.reducedMotion
-            ? t('reader.reducedMotion')
-            : rendererAnnouncement.message}
-        </p>
+        {/* One row owns the bottom of the stage. These four notes each used to
+            be positioned absolutely against the same edge, so they overlapped
+            each other on any viewport where one of them ran long. */}
+        <div className="stage-rail" data-testid="reader-stage-rail">
+          <div className="stage-meta">
+            <span>{profile.direction === 'rtl' ? t('reader.rightToLeft') : t('reader.leftToRight')}</span>
+            <span className="stage-meta__divider" aria-hidden="true" />
+            <span>{profile.mode === 'spread' ? t('reader.spreadView') : t('reader.singlePage')}</span>
+          </div>
+          <p className="stage-note">
+            {profile.reducedMotion
+              ? t('reader.reducedMotion')
+              : rendererAnnouncement.message}
+          </p>
+          <details className="renderer-diagnostic-panel">
+            <summary>{t('reader.rendererDiagnostics')}</summary>
+            <code>{foldFailure ? `${rendererAnnouncement.diagnostic} · ${foldFailure}` : rendererAnnouncement.diagnostic}</code>
+          </details>
+        </div>
         <LiveAnnouncement
           message={rendererAnnouncement.message}
           testId="renderer-status-announcement"
@@ -504,10 +520,6 @@ export function ReaderView({
         <p className="sr-only" data-testid="renderer-diagnostic">
           {foldFailure ? `${rendererAnnouncement.diagnostic} · ${foldFailure}` : rendererAnnouncement.diagnostic}
         </p>
-        <details className="renderer-diagnostic-panel">
-          <summary>{t('reader.rendererDiagnostics')}</summary>
-          <code>{foldFailure ? `${rendererAnnouncement.diagnostic} · ${foldFailure}` : rendererAnnouncement.diagnostic}</code>
-        </details>
       </section>
 
       <footer className="reader-controls">
@@ -519,7 +531,6 @@ export function ReaderView({
         <button className="nav-button nav-button--forward" data-testid="reader-next" onClick={() => pageTurn.requestTurn(1)} aria-disabled={!canNext} aria-label={t('reader.nextAria')}><span>{t('reader.next')}</span> →</button>
       </footer>
 
-      <p className="reader-announcement" data-testid="reader-announcement" aria-hidden="true">{announcement}</p>
     </main>
   );
 }
