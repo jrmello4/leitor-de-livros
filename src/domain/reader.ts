@@ -32,7 +32,7 @@ export function movePage(
 }
 
 export function clampZoomScale(scale: number): number {
-  return clamp(scale, 0.5, 3);
+  return clamp(scale, 0.5, 5);
 }
 
 export interface PanPosition {
@@ -45,7 +45,7 @@ export function clampPan(
   panX: number,
   panY: number,
   scale: number,
-  maxX = 80,
+  maxX = 1200,
   maxY = maxX,
 ): PanPosition {
   const safeScale = clampZoomScale(scale);
@@ -76,6 +76,13 @@ export function navigationAvailability(
   };
 }
 
+export function isLandscapeSplash(page?: PageDescriptor): boolean {
+  if (!page || page.width <= 0 || page.height <= 0) {
+    return false;
+  }
+  return page.width / page.height >= 1.15;
+}
+
 export function visiblePageIndexes(
   currentPage: number,
   pages: PageDescriptor[],
@@ -87,12 +94,22 @@ export function visiblePageIndexes(
   }
 
   const safeCurrent = clamp(currentPage, 0, pages.length - 1);
-  if (mode === 'single') {
+  if (mode === 'single' || mode === 'webtoon') {
+    return [safeCurrent];
+  }
+
+  const currentPageDescriptor = pages[safeCurrent];
+  if (isLandscapeSplash(currentPageDescriptor)) {
     return [safeCurrent];
   }
 
   const neighbor = direction === 'rtl' ? safeCurrent - 1 : safeCurrent + 1;
   if (neighbor < 0 || neighbor >= pages.length) {
+    return [safeCurrent];
+  }
+
+  const neighborPageDescriptor = pages[neighbor];
+  if (isLandscapeSplash(neighborPageDescriptor)) {
     return [safeCurrent];
   }
 

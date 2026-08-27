@@ -1,5 +1,6 @@
 import { unzipSync } from 'fflate';
-import type { ImportResult, PageDescriptor, Publication, PublicationFormat } from '../domain/types';
+import type { ComicMetadata, ImportResult, PageDescriptor, Publication, PublicationFormat } from '../domain/types';
+import { parseComicInfoXml } from '../domain/comicInfo';
 import { t } from '../i18n/catalog';
 
 const IMAGE_EXTENSIONS = new Set(['avif', 'gif', 'jpeg', 'jpg', 'png', 'svg', 'webp']);
@@ -72,6 +73,7 @@ function publicationFromPages(
   format: PublicationFormat,
   pages: PageDescriptor[],
   sourceNames: string[] = [sourceLabel],
+  metadata?: ComicMetadata,
 ): Publication {
   const now = new Date().toISOString();
   const id = createId('publication');
@@ -95,6 +97,7 @@ function publicationFromPages(
     sourceNames: sourceNames
       .map((name) => name.split(/[\\/]/).pop() ?? name)
       .filter(Boolean),
+    metadata,
   };
 }
 
@@ -135,8 +138,24 @@ async function importCbz(file: File): Promise<ImportResult> {
       return { diagnostic: t('import.cbzEmpty') };
     }
 
-    const title = file.name.replace(/\.cbz$/i, '') || t('import.defaultCbzTitle');
-    return { publication: publicationFromPages(title, file.name, 'cbz', pages, [file.name]) };
+    let metadata: ComicMetadata | undefined;
+    const comicInfoKey = Object.keys(archive).find(
+      (k) => k.toLowerCase() === 'comicinfo.xml' || k.toLowerCase().endsWith('/comicinfo.xml'),
+    );
+    if (comicInfoKey) {
+      try {
+        const xmlData = archive[comicInfoKey];
+        if (xmlData) {
+          const xmlText = new TextDecoder('utf-8').decode(xmlData);
+          metadata = parseComicInfoXml(xmlText);
+        }
+      } catch {
+        // Graceful fallback if ComicInfo.xml is corrupted
+      }
+    }
+
+    const title = metadata?.title || file.name.replace(/\.cbz$/i, '') || t('import.defaultCbzTitle');
+    return { publication: publicationFromPages(title, file.name, 'cbz', pages, [file.name], metadata) };
   } catch {
     return { diagnostic: t('import.cbzReadError') };
   }
@@ -170,4 +189,22 @@ export async function importFiles(files: File[]): Promise<ImportResult> {
   }
 
   return { diagnostic: t('import.noSupported') };
+}
+
+export function revokePublicationBlobUrls(publication: Publication): void {
+  if (typeof URL === 'undefined' || typeof URL.revokeObjectURL !== 'function') {
+    return;
+  }
+  for (const page of publication.pages) {
+    if (page.src && page.src.startsWith('blob:')) {
+      URL.revokeObjectURL(page.src);
+    }
+  }
+  if (
+    publication.coverSrc
+    && publication.coverSrc.startsWith('blob:')
+    && !publication.pages.some((p) => p.src === publication.coverSrc)
+  ) {
+    URL.revokeObjectURL(publication.coverSrc);
+  }
 }

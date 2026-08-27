@@ -1,9 +1,34 @@
 export type PublicationFormat = 'demo' | 'images' | 'cbz' | 'cbr' | 'pdf';
 export type ReadingDirection = 'ltr' | 'rtl';
-export type ReadingMode = 'single' | 'spread';
+export type ReadingMode = 'single' | 'spread' | 'webtoon';
 export type ContrastMode = 'standard' | 'high';
 export type LayoutZone = 'top' | 'bottom' | 'left' | 'right';
 export type ZoomMode = 'page' | 'width' | 'manual';
+export type PageRotation = 0 | 90 | 180 | 270;
+export type PageColorFilter = 'original' | 'sepia' | 'dark' | 'grayscale' | 'invert' | 'warm' | 'cool';
+export type StageBackground = 'atelier' | 'oled' | 'dark' | 'paper';
+
+export interface ComicMetadata {
+  title?: string;
+  series?: string;
+  number?: string;
+  count?: number;
+  volume?: string;
+  summary?: string;
+  year?: number;
+  month?: number;
+  writer?: string;
+  penciller?: string;
+  inker?: string;
+  colorist?: string;
+  letterer?: string;
+  coverArtist?: string;
+  editor?: string;
+  publisher?: string;
+  genre?: string;
+  characters?: string[];
+  tags?: string[];
+}
 
 export type ActionName =
   | 'next_page'
@@ -14,6 +39,7 @@ export type ActionName =
   | 'toggle_spread'
   | 'toggle_navigator'
   | 'toggle_bookmark'
+  | 'rotate_clockwise'
   | 'cancel';
 
 export type BindingMap = Record<ActionName, string[]>;
@@ -59,6 +85,7 @@ export interface Publication {
   /** Safe basenames used for discovery; never contains an absolute source path. */
   sourceNames?: string[];
   customCover?: CustomCover;
+  metadata?: ComicMetadata;
   diagnostic?: string;
 }
 
@@ -67,6 +94,8 @@ export interface ReaderState {
   zoomScale: number;
   panX: number;
   panY: number;
+  rotation: PageRotation;
+  background: StageBackground;
 }
 
 export interface Bookmark {

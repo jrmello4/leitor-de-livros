@@ -25,7 +25,7 @@ describe('buildPageTurnScene', () => {
         stationary: [],
         turningFront: 'p1',
         turningVerso: 'p2',
-        under: 'p3',
+        under: 'p2',
         committed: ['p2'],
       },
     },
@@ -38,7 +38,7 @@ describe('buildPageTurnScene', () => {
         stationary: [],
         turningFront: 'p1',
         turningVerso: 'p2',
-        under: 'p3',
+        under: 'p2',
         committed: ['p2'],
       },
     },
@@ -51,7 +51,7 @@ describe('buildPageTurnScene', () => {
         stationary: [],
         turningFront: 'p2',
         turningVerso: 'p1',
-        under: 'p0',
+        under: 'p1',
         committed: ['p1'],
       },
     },
@@ -238,7 +238,7 @@ describe('buildPageTurnScene', () => {
 
       expect(scene?.turningFront.src).toBe(`${srcPrefix}-1.png`);
       expect(scene?.turningVerso.src).toBe(`${srcPrefix}-2.png`);
-      expect(scene?.under?.src).toBe(`${srcPrefix}-3.png`);
+      expect(scene?.under?.src).toBe(`${srcPrefix}-2.png`);
     }
   });
 });

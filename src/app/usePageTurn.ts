@@ -469,7 +469,7 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
       return;
     }
 
-    if (reducedMotion || state.phase === 'disabled') {
+    if (reducedMotion || mode === 'webtoon' || mode === 'spread' || state.phase === 'disabled') {
       callback();
       clearSurface();
       return;
@@ -606,12 +606,16 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
 
   const edgeProps = useMemo<UsePageTurnResult['edgeProps']>(() => ({
     onPointerDown: (event) => {
-      if (event.button !== 0 || event.isPrimary === false || reducedMotion || state.phase !== 'idle' || !canNext) {
+      if (event.button !== 0 || event.isPrimary === false || reducedMotion || mode === 'webtoon' || mode === 'spread' || state.phase !== 'idle' || !canNext) {
         return;
       }
 
       const frame = pageFrameFor(transformedPage.current, event.currentTarget);
-      if (!frame || !isVisibleOuterEdgeHit({ x: event.clientX, y: event.clientY }, frame, readingDirection)) {
+      const isEdgeOrActiveSide = frame && (
+        isVisibleOuterEdgeHit({ x: event.clientX, y: event.clientY }, frame, readingDirection)
+        || (readingDirection === 'ltr' ? event.clientX >= frame.left + frame.width * 0.45 : event.clientX <= frame.left + frame.width * 0.55)
+      );
+      if (!frame || !isEdgeOrActiveSide) {
         return;
       }
 
@@ -661,7 +665,7 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
       syncFromController();
     },
     onPointerMove: (event) => {
-      if (reducedMotion || state.phase === 'disabled') {
+      if (reducedMotion || mode === 'webtoon' || mode === 'spread' || state.phase === 'disabled') {
         clearSurface();
         return;
       }
@@ -681,46 +685,7 @@ export function usePageTurn(options: UsePageTurnOptions): UsePageTurnResult {
         controllerRef.current?.movePointer(event.pointerId, normalizedPoint, performance.now());
         updateDragSurface(state.grab, normalizedPoint);
         syncFromController();
-        return;
       }
-
-      if (state.phase !== 'idle' || !canNext || !isVisibleOuterEdgeHit({ x: event.clientX, y: event.clientY }, frame, readingDirection)) {
-        return;
-      }
-
-      const nextScene = buildPageTurnScene({
-        pages: publication.pages,
-        currentIndex: publication.currentPage,
-        mode,
-        readingDirection,
-        turnDirection: logicalDeltaToTurnDirection(1, readingDirection),
-      });
-      if (!nextScene) {
-        return;
-      }
-
-      const grab = clientToPagePoint({ x: event.clientX, y: event.clientY }, frame, zoom);
-      const normalizedGrab = {
-        x: clamp(grab.x, 0, 1),
-        y: clamp(grab.y, 0, 1),
-      };
-      const progress = hoverProgressFor(event.clientX, frame, readingDirection);
-      const previewPoint = {
-        x: readingDirection === 'rtl' ? Math.min(1, normalizedGrab.x + progress) : Math.max(0, normalizedGrab.x - progress),
-        y: normalizedGrab.y,
-      };
-      const framePreview = new PaperPhysicsSolver({ quality: SURFACE_QUALITY, direction: readingDirection })
-        .begin(normalizedGrab)
-        .step({ pointer: previewPoint, elapsedMs: 16.7 });
-
-      setScene(nextScene);
-      setSurfaceGeneration(0);
-      setSurfaceState({
-        phase: 'preparing',
-        direction: readingDirection,
-        progress,
-        frame: framePreview,
-      });
     },
     onPointerUp: (event) => {
       if (state.phase !== 'dragging' || event.pointerId !== state.pointerId) {

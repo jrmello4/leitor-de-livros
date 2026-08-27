@@ -51,11 +51,12 @@ describe('reader navigation contracts', () => {
   it('clamps manual zoom to the supported range', () => {
     expect(clampZoomScale(0.1)).toBe(0.5);
     expect(clampZoomScale(1.4)).toBe(1.4);
-    expect(clampZoomScale(4)).toBe(3);
+    expect(clampZoomScale(6)).toBe(5);
   });
 
   it('keeps pan inside the bounded viewport for manual zoom', () => {
-    expect(clampPan(420, -80, 2)).toEqual({ x: 80, y: -80 });
+    expect(clampPan(420, -80, 2)).toEqual({ x: 420, y: -80 });
+    expect(clampPan(-1800, 1800, 2)).toEqual({ x: -1200, y: 1200 });
     expect(clampPan(-420, 420, 1)).toEqual({ x: 0, y: 0 });
   });
 
@@ -70,6 +71,18 @@ describe('reader navigation contracts', () => {
     expect(visiblePageIndexes(1, pages, 'spread', 'ltr')).toEqual([1, 2]);
     expect(visiblePageIndexes(2, pages, 'spread', 'rtl')).toEqual([1, 2]);
     expect(visiblePageIndexes(0, pages, 'single', 'ltr')).toEqual([0]);
+  });
+
+  it('detects landscape splash pages and presents them as a single full spread in spread mode', () => {
+    const splashPages: PageDescriptor[] = [
+      { id: 'p0', index: 0, name: '0.png', src: 'blob:0', width: 800, height: 1200 },
+      { id: 'p1', index: 1, name: '1.png', src: 'blob:1', width: 1800, height: 1200 }, // Landscape splash!
+      { id: 'p2', index: 2, name: '2.png', src: 'blob:2', width: 800, height: 1200 },
+    ];
+
+    expect(visiblePageIndexes(0, splashPages, 'spread', 'ltr')).toEqual([0]); // Neighbor is splash, so p0 is standalone
+    expect(visiblePageIndexes(1, splashPages, 'spread', 'ltr')).toEqual([1]); // Splash page occupies full spread
+    expect(visiblePageIndexes(2, splashPages, 'spread', 'ltr')).toEqual([2]);
   });
 
   it('protects the destination page working set instead of the previous page neighbors', () => {

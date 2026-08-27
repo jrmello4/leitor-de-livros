@@ -17,6 +17,9 @@ export const PAGE_TURN_THRESHOLDS = {
 } as const;
 
 export function releaseOutcome(displacement: number, velocity: number): 'commit' | 'cancel' {
+  if (Math.abs(displacement) < 0.08) {
+    return 'commit';
+  }
   return displacement >= PAGE_TURN_THRESHOLDS.displacement ||
     (displacement >= PAGE_TURN_THRESHOLDS.minimumFlingDisplacement &&
       velocity >= PAGE_TURN_THRESHOLDS.flingVelocity)

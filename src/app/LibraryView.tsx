@@ -2,7 +2,15 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject }
 import { filterPublications, mostRecentPublication, safeSourceName, visiblePublications as getVisiblePublications, type FormatFilter, type LibrarySort, type ReadingStatusFilter } from '../domain/library';
 import { publicationCoverSrc } from '../domain/covers';
 import type { Publication } from '../domain/types';
+import { evaluateAchievements, isCurrentHourNight } from '../domain/achievements';
+import { loadAchievementsMap, loadAllReviews, loadReadingStats, saveReview as saveReviewStorage, clearReview as clearReviewStorage } from '../services/storage';
+import type { PublicationReview } from '../domain/reviews';
 import { t } from '../i18n/catalog';
+import { FlameIcon, SearchIcon, SparklesIcon, StarFilledIcon, StarIcon, SyncIcon } from './Icons';
+import { ReadingStatsModal } from './ReadingStatsModal';
+import { ReviewModal } from './ReviewModal';
+import { RecapModal } from './RecapModal';
+import { SyncModal } from './SyncModal';
 
 interface LibraryViewProps {
   publications: Publication[];
@@ -70,6 +78,36 @@ export function LibraryView({
   const [pendingDelete, setPendingDelete] = useState<Publication | null>(null);
   const [deleteError, setDeleteError] = useState<string | undefined>();
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // New Features State
+  const [statsModalOpen, setStatsModalOpen] = useState(false);
+  const [syncModalOpen, setSyncModalOpen] = useState(false);
+  const [reviewTarget, setReviewTarget] = useState<Publication | null>(null);
+  const [recapTarget, setRecapTarget] = useState<Publication | null>(null);
+  const [ratingFilter, setRatingFilter] = useState<number>(0);
+
+  const [readingStats, setReadingStats] = useState(loadReadingStats);
+  const [achievementsMap, setAchievementsMap] = useState(loadAchievementsMap);
+  const [reviewsMap, setReviewsMap] = useState<Record<string, PublicationReview>>(loadAllReviews);
+
+  const refreshUserData = () => {
+    setReadingStats(loadReadingStats());
+    setAchievementsMap(loadAchievementsMap());
+    setReviewsMap(loadAllReviews());
+  };
+
+  const achievements = useMemo(() => {
+    const completedCount = publications.filter((p) => p.progress >= 1).length;
+    const { list } = evaluateAchievements({
+      stats: readingStats,
+      publicationCount: publications.length,
+      completedCount,
+      existingUnlockedMap: achievementsMap,
+      isNightHour: isCurrentHourNight(),
+    });
+    return list;
+  }, [readingStats, publications, achievementsMap]);
+
   const deleteCancelRef = useRef<HTMLButtonElement>(null);
   const deleteTriggerRef = useRef<HTMLButtonElement | null>(null);
   const restoreTriggerOnCloseRef = useRef(false);
@@ -89,9 +127,18 @@ export function LibraryView({
   };
   const visiblePublications = useMemo(() => {
     const filtered = filterPublications(publications, formatFilter, statusFilter);
-    const visible = getVisiblePublications(filtered, query, sort);
-    return favoriteOnly ? visible.filter((publication) => publication.isFavorite) : visible;
-  }, [favoriteOnly, formatFilter, publications, query, sort, statusFilter]);
+    let visible = getVisiblePublications(filtered, query, sort);
+    if (favoriteOnly) {
+      visible = visible.filter((publication) => publication.isFavorite);
+    }
+    if (ratingFilter > 0) {
+      visible = visible.filter((publication) => {
+        const review = reviewsMap[publication.id];
+        return review && review.rating >= ratingFilter;
+      });
+    }
+    return visible;
+  }, [favoriteOnly, formatFilter, publications, query, sort, statusFilter, ratingFilter, reviewsMap]);
   const continuePublication = useMemo(() => mostRecentPublication(publications), [publications]);
 
   useLayoutEffect(() => {
@@ -197,6 +244,26 @@ export function LibraryView({
           </span>
         </div>
         <div className="header-actions">
+          <button
+            type="button"
+            className="library-streak-pill"
+            onClick={() => setStatsModalOpen(true)}
+            aria-label="Ver hábitos de leitura e conquistas"
+            title="Sequência de Leitura & Conquistas"
+          >
+            <FlameIcon />
+            <span>{readingStats.currentStreak} {readingStats.currentStreak === 1 ? 'dia' : 'dias'}</span>
+          </button>
+          <button
+            type="button"
+            className="quiet-button library-sync-btn"
+            onClick={() => setSyncModalOpen(true)}
+            aria-label="Sincronizar entre dispositivos"
+            title="Sincronização Nuvem & Dispositivos"
+          >
+            <SyncIcon />
+            <span>Sync</span>
+          </button>
           <span className="privacy-chip"><span className="status-dot" /> {t('library.deviceOnly')}</span>
           <button ref={settingsTriggerRef} className="quiet-button" onClick={onOpenSettings}>{t('library.settings')}</button>
         </div>
@@ -265,7 +332,7 @@ export function LibraryView({
         </div>
         <div className="toolbar-controls">
           <label className="search-field">
-            <span aria-hidden="true">⌕</span>
+            <SearchIcon />
             <input className="library-focus-control" aria-label={t('library.searchAria')} value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder={t('library.search')} />
           </label>
           <label className="sort-field">
@@ -303,6 +370,20 @@ export function LibraryView({
               <option value="unread">{t('library.filterStatusUnread')}</option>
               <option value="reading">{t('library.filterStatusReading')}</option>
               <option value="completed">{t('library.filterStatusCompleted')}</option>
+            </select>
+          </label>
+          <label className="sort-field rating-filter-field">
+            <span>Avaliação</span>
+            <select
+              className="library-focus-control"
+              aria-label="Filtrar por avaliação"
+              value={ratingFilter}
+              onChange={(event) => setRatingFilter(Number(event.target.value))}
+            >
+              <option value={0}>Todas as notas</option>
+              <option value={5}>⭐⭐⭐⭐⭐ (5 estrelas)</option>
+              <option value={4}>⭐⭐⭐⭐ (4+ estrelas)</option>
+              <option value={3}>⭐⭐⭐ (3+ estrelas)</option>
             </select>
           </label>
           <label className="favorite-filter" htmlFor="favorite-only">
@@ -363,6 +444,42 @@ export function LibraryView({
                   <button className="open-link" type="button" onClick={() => onOpen(publication)}>{t('library.openLabel')} <span aria-hidden="true">↗</span></button>
                 </div>
               </div>
+
+              {/* Review & Rating Banner */}
+              <div className="card-review-bar">
+                <button
+                  type="button"
+                  className="card-review-btn"
+                  onClick={() => setReviewTarget(publication)}
+                  aria-label="Avaliar e fazer anotações"
+                  title="Avaliar edição"
+                >
+                  {reviewsMap[publication.id]?.rating ? (
+                    <span className="card-stars-filled">
+                      {Array.from({ length: reviewsMap[publication.id].rating }).map((_, i) => (
+                        <StarFilledIcon key={i} />
+                      ))}
+                      <small>{reviewsMap[publication.id].rating}/5</small>
+                    </span>
+                  ) : (
+                    <span className="card-stars-empty">
+                      <StarIcon />
+                      <small>Avaliar</small>
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="card-recap-btn"
+                  onClick={() => setRecapTarget(publication)}
+                  aria-label="Resumo até aqui sem spoilers"
+                  title="Resumo da história até onde você leu"
+                >
+                  <SparklesIcon />
+                  <span>Recap</span>
+                </button>
+              </div>
+
               <div className="cover-actions">
                 {isNativeRuntime ? (
                   <button className="quiet-button" type="button" onClick={() => void onChooseNativeCover(publication)}>
@@ -422,6 +539,45 @@ export function LibraryView({
         <span>{t('library.footerEdition')}</span>
         <span>{t('library.footerFeatures')}</span>
       </footer>
+
+      {statsModalOpen && (
+        <ReadingStatsModal
+          stats={readingStats}
+          achievements={achievements}
+          onClose={() => setStatsModalOpen(false)}
+        />
+      )}
+
+      {syncModalOpen && (
+        <SyncModal
+          onClose={() => setSyncModalOpen(false)}
+          onSyncApplied={refreshUserData}
+        />
+      )}
+
+      {reviewTarget && (
+        <ReviewModal
+          publication={reviewTarget}
+          initialReview={reviewsMap[reviewTarget.id]}
+          onSave={(review) => {
+            saveReviewStorage(review);
+            refreshUserData();
+          }}
+          onDelete={(id) => {
+            clearReviewStorage(id);
+            refreshUserData();
+          }}
+          onClose={() => setReviewTarget(null)}
+        />
+      )}
+
+      {recapTarget && (
+        <RecapModal
+          publication={recapTarget}
+          currentPageIndex={recapTarget.currentPage}
+          onClose={() => setRecapTarget(null)}
+        />
+      )}
 
       {pendingDelete && (
         <div className="modal-backdrop" role="presentation">

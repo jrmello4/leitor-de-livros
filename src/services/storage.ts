@@ -9,6 +9,9 @@ import type { ReadingProfile } from '../domain/types';
 import type { Bookmark, CustomCover, ReaderState } from '../domain/types';
 import { normalizeCustomCover } from '../domain/covers';
 import { defaultReaderState, normalizeReaderState } from '../domain/readerState';
+import { createEmptyReadingStats, normalizeReadingStats, recordReadingActivity, type ReadingStats } from '../domain/readingStats';
+import { normalizeAchievementMap } from '../domain/achievements';
+import { normalizeReview, normalizeReviewMap, type PublicationReview } from '../domain/reviews';
 
 const PROFILE_KEY = 'tactile-reader/profile/v1';
 const PROFILE_STORE_KEY = 'tactile-reader/profiles/v2';
@@ -17,6 +20,9 @@ const FAVORITES_KEY = 'tactile-reader/favorites/v1';
 const BOOKMARKS_KEY = 'tactile-reader/bookmarks/v1';
 const READER_STATE_KEY = 'tactile-reader/reader-state/v1';
 const CUSTOM_COVERS_KEY = 'tactile-reader/custom-covers/v1';
+const READING_STATS_KEY = 'tactile-reader/reading-stats/v1';
+const ACHIEVEMENTS_KEY = 'tactile-reader/achievements/v1';
+const REVIEWS_KEY = 'tactile-reader/reviews/v1';
 
 function getStorage(): Storage | null {
   try {
@@ -198,6 +204,78 @@ export function clearCustomCover(publicationId: string): boolean {
   return saveValue(CUSTOM_COVERS_KEY, covers);
 }
 
+export function loadReadingStats(): ReadingStats {
+  return loadValue(READING_STATS_KEY, createEmptyReadingStats(), (val): val is ReadingStats => {
+    return isRecord(val);
+  });
+}
+
+export function saveReadingStats(stats: ReadingStats): boolean {
+  return saveValue(READING_STATS_KEY, stats);
+}
+
+export function logReadingSessionActivity(options: {
+  pagesDelta?: number;
+  minutesDelta?: number;
+  completedDelta?: number;
+}): { stats: ReadingStats; isNewStreakDay: boolean } {
+  const current = loadReadingStats();
+  const { stats, isNewStreakDay } = recordReadingActivity(current, options);
+  saveReadingStats(stats);
+  return { stats, isNewStreakDay };
+}
+
+export function loadAchievementsMap(): Record<string, string> {
+  const storage = getStorage();
+  if (!storage) {
+    return {};
+  }
+  try {
+    const raw = JSON.parse(storage.getItem(ACHIEVEMENTS_KEY) ?? '{}');
+    return normalizeAchievementMap(raw);
+  } catch {
+    return {};
+  }
+}
+
+export function saveAchievementsMap(map: Record<string, string>): boolean {
+  return saveValue(ACHIEVEMENTS_KEY, map);
+}
+
+export function loadAllReviews(): Record<string, PublicationReview> {
+  const storage = getStorage();
+  if (!storage) {
+    return {};
+  }
+  try {
+    const raw = JSON.parse(storage.getItem(REVIEWS_KEY) ?? '{}');
+    return normalizeReviewMap(raw);
+  } catch {
+    return {};
+  }
+}
+
+export function loadReviewForPublication(publicationId: string): PublicationReview | null {
+  const map = loadAllReviews();
+  return map[publicationId] || null;
+}
+
+export function saveReview(review: PublicationReview): boolean {
+  const normalized = normalizeReview(review);
+  if (!normalized) {
+    return false;
+  }
+  const map = loadAllReviews();
+  map[normalized.publicationId] = normalized;
+  return saveValue(REVIEWS_KEY, map);
+}
+
+export function clearReview(publicationId: string): boolean {
+  const map = loadAllReviews();
+  delete map[publicationId];
+  return saveValue(REVIEWS_KEY, map);
+}
+
 /** Remove only browser-side metadata for a publication. Imported source files
  * are represented by object URLs and are never touched by this operation. */
 export function clearPublicationStorage(publicationId: string): void {
@@ -223,6 +301,7 @@ export function clearPublicationStorage(publicationId: string): void {
     saveValue(PROGRESS_KEY, progress);
 
     clearCustomCover(publicationId);
+    clearReview(publicationId);
   } catch {
     // Storage can be unavailable or quota-limited; the native caller reports
     // no destructive filesystem work even when metadata cleanup is skipped.
@@ -244,7 +323,7 @@ function loadValue<T>(key: string, fallback: T, isValid: (value: unknown) => val
   }
 }
 
-function saveValue(key: string, value: unknown): boolean {
+export function saveRawStorageValue(key: string, value: unknown): boolean {
   try {
     const storage = getStorage();
     if (!storage) {
@@ -255,6 +334,10 @@ function saveValue(key: string, value: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+function saveValue(key: string, value: unknown): boolean {
+  return saveRawStorageValue(key, value);
 }
 
 function isBookmarkMap(value: unknown): value is Record<string, Bookmark[]> {

@@ -20,11 +20,12 @@ import {
   type ProfileStore,
   type NamedReadingProfile,
 } from '../domain/profiles';
-import { defaultReaderState } from '../domain/readerState';
+import { defaultReaderState, nextRotation, normalizeReaderState } from '../domain/readerState';
+import { findNextPublication } from '../domain/seriesMatching';
 import type { ActionName, Bookmark, CacheInfo, PageDescriptor, Publication, ReaderState, ReadingProfile } from '../domain/types';
-import { actionLabel, t } from '../i18n/catalog';
+import { actionLabel, getLocale, t } from '../i18n/catalog';
 import '../i18n/register-locales';
-import { importFiles } from '../services/importers';
+import { importFiles, revokePublicationBlobUrls } from '../services/importers';
 import {
   chooseNativeFiles,
   chooseNativeCover,
@@ -468,6 +469,82 @@ export function App() {
     }
   }, []);
 
+  const exportData = useCallback(() => {
+    try {
+      const backupDoc = {
+        kind: 'tactile-library-backup',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        favorites: loadFavorites(),
+        bookmarks,
+        readerStates,
+        profileStore: profileStoreRef.current,
+      };
+      const blob = new Blob([JSON.stringify(backupDoc, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'tactile-library-backup.json';
+      link.click();
+      URL.revokeObjectURL(url);
+      setAnnouncement(t('profile.dataExported'));
+    } catch {
+      setDiagnostic(t('profile.dataTransferError'));
+    }
+  }, [bookmarks, readerStates]);
+
+  const importData = useCallback(async (text: string): Promise<string | undefined> => {
+    try {
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      if (!parsed || parsed.kind !== 'tactile-library-backup' || parsed.version !== 1) {
+        return t('profile.dataTransferError');
+      }
+
+      if (Array.isArray(parsed.favorites)) {
+        for (const favId of parsed.favorites) {
+          if (typeof favId === 'string') {
+            await toggleFavoriteForPublication(favId, true);
+          }
+        }
+      }
+
+      if (parsed.bookmarks && typeof parsed.bookmarks === 'object') {
+        const importedBookmarks = parsed.bookmarks as Record<string, Bookmark[]>;
+        setBookmarks((current) => ({ ...current, ...importedBookmarks }));
+        for (const [pubId, bList] of Object.entries(importedBookmarks)) {
+          if (Array.isArray(bList)) {
+            for (const b of bList) {
+              await saveBookmarkForPublication(pubId, b);
+            }
+          }
+        }
+      }
+
+      if (parsed.readerStates && typeof parsed.readerStates === 'object') {
+        const importedReaderStates = parsed.readerStates as Record<string, ReaderState>;
+        setReaderStates((current) => ({ ...current, ...importedReaderStates }));
+        for (const [pubId, rState] of Object.entries(importedReaderStates)) {
+          await saveReaderStateForPublication(pubId, normalizeReaderState(rState));
+        }
+      }
+
+      if (parsed.profileStore) {
+        const validated = parseProfileTransfer({ kind: 'tactile-reading-profiles', ...parsed.profileStore });
+        if (validated.ok) {
+          commitProfileMutation(
+            mergeProfileStore(profileStoreRef.current, validated.value),
+            t('profile.dataImported'),
+          );
+        }
+      }
+
+      setAnnouncement(t('profile.dataImported'));
+      return undefined;
+    } catch {
+      return t('profile.dataTransferError');
+    }
+  }, [commitProfileMutation]);
+
   const selectReadingProfile = useCallback((profileId: string) => (
     commitProfileMutation(
       selectProfile(profileStoreRef.current, profileId),
@@ -608,6 +685,7 @@ export function App() {
     }
     try {
       await deleteNativePublication(publication.id);
+      revokePublicationBlobUrls(publication);
       setLibrary((current) => current.filter((entry) => entry.id !== publication.id));
       setBookmarks((current) => {
         const next = { ...current };
@@ -1009,9 +1087,27 @@ export function App() {
           setNavigatorVisible(false);
           setShowProfile((current) => !current);
           break;
-        case 'toggle_spread':
-          updateProfile({ mode: profile.mode === 'single' ? 'spread' : 'single' });
-          setAnnouncement(t('app.readingMode', { mode: profile.mode === 'single' ? t('profile.spread').toLowerCase() : t('profile.single').toLowerCase() }));
+        case 'toggle_spread': {
+          const nextMode: ReadingProfile['mode'] =
+            profile.mode === 'single' ? 'spread' : profile.mode === 'spread' ? 'webtoon' : 'single';
+          updateProfile({ mode: nextMode });
+          const modeName =
+            nextMode === 'spread'
+              ? t('profile.spread').toLowerCase()
+              : nextMode === 'webtoon'
+                ? t('profile.webtoon').toLowerCase()
+                : t('profile.single').toLowerCase();
+          setAnnouncement(t('app.readingMode', { mode: modeName }));
+          break;
+        }
+        case 'rotate_clockwise':
+          if (activePublication) {
+            const currentReaderState = readerStates[activePublication.id] ?? defaultReaderState;
+            const newRot = nextRotation(currentReaderState.rotation);
+            const nextState = { ...currentReaderState, rotation: newRot };
+            void persistReaderState(activePublication.id, nextState);
+            setAnnouncement(t('reader.rotation', { degrees: newRot }));
+          }
           break;
         case 'cancel':
           pageSelectionCoordinatorRef.current.cancel();
@@ -1030,7 +1126,7 @@ export function App() {
           break;
       }
     },
-    [activePublication, dispatchPageTurn, navigatorVisible, profile.mode, showProfile, toggleActiveBookmark, toggleFullscreen, toggleNavigator, updateProfile],
+    [activePublication, dispatchPageTurn, navigatorVisible, persistReaderState, profile.mode, readerStates, showProfile, toggleActiveBookmark, toggleFullscreen, toggleNavigator, updateProfile],
   );
 
   useEffect(() => {
@@ -1235,6 +1331,11 @@ export function App() {
     }
   };
 
+  const nextPublication = useMemo(() => {
+    if (!activePublication) return undefined;
+    return findNextPublication(activePublication, library);
+  }, [activePublication, library]);
+
   return (
     <div className="app-shell" data-contrast={profile.contrast}>
       {isSmokeMode(import.meta.env.VITE_SMOKE_TEST === '1', nativeRuntime) && (
@@ -1280,6 +1381,8 @@ export function App() {
             onCloseNavigator={closeNavigator}
             onUpdateBookmarkLabel={updateActiveBookmarkLabel}
             onRegisterTurnRequest={registerReaderTurnRequest}
+            onNextVolume={nextPublication ? () => void openPublication(nextPublication) : undefined}
+            nextVolumeTitle={nextPublication?.title}
           />
         ) : (
           <LibraryView
@@ -1355,6 +1458,9 @@ export function App() {
             onUndoPreview={undoProfilePreview}
             onImportProfiles={importProfiles}
             onExportProfiles={exportProfiles}
+            onLocaleChange={() => setAnnouncement(t('app.libraryReady'))}
+            onExportData={exportData}
+            onImportData={importData}
             triggerRef={settingsTriggerRef}
             onClose={() => {
               setCapturingAction(null);

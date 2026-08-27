@@ -9,6 +9,7 @@ export const DEFAULT_BINDINGS: BindingMap = {
   toggle_spread: ['KeyM'],
   toggle_navigator: ['KeyN'],
   toggle_bookmark: ['KeyB'],
+  rotate_clockwise: ['KeyR'],
   cancel: ['Escape'],
 };
 
@@ -25,6 +26,7 @@ const ACTION_ORDER: ActionName[] = [
   'toggle_spread',
   'toggle_navigator',
   'toggle_bookmark',
+  'rotate_clockwise',
   'cancel',
 ];
 

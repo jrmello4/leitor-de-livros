@@ -15,7 +15,7 @@ class ImageStore {
   private readonly images = new Map<string, Promise<HTMLImageElement>>();
 
   retain(sources: string[]): void {
-    const keep = new Set(sources.slice(0, 3));
+    const keep = new Set(sources);
     for (const source of this.images.keys()) {
       if (!keep.has(source)) {
         this.images.delete(source);
@@ -29,11 +29,6 @@ class ImageStore {
       image = new Promise<HTMLImageElement>((resolve, reject) => {
         const element = new Image();
         element.decoding = 'async';
-        // Pages come from the asset protocol, a different origin from the app
-        // document. Without a CORS request the decode is origin-tainted, and
-        // both the WebGL2 upload and the raster `getImageData` fall over — the
-        // packaged app then drops to the static renderer and the reader loses
-        // the page turn entirely.
         element.crossOrigin = 'anonymous';
         element.onload = () => resolve(element);
         element.onerror = () => reject(new Error(`Could not decode reader page: ${source}`));
@@ -48,7 +43,7 @@ class ImageStore {
   }
 
   preload(sources: string[]): void {
-    for (const source of sources.slice(0, 3)) {
+    for (const source of sources) {
       void this.get(source).catch(() => undefined);
     }
   }
@@ -60,7 +55,7 @@ class ImageStore {
 
 function canvasSize(canvas: HTMLCanvasElement): { width: number; height: number } {
   const bounds = canvas.getBoundingClientRect();
-  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+  const pixelRatio = typeof window === 'undefined' ? 1 : Math.max(1, Math.min(window.devicePixelRatio || 1, 3));
   const width = Math.max(1, Math.round((bounds.width || canvas.clientWidth || 1) * pixelRatio));
   const height = Math.max(1, Math.round((bounds.height || canvas.clientHeight || 1) * pixelRatio));
   if (canvas.width !== width || canvas.height !== height) {
@@ -188,11 +183,16 @@ export function createWebGl2Backend(canvas: HTMLCanvasElement): CanvasRenderer {
     }
     gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+    try {
+      gl.generateMipmap(gl.TEXTURE_2D);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    } catch {
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    }
     textures.set(source, texture);
     return texture;
   };

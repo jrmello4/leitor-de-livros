@@ -114,21 +114,256 @@ function overlapsAlmostEntirely(left: Candidate, right: Candidate): boolean {
   return smaller > 0 && overlap / smaller > 0.86;
 }
 
+function isGutterRow(
+  raster: RasterImage,
+  y: number,
+  lum: Float32Array,
+  rowEnergy: Float32Array,
+  avgRowEnergy: number,
+  bg: PixelColor,
+): boolean {
+  const width = raster.width;
+  const energy = rowEnergy[y] ?? 0;
+
+  // Energy valley threshold: rows in gutters have significantly lower detail
+  if (avgRowEnergy > 3.0 && energy < avgRowEnergy * 0.42) {
+    return true;
+  }
+
+  let bgCount = 0;
+  for (let x = 0; x < width; x += 1) {
+    const l = lum[y * width + x] ?? 0;
+    const idx = (y * width + x) * 4;
+    const r = raster.data[idx] ?? 0;
+    const g = raster.data[idx + 1] ?? 0;
+    const b = raster.data[idx + 2] ?? 0;
+
+    const dR = r - bg.red;
+    const dG = g - bg.green;
+    const dB = b - bg.blue;
+    const dist = Math.sqrt(dR * dR + dG * dG + dB * dB);
+
+    if (l > 205 || l < 45 || dist < 45) {
+      bgCount += 1;
+    }
+  }
+
+  const bgRatio = bgCount / width;
+  return bgRatio > 0.62 || (bgRatio > 0.45 && energy < avgRowEnergy * 0.65);
+}
+
+function isGutterCol(
+  raster: RasterImage,
+  x: number,
+  topY: number,
+  bottomY: number,
+  lum: Float32Array,
+  bg: PixelColor,
+): boolean {
+  const width = raster.width;
+  const height = bottomY - topY + 1;
+  if (height <= 0) return false;
+
+  let bgCount = 0;
+  let colEnergy = 0;
+
+  for (let y = topY; y <= bottomY; y += 1) {
+    const l = lum[y * width + x] ?? 0;
+    const idx = (y * width + x) * 4;
+    const r = raster.data[idx] ?? 0;
+    const g = raster.data[idx + 1] ?? 0;
+    const b = raster.data[idx + 2] ?? 0;
+
+    const dR = r - bg.red;
+    const dG = g - bg.green;
+    const dB = b - bg.blue;
+    const dist = Math.sqrt(dR * dR + dG * dG + dB * dB);
+
+    if (l > 205 || l < 45 || dist < 45) {
+      bgCount += 1;
+    }
+
+    if (y > topY && y < bottomY) {
+      const dy = Math.abs((lum[(y + 1) * width + x] ?? 0) - (lum[(y - 1) * width + x] ?? 0));
+      colEnergy += dy;
+    }
+  }
+
+  const bgRatio = bgCount / height;
+  const avgEnergy = colEnergy / Math.max(1, height - 2);
+
+  return bgRatio > 0.62 || (bgRatio > 0.45 && avgEnergy < 6.5);
+}
+
+function extractGutterIntervals(
+  isGutter: (index: number) => boolean,
+  length: number,
+  minPanelSize: number,
+  minGutterSize = 3,
+): Array<{ start: number; end: number }> {
+  const blocks: Array<{ start: number; end: number }> = [];
+  let inBlock = false;
+  let blockStart = 0;
+
+  for (let i = 0; i < length; i += 1) {
+    const gutter = isGutter(i);
+    if (!gutter && !inBlock) {
+      inBlock = true;
+      blockStart = i;
+    } else if (gutter && inBlock) {
+      inBlock = false;
+      blocks.push({ start: blockStart, end: i - 1 });
+    }
+  }
+  if (inBlock) {
+    blocks.push({ start: blockStart, end: length - 1 });
+  }
+
+  if (blocks.length === 0) return [];
+
+  // Merge blocks separated by a gutter thinner than minGutterSize
+  const merged: Array<{ start: number; end: number }> = [];
+  let current = { ...blocks[0] };
+
+  for (let i = 1; i < blocks.length; i += 1) {
+    const next = blocks[i];
+    const gap = next.start - current.end - 1;
+    if (gap < minGutterSize) {
+      current.end = next.end;
+    } else {
+      merged.push(current);
+      current = { ...next };
+    }
+  }
+  merged.push(current);
+
+  // Filter out tiny slivers (less than minPanelSize) by merging into adjacent panel
+  const validPanels: Array<{ start: number; end: number }> = [];
+  for (const block of merged) {
+    const size = block.end - block.start + 1;
+    if (size >= minPanelSize) {
+      validPanels.push(block);
+    } else if (validPanels.length > 0) {
+      validPanels[validPanels.length - 1].end = block.end;
+    }
+  }
+
+  return validPanels;
+}
+
+function detectPanelsViaGutters(raster: RasterImage, direction: ReadingDirection): Candidate[] {
+  const { width, height, data } = raster;
+  const total = width * height;
+  const lum = new Float32Array(total);
+  const rowEnergy = new Float32Array(height);
+  const bg = sampleBackground(raster);
+
+  for (let i = 0; i < total; i += 1) {
+    const offset = i * 4;
+    lum[i] = 0.299 * (data[offset] ?? 0) + 0.587 * (data[offset + 1] ?? 0) + 0.114 * (data[offset + 2] ?? 0);
+  }
+
+  let totalEnergy = 0;
+  for (let y = 1; y < height - 1; y += 1) {
+    let rEnergy = 0;
+    for (let x = 1; x < width - 1; x += 1) {
+      const idx = y * width + x;
+      const dx = Math.abs((lum[idx + 1] ?? 0) - (lum[idx - 1] ?? 0));
+      const dy = Math.abs((lum[idx + width] ?? 0) - (lum[idx - width] ?? 0));
+      rEnergy += dx + dy;
+    }
+    rowEnergy[y] = rEnergy / Math.max(1, width - 2);
+    totalEnergy += rowEnergy[y];
+  }
+  const avgRowEnergy = totalEnergy / Math.max(1, height - 2);
+
+  const minGutterThickness = Math.max(3, Math.floor(height * 0.006));
+  const minTierHeight = Math.max(20, Math.floor(height * 0.10));
+  const minColWidth = Math.max(20, Math.floor(width * 0.15));
+
+  // Find horizontal tiers
+  const tiers = extractGutterIntervals(
+    (y) => isGutterRow(raster, y, lum, rowEnergy, avgRowEnergy, bg),
+    height,
+    minTierHeight,
+    minGutterThickness,
+  );
+
+  if (tiers.length === 0) {
+    return [];
+  }
+
+  const candidates: Candidate[] = [];
+
+  for (const tier of tiers) {
+    const cols = extractGutterIntervals(
+      (x) => isGutterCol(raster, x, tier.start, tier.end, lum, bg),
+      width,
+      minColWidth,
+      minGutterThickness,
+    );
+
+    const finalCols = cols.length > 0 ? cols : [{ start: 0, end: width - 1 }];
+    const orderedCols = direction === 'rtl' ? [...finalCols].reverse() : finalCols;
+
+    for (const col of orderedCols) {
+      const w = col.end - col.start + 1;
+      const h = tier.end - tier.start + 1;
+      candidates.push({
+        x: col.start,
+        y: tier.start,
+        width: w,
+        height: h,
+        pixels: w * h,
+      });
+    }
+  }
+
+  return candidates;
+}
+
+function generateProgressivePanels(raster: RasterImage, direction: ReadingDirection): Candidate[] {
+  const isLandscape = raster.width >= raster.height * 1.1;
+
+  if (isLandscape) {
+    const halfWidth = Math.floor(raster.width * 0.58);
+    const step = Math.floor(raster.width * 0.42);
+    if (direction === 'rtl') {
+      return [
+        { x: step, y: 0, width: halfWidth, height: raster.height, pixels: halfWidth * raster.height },
+        { x: 0, y: 0, width: halfWidth, height: raster.height, pixels: halfWidth * raster.height },
+      ];
+    }
+    return [
+      { x: 0, y: 0, width: halfWidth, height: raster.height, pixels: halfWidth * raster.height },
+      { x: step, y: 0, width: halfWidth, height: raster.height, pixels: halfWidth * raster.height },
+    ];
+  }
+
+  // Portrait: Top focus -> Bottom focus
+  const halfHeight = Math.floor(raster.height * 0.58);
+  const stepY = Math.floor(raster.height * 0.42);
+  return [
+    { x: 0, y: 0, width: raster.width, height: halfHeight, pixels: raster.width * halfHeight },
+    { x: 0, y: stepY, width: raster.width, height: halfHeight, pixels: raster.width * halfHeight },
+  ];
+}
+
 function candidatesFromRaster(raster: RasterImage): Candidate[] {
   const total = raster.width * raster.height;
   const background = sampleBackground(raster);
   const mask = new Uint8Array(total);
   const visited = new Uint8Array(total);
   const queue = new Int32Array(total);
-  const minimumWidth = Math.max(8, Math.floor(raster.width * 0.12));
-  const minimumHeight = Math.max(8, Math.floor(raster.height * 0.1));
-  const minimumPixels = Math.max(24, Math.floor(total * 0.001));
+  const minimumWidth = Math.max(20, Math.floor(raster.width * 0.18));
+  const minimumHeight = Math.max(20, Math.floor(raster.height * 0.12));
+  const minimumPixels = Math.max(40, Math.floor(total * 0.015));
 
   for (let index = 0; index < total; index += 1) {
     if ((raster.data[index * 4 + 3] ?? 255) < 40) {
       continue;
     }
-    if (distanceFrom(colorAt(raster, index), background) >= 52) {
+    if (distanceFrom(colorAt(raster, index), background) >= 42) {
       mask[index] = 1;
     }
   }
@@ -177,7 +412,7 @@ function candidatesFromRaster(raster: RasterImage): Candidate[] {
     if (pixels < minimumPixels || width < minimumWidth || height < minimumHeight) {
       continue;
     }
-    if (width / raster.width > 0.92 && height / raster.height > 0.92) {
+    if (width / raster.width > 0.94 && height / raster.height > 0.94) {
       continue;
     }
     candidates.push({ x: minX, y: minY, width, height, pixels });
@@ -222,35 +457,56 @@ export function createManualPanelGraph(pageId: string, direction: ReadingDirecti
   };
 }
 
+function hasContentVariance(raster: RasterImage): boolean {
+  if (raster.width < 16 || raster.height < 16) return false;
+  const first = raster.data[0] ?? 0;
+  for (let i = 4; i < raster.data.length; i += 16) {
+    if (Math.abs((raster.data[i] ?? 0) - first) > 10) return true;
+  }
+  return false;
+}
+
 export function analyzePanelRaster(pageId: string, raster: RasterImage, direction: ReadingDirection): PanelGraph {
-  if (raster.width < 2 || raster.height < 2 || raster.data.length < raster.width * raster.height * 4) {
+  if (raster.width < 16 || raster.height < 16 || raster.data.length < raster.width * raster.height * 4 || !hasContentVariance(raster)) {
     return createManualPanelGraph(pageId, direction);
   }
 
-  const candidates = orderedCandidates(candidatesFromRaster(raster), direction).slice(0, 12);
-  if (candidates.length === 0) {
-    return createManualPanelGraph(pageId, direction);
+  // Strategy 1: Gutter projection profile detection (find authentic panel grids & tiers)
+  let candidates = detectPanelsViaGutters(raster, direction);
+
+  // Strategy 2: Connected component contour detection (for irregular layout)
+  if (candidates.length < 2) {
+    const contourCandidates = orderedCandidates(candidatesFromRaster(raster), direction).slice(0, 10);
+    if (contourCandidates.length >= 2) {
+      candidates = contourCandidates;
+    }
   }
 
-  const coverage = candidates.reduce((sum, candidate) => sum + candidate.width * candidate.height, 0)
-    / (raster.width * raster.height);
-  const confidence = candidates.length < 2
-    ? 0.42
-    : clamp(0.44 + candidates.length * 0.08 + Math.min(coverage, 0.55) * 0.35, 0.44, 0.92);
-  return {
-    version: PANEL_GRAPH_VERSION,
-    pageId,
-    direction,
-    source: 'geometry',
-    confidence,
-    corrections: 0,
-    regions: candidates.map((candidate, index) => ({
-      id: `${pageId}:panel-${index + 1}`,
-      order: index,
-      bounds: panelBounds(candidate, raster),
-    })),
-    updatedAt: now(),
-  };
+  // If genuine comic panels are found (2 or more), use them
+  if (candidates.length >= 2) {
+    const coverage = candidates.reduce((sum, candidate) => sum + candidate.width * candidate.height, 0)
+      / (raster.width * raster.height);
+    const confidence = clamp(0.44 + candidates.length * 0.08 + Math.min(coverage, 0.55) * 0.35, 0.55, 0.95);
+
+    return {
+      version: PANEL_GRAPH_VERSION,
+      pageId,
+      direction,
+      source: 'geometry',
+      confidence,
+      corrections: 0,
+      regions: candidates.map((candidate, index) => ({
+        id: `${pageId}:panel-${index + 1}`,
+        order: index,
+        bounds: panelBounds(candidate, raster),
+      })),
+      updatedAt: now(),
+    };
+  }
+
+  // If no panel subdivisions were found (Cover, Splash Page, Full Illustration, or Text Page),
+  // keep as a single clean full-page panel (scale 1.0) so the camera never focuses on random logos/text.
+  return createManualPanelGraph(pageId, direction);
 }
 
 export function orderedPanels(graph: PanelGraph): PanelRegion[] {
@@ -308,7 +564,6 @@ export function addPanelRegion(graph: PanelGraph, bounds: PanelBounds): PanelGra
 
 export function removePanelRegion(graph: PanelGraph, regionId: string): PanelGraph {
   const remaining = graph.regions.filter((region) => region.id !== regionId);
-  // Re-index order
   const reordered = remaining.map((region, index) => ({
     ...region,
     order: index,
@@ -368,4 +623,45 @@ export function isPanelGraph(value: unknown): value is PanelGraph {
       && typeof region.bounds?.height === 'number'
     ))
     && typeof candidate.updatedAt === 'string';
+}
+
+export interface PanelCameraTransform {
+  scale: number;
+  panX: number;
+  panY: number;
+}
+
+export function calculatePanelCameraTransform(
+  bounds: PanelBounds,
+  viewportWidth: number,
+  viewportHeight: number,
+  pageDisplayWidth: number,
+  pageDisplayHeight: number,
+): PanelCameraTransform {
+  if (viewportWidth <= 0 || viewportHeight <= 0 || pageDisplayWidth <= 0 || pageDisplayHeight <= 0) {
+    return { scale: 1, panX: 0, panY: 0 };
+  }
+
+  const panelPixelWidth = Math.max(1, bounds.width * pageDisplayWidth);
+  const panelPixelHeight = Math.max(1, bounds.height * pageDisplayHeight);
+
+  // Target panel occupying 90% of the viewport for comfortable reading margins
+  const scaleX = (viewportWidth * 0.90) / panelPixelWidth;
+  const scaleY = (viewportHeight * 0.90) / panelPixelHeight;
+  const rawScale = Math.min(scaleX, scaleY);
+  const scale = clamp(rawScale, 1.0, 4.5);
+
+  const panelCenterX = (bounds.x + bounds.width / 2) * pageDisplayWidth;
+  const panelCenterY = (bounds.y + bounds.height / 2) * pageDisplayHeight;
+  const pageCenterX = pageDisplayWidth / 2;
+  const pageCenterY = pageDisplayHeight / 2;
+
+  const panX = (pageCenterX - panelCenterX) * scale;
+  const panY = (pageCenterY - panelCenterY) * scale;
+
+  return {
+    scale: Number(scale.toFixed(3)),
+    panX: Math.round(panX),
+    panY: Math.round(panY),
+  };
 }

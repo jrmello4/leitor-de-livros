@@ -29,7 +29,14 @@ describe('reader state storage contracts', () => {
   });
 
   it('round-trips reader state and bookmarks per publication', () => {
-    const state = { zoomMode: 'manual' as const, zoomScale: 1.8, panX: 24, panY: -12 };
+    const state = {
+      zoomMode: 'manual' as const,
+      zoomScale: 1.8,
+      panX: 24,
+      panY: -12,
+      rotation: 90 as const,
+      background: 'oled' as const,
+    };
     const bookmarks = [{ pageId: 'page-2', label: 'climax', createdAt: '1000', updatedAt: '1000' }];
 
     saveReaderState('book-a', state);

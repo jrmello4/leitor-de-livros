@@ -17,7 +17,14 @@ describe('hybrid reader state adapter', () => {
   });
 
   it('uses the versioned browser fallback and isolates each publication', async () => {
-    await saveReaderStateForPublication('book-a', { zoomMode: 'manual', zoomScale: 1.2, panX: 8, panY: -2 });
+    await saveReaderStateForPublication('book-a', {
+      zoomMode: 'manual',
+      zoomScale: 1.2,
+      panX: 8,
+      panY: -2,
+      rotation: 0,
+      background: 'atelier',
+    });
     await saveBookmarkForPublication('book-a', {
       pageId: 'page-a',
       label: 'start',
@@ -31,6 +38,8 @@ describe('hybrid reader state adapter', () => {
       zoomScale: 1.2,
       panX: 8,
       panY: -2,
+      rotation: 0,
+      background: 'atelier',
     });
     expect(await loadReaderStateForPublication('book-b')).toEqual(defaultReaderState);
     expect(await listBookmarksForPublication('book-a')).toHaveLength(1);
@@ -48,6 +57,8 @@ describe('hybrid reader state adapter', () => {
       zoomScale: Number.NaN,
       panX: 'bad' as never,
       panY: null as never,
+      rotation: 'invalid' as never,
+      background: 'invalid' as never,
     });
     vi.spyOn(native, 'listNativeBookmarks').mockResolvedValue([
       { pageId: 4 as never, label: null as never, createdAt: 5 as never, updatedAt: {} as never },

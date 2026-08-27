@@ -137,4 +137,23 @@ describe('named reading profiles', () => {
       expect(importedName).not.toBe(current.profiles[0]?.name);
     }
   });
+
+  it('validates webtoon mode and rotate_clockwise binding', () => {
+    const store = createDefaultProfileStore();
+    const webtoonProfile = {
+      ...store.profiles[0]!,
+      id: 'webtoon-1',
+      name: 'Webtoon Mode',
+      mode: 'webtoon' as const,
+      bindings: {
+        ...store.profiles[0]!.bindings,
+        rotate_clockwise: ['KeyR'],
+      },
+    };
+    const updatedStore = {
+      ...store,
+      profiles: [...store.profiles, webtoonProfile],
+    };
+    expect(validateProfileStore(updatedStore).ok).toBe(true);
+  });
 });

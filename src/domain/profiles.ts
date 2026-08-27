@@ -71,6 +71,7 @@ const ACTION_NAMES: ActionName[] = [
   'toggle_spread',
   'toggle_navigator',
   'toggle_bookmark',
+  'rotate_clockwise',
   'cancel',
 ];
 
@@ -225,7 +226,7 @@ export function validateProfile(value: unknown): { ok: true; value: NamedReading
   if (!isValidProfileName(value.name)) {
     return { ok: false, error: 'profile.errorName' };
   }
-  if (!isOneOf(value.mode, ['single', 'spread'])
+  if (!isOneOf(value.mode, ['single', 'spread', 'webtoon'])
     || !isOneOf(value.direction, ['ltr', 'rtl'])
     || !isOneOf(value.contrast, ['standard', 'high'])
     || !isOneOf(value.layoutZone, ['top', 'bottom', 'left', 'right'])
@@ -398,7 +399,7 @@ function normalizeLegacyProfile(value: Record<string, unknown>): NamedReadingPro
     id: typeof value.id === 'string' && isValidId(value.id) ? value.id : fallback.id,
     version: 1,
     name: typeof value.name === 'string' ? value.name : fallback.name,
-    mode: isOneOf(value.mode, ['single', 'spread']) ? value.mode : fallback.mode,
+    mode: isOneOf(value.mode, ['single', 'spread', 'webtoon']) ? value.mode : fallback.mode,
     direction: isOneOf(value.direction, ['ltr', 'rtl']) ? value.direction : fallback.direction,
     contrast: isOneOf(value.contrast, ['standard', 'high']) ? value.contrast : fallback.contrast,
     layoutZone: isOneOf(value.layoutZone, ['top', 'bottom', 'left', 'right']) ? value.layoutZone : fallback.layoutZone,

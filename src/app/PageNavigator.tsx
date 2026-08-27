@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObjec
 import type { Bookmark, PageDescriptor } from '../domain/types';
 import { clamp } from '../domain/reader';
 import { t } from '../i18n/catalog';
+import { BookmarkFilledIcon, BookmarkIcon, CloseIcon } from './Icons';
 
 export interface PageNavigatorProps {
   pages: PageDescriptor[];
@@ -117,6 +118,22 @@ export function PageNavigator({
     onUpdateBookmarkLabel(pageId, normalized);
   };
 
+  const [scrubberHoverPage, setScrubberHoverPage] = useState<PageDescriptor | null>(null);
+  const [scrubberHoverLeft, setScrubberHoverLeft] = useState<number>(0);
+
+  const onScrubberPointerMove = (event: React.PointerEvent<HTMLInputElement>) => {
+    if (pages.length === 0) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    const targetIndex = Math.min(pages.length - 1, Math.floor(ratio * pages.length));
+    setScrubberHoverPage(pages[targetIndex] ?? null);
+    setScrubberHoverLeft(event.clientX - rect.left);
+  };
+
+  const onScrubberPointerLeave = () => {
+    setScrubberHoverPage(null);
+  };
+
   return (
     <aside
       className="page-navigator"
@@ -131,7 +148,7 @@ export function PageNavigator({
           <strong>{pages.length === 0 ? t('navigator.noPages') : t('navigator.pageOf', { page: safeCurrent + 1, count: pages.length })}</strong>
         </div>
         <button ref={closeRef} type="button" className="page-navigator__close" aria-label={t('navigator.close')} onClick={onClose}>
-          ×
+          <CloseIcon />
         </button>
       </div>
 
@@ -150,6 +167,16 @@ export function PageNavigator({
         </label>
         <label className="page-navigator__scrubber">
           <span className="sr-only">{t('navigator.scrubber')}</span>
+          {scrubberHoverPage && (
+            <div
+              className="page-navigator__scrubber-preview"
+              style={{ left: `${scrubberHoverLeft}px` }}
+              aria-hidden="true"
+            >
+              <img src={scrubberHoverPage.src} alt="" />
+              <span>{scrubberHoverPage.index + 1}</span>
+            </div>
+          )}
           <input
             type="range"
             min={1}
@@ -160,6 +187,12 @@ export function PageNavigator({
             aria-valuemin={1}
             aria-valuemax={Math.max(pages.length, 1)}
             aria-valuenow={safeCurrent + 1}
+            onPointerMove={onScrubberPointerMove}
+            onPointerLeave={onScrubberPointerLeave}
+            onPointerOut={onScrubberPointerLeave}
+            onMouseMove={onScrubberPointerMove as never}
+            onMouseLeave={onScrubberPointerLeave}
+            onMouseOut={onScrubberPointerLeave}
             onInput={(event) => selectPage(Number(event.currentTarget.value) - 1)}
           />
         </label>
@@ -190,7 +223,7 @@ export function PageNavigator({
                 onClick={() => onToggleBookmark(page.id)}
                 data-reader-control
               >
-                {bookmarked ? '◆' : '◇'}
+                {bookmarked ? <BookmarkFilledIcon /> : <BookmarkIcon />}
               </button>
               {bookmarked && (
                 <input

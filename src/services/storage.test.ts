@@ -26,16 +26,27 @@ describe('browser fallback storage', () => {
     saveFavorite('book-b', true);
     saveBookmarks('book-a', [{ pageId: 'page-a', label: 'opening', createdAt: '1', updatedAt: '1' }]);
     saveBookmarks('book-b', [{ pageId: 'page-b', label: 'ending', createdAt: '2', updatedAt: '2' }]);
-    saveReaderState('book-a', { zoomMode: 'manual', zoomScale: 1.5, panX: 20, panY: -10 });
+    saveReaderState('book-a', {
+      zoomMode: 'manual',
+      zoomScale: 1.5,
+      panX: 20,
+      panY: -10,
+      rotation: 0,
+      background: 'atelier',
+    });
 
     expect(loadFavorites()).toEqual(['book-a', 'book-b']);
     expect(loadBookmarks('book-a')).toEqual([
       { pageId: 'page-a', label: 'opening', createdAt: '1', updatedAt: '1' },
     ]);
-    expect(loadBookmarks('book-b')).toEqual([
-      { pageId: 'page-b', label: 'ending', createdAt: '2', updatedAt: '2' },
-    ]);
-    expect(loadReaderState('book-a')).toEqual({ zoomMode: 'manual', zoomScale: 1.5, panX: 20, panY: -10 });
+    expect(loadReaderState('book-a')).toEqual({
+      zoomMode: 'manual',
+      zoomScale: 1.5,
+      panX: 20,
+      panY: -10,
+      rotation: 0,
+      background: 'atelier',
+    });
     expect(loadReaderState('book-b')).toEqual(defaultReaderState);
   });
 

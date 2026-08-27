@@ -3,6 +3,7 @@ import type { ActionName, CacheInfo, ReadingProfile } from '../domain/types';
 import { bindingLabel } from '../domain/input';
 import { actionLabel, availableLocales, getLocale, setLocale, t } from '../i18n/catalog';
 import type { NamedReadingProfile } from '../domain/profiles';
+import { CloseIcon } from './Icons';
 
 interface ProfilePanelProps {
   profile: ReadingProfile;
@@ -28,6 +29,9 @@ interface ProfilePanelProps {
   onUndoPreview?: () => void;
   onImportProfiles?: (text: string) => string | undefined | Promise<string | undefined>;
   onExportProfiles?: () => void;
+  onLocaleChange?: (locale: string) => void;
+  onExportData?: () => void;
+  onImportData?: (text: string) => string | undefined | Promise<string | undefined>;
 }
 
 const CACHE_LIMITS = [
@@ -86,6 +90,9 @@ export function ProfilePanel({
   onUndoPreview = () => undefined,
   onImportProfiles = () => undefined,
   onExportProfiles = () => undefined,
+  onLocaleChange,
+  onExportData,
+  onImportData,
 }: ProfilePanelProps) {
   const selectedCacheLimit = CACHE_LIMITS.some((limit) => limit.value === cacheInfo.maxBytes)
     ? cacheInfo.maxBytes
@@ -122,6 +129,20 @@ export function ProfilePanel({
       setProfileError(error);
     } catch {
       setProfileError(t('profile.transferError'));
+    }
+  };
+
+  const onImportDataFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !onImportData) {
+      return;
+    }
+    try {
+      const error = await onImportData(await file.text());
+      setProfileError(error);
+    } catch {
+      setProfileError(t('profile.dataTransferError'));
     }
   };
 
@@ -192,7 +213,9 @@ export function ProfilePanel({
           <span className="eyebrow">{t('profile.heading')}</span>
           <h2 id="profile-panel-title">{profile.name}</h2>
         </div>
-        <button ref={closeRef} className="panel-close" onClick={onClose} aria-label={t('profile.close')}>×</button>
+        <button ref={closeRef} className="panel-close" onClick={onClose} aria-label={t('profile.close')}>
+          <CloseIcon />
+        </button>
       </div>
 
       <div className="panel-scroll">
@@ -242,6 +265,7 @@ export function ProfilePanel({
             <select id="page-arrangement" value={profile.mode} onChange={(event) => onChange({ mode: event.target.value as ReadingProfile['mode'] })}>
               <option value="single">{t('profile.single')}</option>
               <option value="spread">{t('profile.spread')}</option>
+              <option value="webtoon">{t('profile.webtoon')}</option>
             </select>
           </label>
           <label className="setting-row" htmlFor="reading-direction">
@@ -320,6 +344,7 @@ export function ProfilePanel({
               onChange={(event) => {
                 setLocale(event.target.value);
                 setCurrentLocale(event.target.value);
+                onLocaleChange?.(event.target.value);
               }}
             >
               {availableLocales().map((locale) => (
@@ -328,6 +353,21 @@ export function ProfilePanel({
             </select>
           </label>
         </section>
+
+        {(onExportData || onImportData) && (
+          <section className="settings-section">
+            <span className="settings-label">{t('profile.backup')}</span>
+            <div className="profile-transfer-actions">
+              {onExportData && <button type="button" className="secondary-button" onClick={onExportData}>{t('profile.exportData')}</button>}
+              {onImportData && (
+                <label className="secondary-button profile-import-button">
+                  {t('profile.importData')}
+                  <input type="file" accept="application/json,.json" onChange={(event) => void onImportDataFile(event)} />
+                </label>
+              )}
+            </div>
+          </section>
+        )}
 
         <section className="settings-section cache-section">
           <span className="settings-label">{t('profile.cache')}</span>

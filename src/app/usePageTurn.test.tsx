@@ -56,6 +56,7 @@ function profile(overrides: Partial<ReadingProfile> = {}): ReadingProfile {
       toggle_spread: ['KeyS'],
       toggle_navigator: ['KeyP'],
       toggle_bookmark: ['KeyB'],
+      rotate_clockwise: ['KeyR'],
       cancel: ['Escape'],
     },
     ...overrides,
@@ -180,7 +181,7 @@ describe('usePageTurn', () => {
     expect(latest?.pendingPointer?.grab.y).toBeCloseTo(0.5, 2);
   });
 
-  it('keeps hover lift within three percent and suppresses the preview in reduced motion', async () => {
+  it('ignores idle pointer move without dragging to prevent accidental page turn triggers', async () => {
     const animated = await renderHook(createOptions());
 
     act(() => {
@@ -189,9 +190,7 @@ describe('usePageTurn', () => {
       );
     });
 
-    expect(latest?.surfaceInput?.state.phase).toBe('preparing');
-    expect(latest?.surfaceInput?.progress).toBeGreaterThan(0);
-    expect(latest?.surfaceInput?.progress).toBeLessThanOrEqual(0.03);
+    expect(latest?.surfaceInput).toBeUndefined();
 
     const reduced = await renderHook(createOptions({ reducedMotion: true }));
     act(() => {

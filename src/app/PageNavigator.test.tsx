@@ -135,4 +135,33 @@ describe('PageNavigator', () => {
     expect(document.activeElement).toBe(trigger);
     root = createRoot(host);
   });
+
+  it('displays a preview card when hovering over the scrubber track', () => {
+    renderNavigator();
+
+    const scrubber = host.querySelector<HTMLInputElement>('[aria-label="Page scrubber"]');
+    expect(scrubber).not.toBeNull();
+
+    if (scrubber) {
+      act(() => {
+        scrubber.dispatchEvent(
+          new MouseEvent('pointermove', {
+            bubbles: true,
+            clientX: 100,
+          }),
+        );
+      });
+    }
+
+    const preview = host.querySelector('.page-navigator__scrubber-preview');
+    expect(preview).not.toBeNull();
+
+    if (scrubber) {
+      act(() => {
+        scrubber.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+      });
+    }
+
+    expect(host.querySelector('.page-navigator__scrubber-preview')).toBeNull();
+  });
 });

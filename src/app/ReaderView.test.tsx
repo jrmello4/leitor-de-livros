@@ -99,6 +99,7 @@ function createProfile(overrides: Partial<ReadingProfile> = {}): ReadingProfile 
       toggle_spread: ['KeyS'],
       toggle_navigator: ['KeyP'],
       toggle_bookmark: ['KeyB'],
+      rotate_clockwise: ['KeyR'],
       cancel: ['Escape'],
     },
     ...overrides,
@@ -127,12 +128,16 @@ describe('ReaderView physical page-turn integration', () => {
     onNext = vi.fn(),
     onPrevious = vi.fn(),
     onRegisterTurnRequest = vi.fn(),
+    onNextVolume,
+    nextVolumeTitle,
   }: {
     publication?: Publication;
     profile?: ReadingProfile;
     onNext?: ReturnType<typeof vi.fn>;
     onPrevious?: ReturnType<typeof vi.fn>;
     onRegisterTurnRequest?: ReturnType<typeof vi.fn>;
+    onNextVolume?: () => void;
+    nextVolumeTitle?: string;
   } = {}) {
     const props = {
       publication,
@@ -148,7 +153,7 @@ describe('ReaderView physical page-turn integration', () => {
       nativeRuntime: false,
       settingsTriggerRef: { current: null },
       bookmarks: [] as Bookmark[],
-      readerState: { zoomMode: 'page', zoomScale: 1, panX: 0, panY: 0 } as ReaderState,
+      readerState: { zoomMode: 'page', zoomScale: 1, panX: 0, panY: 0, rotation: 0, background: 'atelier' } as ReaderState,
       onSaveReaderState: vi.fn(),
       onSelectPage: vi.fn(),
       onToggleBookmark: vi.fn(),
@@ -158,6 +163,8 @@ describe('ReaderView physical page-turn integration', () => {
       onToggleNavigator: vi.fn(),
       onCloseNavigator: vi.fn(),
       onRegisterTurnRequest,
+      onNextVolume,
+      nextVolumeTitle,
     };
 
     await act(async () => {
@@ -229,5 +236,116 @@ describe('ReaderView physical page-turn integration', () => {
 
     expect(onNext).not.toHaveBeenCalled();
     expect(host.querySelector('[data-testid="page-turn-canvas"]')).toBeNull();
+  });
+
+  it('mounts WebtoonReader when profile mode is webtoon', async () => {
+    class MockIntersectionObserver {
+      observe = vi.fn();
+      unobserve = vi.fn();
+      disconnect = vi.fn();
+    }
+    window.IntersectionObserver = MockIntersectionObserver as never;
+
+    await renderReader({
+      profile: {
+        id: 'test',
+        version: 1,
+        name: 'Webtoon Profile',
+        mode: 'webtoon',
+        direction: 'ltr',
+        contrast: 'standard',
+        reducedMotion: false,
+        pageTurnDuration: 300,
+        layoutZone: 'bottom',
+        zoomMode: 'page',
+        zoomScale: 1,
+        bindings: { next_page: [], previous_page: [], toggle_library: [], toggle_fullscreen: [], toggle_settings: [], toggle_spread: [], toggle_navigator: [], toggle_bookmark: [], rotate_clockwise: [], cancel: [] },
+      },
+    });
+
+    expect(host.querySelector('[data-testid="webtoon-reader"]')).not.toBeNull();
+  });
+
+  it('navigates with mouse lateral buttons 3 and 4 via auxclick', async () => {
+    const onPrevious = vi.fn();
+    const onNext = vi.fn();
+
+    await renderReader({ onPrevious, onNext });
+
+    act(() => {
+      window.dispatchEvent(new MouseEvent('auxclick', { button: 3, bubbles: true }));
+    });
+    expect(onPrevious).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      window.dispatchEvent(new MouseEvent('auxclick', { button: 4, bubbles: true }));
+    });
+    expect(onNext).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders next volume button on the final page', async () => {
+    const onNextVolume = vi.fn();
+    const pub = createPublication('cbz');
+    pub.currentPage = pub.pages.length - 1; // page 2
+
+    await renderReader({
+      publication: pub,
+      onNextVolume,
+      nextVolumeTitle: 'Volume 2',
+    });
+
+    const nextVolumeBtn = host.querySelector<HTMLButtonElement>('.next-volume-btn');
+    expect(nextVolumeBtn).not.toBeNull();
+    expect(nextVolumeBtn?.textContent).toContain('Next: Volume 2');
+
+    act(() => nextVolumeBtn?.click());
+    expect(onNextVolume).toHaveBeenCalledTimes(1);
+  });
+
+  it('navigates when clicking on the right or left half of the stage in spread mode', async () => {
+    const onNext = vi.fn();
+    const onPrevious = vi.fn();
+
+    await renderReader({
+      profile: createProfile({ mode: 'spread', direction: 'ltr' }),
+      onNext,
+      onPrevious,
+    });
+
+    const stage = host.querySelector<HTMLElement>('.reading-stage');
+    expect(stage).not.toBeNull();
+
+    // Mock bounding client rect: width 1000, left 0
+    if (stage) {
+      stage.getBoundingClientRect = () => ({
+        left: 0,
+        top: 0,
+        right: 1000,
+        bottom: 800,
+        width: 1000,
+        height: 800,
+        x: 0,
+        y: 0,
+        toJSON: () => {},
+      });
+
+      // Click right side (x = 750) -> next
+      act(() => {
+        const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, clientX: 750, clientY: 400, button: 0 });
+        const up = new MouseEvent('pointerup', { bubbles: true, cancelable: true, clientX: 750, clientY: 400, button: 0 });
+        stage.dispatchEvent(down);
+        stage.dispatchEvent(up);
+      });
+      expect(onNext).toHaveBeenCalledTimes(1);
+
+      // Click left side (x = 250) -> previous
+      act(() => {
+        const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, clientX: 250, clientY: 400, button: 0 });
+        const up = new MouseEvent('pointerup', { bubbles: true, cancelable: true, clientX: 250, clientY: 400, button: 0 });
+        stage.dispatchEvent(down);
+        stage.dispatchEvent(up);
+      });
+      expect(onPrevious).toHaveBeenCalledTimes(1);
+    }
   });
 });

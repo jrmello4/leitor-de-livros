@@ -45,7 +45,10 @@ export function buildPageTurnScene(input: PageTurnSceneInput): PageTurnScene | u
     return undefined;
   }
 
-  const underPage = input.pages[input.currentIndex + step * 2];
+  const underIndex = input.mode === 'single'
+    ? input.currentIndex + step
+    : input.currentIndex + step * 2;
+  const underPage = input.pages[underIndex];
   const under = underPage?.src ? underPage : undefined;
   const stationary = visiblePagesAt(input.pages, input.currentIndex, input.mode, input.readingDirection).filter(
     (page) => page.id !== turningFront.id && page.id !== turningVerso.id,

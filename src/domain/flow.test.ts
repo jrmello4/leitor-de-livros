@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   addPanelRegion,
   analyzePanelRaster,
+  calculatePanelCameraTransform,
   createManualPanelGraph,
   flowResolution,
   orderedPanels,
@@ -99,5 +100,69 @@ describe('Adaptive Flow geometry', () => {
     const withRemoved = removePanelRegion(withUpdated, addedId);
     expect(withRemoved.regions).toHaveLength(initialCount);
     expect(withRemoved.regions.find((r) => r.id === addedId)).toBeUndefined();
+  });
+
+  it('calculates cinematic camera framing and centering for a panel', () => {
+    // Top-left panel occupying 50% width and 50% height
+    const bounds = { x: 0, y: 0, width: 0.5, height: 0.5 };
+    const transform = calculatePanelCameraTransform(bounds, 1920, 1080, 800, 1200);
+
+    // Scale should zoom in to fit 50% box into viewport
+    expect(transform.scale).toBeGreaterThan(1);
+    expect(transform.scale).toBeLessThanOrEqual(4.5);
+
+    // Pan should offset toward the top-left to center the panel
+    expect(transform.panX).toBeGreaterThan(0);
+    expect(transform.panY).toBeGreaterThan(0);
+
+    // Centered full page panel should have 0 pan
+    const fullPageBounds = { x: 0, y: 0, width: 1, height: 1 };
+    const fullTransform = calculatePanelCameraTransform(fullPageBounds, 1000, 1000, 1000, 1000);
+    expect(fullTransform.panX).toBe(0);
+    expect(fullTransform.panY).toBe(0);
+    expect(fullTransform.scale).toBe(1);
+  });
+
+  it('detects multi-tier comic panels separated by dark or light gutters', () => {
+    const width = 100;
+    const height = 150;
+    const data = new Uint8ClampedArray(width * height * 4).fill(255); // White background
+
+    // Fill 4 panels in 2 tiers (2x2 grid) with gutter gaps
+    const drawPanel = (x1: number, y1: number, w: number, h: number) => {
+      for (let y = y1; y < y1 + h; y += 1) {
+        for (let x = x1; x < x1 + w; x += 1) {
+          const idx = (y * width + x) * 4;
+          data[idx] = 40;
+          data[idx + 1] = 40;
+          data[idx + 2] = 40;
+        }
+      }
+    };
+
+    drawPanel(10, 10, 35, 55); // Top-left
+    drawPanel(55, 10, 35, 55); // Top-right
+    drawPanel(10, 80, 35, 55); // Bottom-left
+    drawPanel(55, 80, 35, 55); // Bottom-right
+
+    const graph = analyzePanelRaster('comic-page', { width, height, data }, 'ltr');
+    expect(graph.regions.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('keeps full splash art pages and covers as a clean single full-page panel', () => {
+    const width = 100;
+    const height = 150;
+    const data = new Uint8ClampedArray(width * height * 4);
+    // Draw continuous artwork across the entire page (no gutters)
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = (i % 200) + 20;
+      data[i + 1] = (i % 150) + 30;
+      data[i + 2] = (i % 100) + 40;
+      data[i + 3] = 255;
+    }
+
+    const graph = analyzePanelRaster('splash-page', { width, height, data }, 'ltr');
+    expect(graph.regions).toHaveLength(1);
+    expect(graph.regions[0].bounds).toEqual({ x: 0, y: 0, width: 1, height: 1 });
   });
 });
