@@ -1,9 +1,9 @@
 # Domain Docs
 
-Before exploring the codebase, read these when present:
+Consult these when relevant to the task and present:
 
-- `CONTEXT.md` at the repository root.
-- `docs/adr/` entries relevant to the area being changed.
+- `CONTEXT.md` for domain vocabulary and behavior.
+- `docs/adr/` entries for architectural decisions affecting the change.
 
 If they do not exist, proceed silently. Domain-modeling skills create them lazily when terminology or architectural decisions are resolved.
 
