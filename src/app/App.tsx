@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { addPluginListener, type PluginListener } from '@tauri-apps/api/core';
 import { createDemoPublication } from '../data/demo';
 import { canRunActionWhileSettingsOpen, InputMap } from '../domain/input';
 import { createPageSelectionCoordinator, preparePageSelection, selectLatestPage, warmWorkingSet, type PageSelectionRequest } from '../domain/pageSelection';
@@ -33,6 +34,7 @@ import {
   clearNativeCover,
   importNativePaths,
   isNativeRuntime,
+  listenNativeImportProgress,
   listNativePublications,
   loadNativePublicationPages,
   loadNativeProfileStore,
@@ -63,7 +65,7 @@ import {
   saveProfileStore,
   saveProgress,
 } from '../services/storage';
-import { LibraryView } from './LibraryView';
+import { LibraryView, type ImportProgress } from './LibraryView';
 import { LiveAnnouncement } from './LiveAnnouncement';
 import { ProfilePanel } from './ProfilePanel';
 import { ReaderView } from './ReaderView';
@@ -150,6 +152,8 @@ export function App() {
   const [readerStates, setReaderStates] = useState<Record<string, ReaderState>>({});
   const [cacheInfo, setCacheInfo] = useState<CacheInfo>(DEFAULT_CACHE_INFO);
   const [isImporting, setIsImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
+  const [retryableNativePaths, setRetryableNativePaths] = useState<string[] | null>(null);
   const [smokeImportSequence, setSmokeImportSequence] = useState(0);
   const [nativeLibraryReady, setNativeLibraryReady] = useState(!nativeRuntime);
   const [diagnostic, setDiagnostic] = useState<string | undefined>();
@@ -161,6 +165,7 @@ export function App() {
   const favoriteInFlightRef = useRef(new Set<string>());
   const bookmarkWriteQueuesRef = useRef(new Map<string, Promise<void>>());
   const pageSelectionCoordinatorRef = useRef(createPageSelectionCoordinator());
+  const boundaryAnnouncementRef = useRef(false);
   const profileStoreRef = useRef(profileStore);
   profileStoreRef.current = profileStore;
 
@@ -169,6 +174,10 @@ export function App() {
   activePublicationIdRef.current = activePublication?.id ?? null;
   const activeIdRef = useRef<string | null>(activeId);
   activeIdRef.current = activeId;
+  const showProfileRef = useRef(showProfile);
+  showProfileRef.current = showProfile;
+  const navigatorVisibleRef = useRef(navigatorVisible);
+  navigatorVisibleRef.current = navigatorVisible;
   const libraryRef = useRef(library);
   libraryRef.current = library;
   const bookmarksRef = useRef(bookmarks);
@@ -200,13 +209,21 @@ export function App() {
     const generation = ++metadataGenerationRef.current;
     const publicationIds = new Set(publications.map((publication) => publication.id));
     try {
-      const metadata = await Promise.all(publications.map(async (publication) => {
-        const [publicationBookmarks, readerState] = await Promise.all([
-          listBookmarksForPublication(publication.id),
-          loadReaderStateForPublication(publication.id),
-        ]);
-        return { id: publication.id, bookmarks: publicationBookmarks, readerState };
-      }));
+      const metadata: Array<{ id: string; bookmarks: Bookmark[]; readerState: ReaderState }> = [];
+      // Keep a large mobile library responsive while its per-publication
+      // bookmarks and viewport state are restored. Eight native calls at a
+      // time are enough to fill the UI without creating a 200+ request burst.
+      for (let start = 0; start < publications.length; start += 8) {
+        const batch = publications.slice(start, start + 8);
+        const resolved = await Promise.all(batch.map(async (publication) => {
+          const [publicationBookmarks, readerState] = await Promise.all([
+            listBookmarksForPublication(publication.id),
+            loadReaderStateForPublication(publication.id),
+          ]);
+          return { id: publication.id, bookmarks: publicationBookmarks, readerState };
+        }));
+        metadata.push(...resolved);
+      }
       if (generation !== metadataGenerationRef.current) {
         return;
       }
@@ -304,20 +321,48 @@ export function App() {
     const bootNativeLibrary = async () => {
       setNativeLibraryReady(false);
       try {
-        const nativeProfileStore = await loadNativeProfileStore();
-        const nextProfileStore = nativeProfileStore ?? profileStoreRef.current;
-        const nextProfile = getActiveProfile(nextProfileStore);
-        // Saving the normalized store also upgrades a legacy flat native row
-        // after it has been migrated in memory.
-        await saveNativeProfileStore(nextProfileStore);
-        const nativeLibrary = await listNativePublications(nextProfile.direction);
+        // Android can finish opening/migrating the SQLite store just after the
+        // WebView starts. Retry the complete boot transaction so a transient
+        // "state not managed"/database-open error does not strand the reader
+        // on the demo library until the next manual reload.
+        let mobileProfileStore: ProfileStore | undefined;
+        let nativeLibrary: Publication[] | undefined;
+        let lastBootError: unknown;
+        for (let attempt = 0; attempt < 3 && !nativeLibrary; attempt += 1) {
+          if (cancelled) {
+            return;
+          }
+          try {
+            const nativeProfileStore = await loadNativeProfileStore();
+            const nextProfileStore = nativeProfileStore ?? profileStoreRef.current;
+            // This build is a personal mobile reader: keep the continuous vertical
+            // layout as the single reading mode, including for profiles saved by
+            // an earlier desktop-oriented version.
+            const normalizedProfileStore: ProfileStore = {
+              ...nextProfileStore,
+              profiles: nextProfileStore.profiles.map((candidate) => ({ ...candidate, mode: 'webtoon' as const })),
+            };
+            const nextProfile = getActiveProfile(normalizedProfileStore);
+            // Saving the normalized store also upgrades a legacy flat native row
+            // after it has been migrated in memory.
+            await saveNativeProfileStore(normalizedProfileStore);
+            nativeLibrary = await listNativePublications(nextProfile.direction);
+            mobileProfileStore = normalizedProfileStore;
+          } catch (error) {
+            lastBootError = error;
+            if (attempt < 2) {
+              await new Promise<void>((resolve) => window.setTimeout(resolve, 250 * (attempt + 1)));
+            }
+          }
+        }
+        if (!mobileProfileStore || !nativeLibrary) {
+          throw lastBootError ?? new Error('native-library-boot-failed');
+        }
         if (cancelled) {
           return;
         }
-        if (nativeProfileStore) {
-          setProfileStore(nativeProfileStore);
-          profileStoreRef.current = nativeProfileStore;
-        }
+        setProfileStore(mobileProfileStore);
+        profileStoreRef.current = mobileProfileStore;
         setLibrary(nativeLibrary);
         setNativeLibraryReady(true);
         void hydrateMetadata(nativeLibrary);
@@ -338,6 +383,69 @@ export function App() {
       metadataGenerationRef.current += 1;
     };
   }, [hydrateMetadata, nativeRuntime, refreshCacheInfo]);
+
+  useEffect(() => {
+    if (!nativeRuntime) {
+      return undefined;
+    }
+    let unlisten: (() => void) | undefined;
+    void listenNativeImportProgress((progress) => {
+      setImportProgress({
+        phase: progress.processed >= progress.total && progress.total > 0 ? 'finishing' : 'processing',
+        total: progress.total,
+        completed: progress.processed,
+        currentName: progress.currentName,
+        failed: progress.failed,
+      });
+    }).then((dispose) => {
+      unlisten = dispose;
+    }).catch(() => undefined);
+    return () => unlisten?.();
+  }, [nativeRuntime]);
+
+  useEffect(() => {
+    const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+    if (!isAndroid) {
+      return undefined;
+    }
+    let disposed = false;
+    let pluginListener: PluginListener | undefined;
+    const handleAndroidBack = (event?: Event) => {
+      if (typeof navigator === 'undefined' || !/Android/i.test(navigator.userAgent)) {
+        return;
+      }
+      if (showProfileRef.current) {
+        event?.preventDefault();
+        event?.stopImmediatePropagation?.();
+        setShowProfile(false);
+        setCapturingAction(null);
+        return;
+      }
+      // ReaderView owns the local reader surfaces and the final exit while a
+      // publication is open. The library only needs to consume Back when a
+      // navigation drawer/modal is active at this level.
+      if (!activeIdRef.current && navigatorVisibleRef.current) {
+        event?.preventDefault();
+        event?.stopImmediatePropagation?.();
+        setNavigatorVisible(false);
+      }
+    };
+    window.addEventListener('backbutton', handleAndroidBack);
+    if (nativeRuntime) {
+      void addPluginListener('app', 'back-button', () => handleAndroidBack()).then((listener) => {
+        if (disposed) {
+          void listener.unregister();
+        } else {
+          pluginListener = listener;
+        }
+      }).catch(() => undefined);
+    }
+    return () => {
+      disposed = true;
+      window.removeEventListener('backbutton', handleAndroidBack);
+      void pluginListener?.unregister();
+    };
+  }, [nativeRuntime]);
 
   useEffect(() => {
     if (nativeRuntime) {
@@ -601,6 +709,25 @@ export function App() {
     }
   }, [updatePublication]);
 
+  const markPublicationRead = useCallback(async (publication: Publication) => {
+    const lastPage = Math.max(publication.pageCount - 1, 0);
+    updatePublication(publication.id, (current) => ({
+      ...current,
+      currentPage: lastPage,
+      currentPageId: current.pages[lastPage]?.id ?? current.currentPageId,
+      progress: 1,
+      updatedAt: new Date().toISOString(),
+    }));
+    saveProgress(publication.id, lastPage);
+    if (nativeRuntime) {
+      try {
+        await saveNativeProgress(publication.id, lastPage);
+      } catch {
+        setDiagnostic(t('app.progressSaveError'));
+      }
+    }
+  }, [nativeRuntime, updatePublication]);
+
   const replaceBrowserCover = useCallback(async (publication: Publication, file: File) => {
     try {
       const cover = await readBrowserCover(file);
@@ -811,6 +938,8 @@ export function App() {
         && previous.zoomScale === state.zoomScale
         && previous.panX === state.panX
         && previous.panY === state.panY
+        && previous.pageId === state.pageId
+        && previous.scrollRatio === state.scrollRatio
       ) {
         return current;
       }
@@ -868,7 +997,11 @@ export function App() {
       publication.id,
       nextPage,
       async () => {
-        if (!nativeRuntime) {
+        // Files selected through the Android HTML picker are already decoded
+        // into blob URLs. They must follow the browser path even in the Tauri
+        // runtime; asking Rust to prepare a blob descriptor makes the tap look
+        // like it did nothing because there is no filesystem path to rebuild.
+        if (!nativeRuntime || publication.pages[0]?.src?.startsWith('blob:')) {
           return null;
         }
         const prepared = await preparePageSelection(publication, profile, nextPage, ensureNativePage);
@@ -929,7 +1062,11 @@ export function App() {
       progress: calculateProgress(request.pageIndex, publication.pageCount, profile.direction),
       updatedAt: new Date().toISOString(),
     }));
-    setAnnouncement(t('app.pageReady', { page: request.pageIndex + 1, count: latest.pageCount }));
+    // A completed persistence from the preceding turn must not overwrite the
+    // more recent boundary feedback.
+    if (!boundaryAnnouncementRef.current) {
+      setAnnouncement(t('app.pageReady', { page: request.pageIndex + 1, count: latest.pageCount }));
+    }
   }, [persistProgress, profile.direction, updatePublication]);
 
   const moveActivePage = useCallback(
@@ -944,10 +1081,12 @@ export function App() {
       const nextPage = movePage(current.currentPage, current.pageCount, profile.direction, delta);
       if (nextPage === current.currentPage) {
         pageSelectionCoordinatorRef.current.cancel();
+        boundaryAnnouncementRef.current = true;
         setAnnouncement(delta > 0 ? t('app.endOfPublication') : t('app.beginningOfPublication'));
         return;
       }
 
+      boundaryAnnouncementRef.current = false;
       await selectPublicationPage(current, nextPage, commitActivePageSelection);
     },
     [commitActivePageSelection, profile.direction, selectPublicationPage],
@@ -982,6 +1121,31 @@ export function App() {
     },
     [commitActivePageSelection, selectPublicationPage],
   );
+
+  // Continuous scrolling already has the page in its DOM. Treating every
+  // IntersectionObserver update as a page-selection request rebuilt native
+  // cache entries during a pinch zoom, which could evict nearby images and
+  // make the reader appear to jump. Record progress without preparing pages.
+  const recordWebtoonVisiblePage = useCallback((pageIndex: number) => {
+    const publicationId = activeIdRef.current;
+    const current = publicationId
+      ? libraryRef.current.find((publication) => publication.id === publicationId)
+      : undefined;
+    if (!current || current.pages.length === 0) {
+      return;
+    }
+    const nextPage = clamp(pageIndex, 0, current.pages.length - 1);
+    if (nextPage === current.currentPage) {
+      return;
+    }
+    updatePublication(current.id, (publication) => ({
+      ...publication,
+      currentPage: nextPage,
+      progress: calculateProgress(nextPage, publication.pageCount, profile.direction),
+      updatedAt: new Date().toISOString(),
+    }));
+    void persistProgress(current.id, nextPage);
+  }, [persistProgress, profile.direction, updatePublication]);
 
   const saveActiveReaderState = useCallback((state: ReaderState) => {
     if (activePublication) {
@@ -1198,7 +1362,7 @@ export function App() {
         }
       : publication;
 
-    await selectPublicationPage(openingPublication, openingPublication.currentPage, async (preparedPage, request) => {
+    const commitOpenedPublication = async (preparedPage: PageDescriptor | null, request: PageSelectionRequest) => {
       const readyPublication = {
         ...openingPublication,
         pages: preparedPage
@@ -1220,7 +1384,23 @@ export function App() {
       setShowProfile(false);
       setDiagnostic(undefined);
       setAnnouncement(t('app.publicationOpened', { title: readyPublication.title, page: readyPublication.currentPage + 1, count: readyPublication.pageCount }));
-    });
+    };
+
+    // A cold native cache may need to decompress a PDF/CBZ page. Enter the
+    // reader first, then rebuild that page in the background; otherwise a tap
+    // on a library card appears frozen until I/O and decoding have finished.
+    const openingPage = openingPublication.pages[openingPublication.currentPage];
+    if (nativeRuntime && !openingPage?.src) {
+      await commitOpenedPublication(null, {
+        publicationId: openingPublication.id,
+        pageIndex: openingPublication.currentPage,
+        sequence: 0,
+      });
+      void selectPublicationPage(openingPublication, openingPublication.currentPage, commitOpenedPublication);
+      return;
+    }
+
+    await selectPublicationPage(openingPublication, openingPublication.currentPage, commitOpenedPublication);
   };
 
   const handleImport = async (files: File[]) => {
@@ -1229,15 +1409,20 @@ export function App() {
     }
 
     setIsImporting(true);
+    setImportProgress({ phase: 'processing', total: files.length, completed: 0 });
     setDiagnostic(undefined);
     const result = await importFiles(files);
+    setImportProgress({ phase: 'finishing', total: files.length, completed: files.length });
     setIsImporting(false);
 
     if (!result.publication) {
+      setImportProgress(null);
       setDiagnostic(result.diagnostic ?? t('app.importError'));
       setAnnouncement(result.diagnostic ?? t('app.importFailed'));
       return;
     }
+
+    setRetryableNativePaths(null);
 
     const importedPublication = {
       ...(result.publication as Publication),
@@ -1252,11 +1437,13 @@ export function App() {
       : importedPublication;
     setLibrary((current) => [openingPublication, ...current]);
     void openPublication(openingPublication);
+    setImportProgress(null);
     setAnnouncement(t('app.publicationImportedBrowser', { title: openingPublication.title }));
   };
 
   const handleNativeImport = async (request: NativeImportRequest): Promise<boolean> => {
     setIsImporting(true);
+    setImportProgress({ phase: 'selecting' });
     setDiagnostic(undefined);
     try {
       const resolution = await resolveNativeImportRequest(request, {
@@ -1264,17 +1451,26 @@ export function App() {
         chooseFolder: chooseNativeFolder,
       });
       if (resolution.kind === 'cancelled') {
+        setImportProgress(null);
         setAnnouncement(t('app.importCancelled'));
         return false;
       }
 
+      setImportProgress({ phase: 'processing', total: resolution.paths.length, completed: 0 });
+      setRetryableNativePaths(resolution.paths);
       const result = await importNativePaths(resolution.paths, profile.direction);
+      setImportProgress({ phase: 'finishing', total: Math.max(resolution.paths.length, result.publications.length), completed: Math.max(resolution.paths.length, result.publications.length) });
       setSmokeImportSequence((current) => current + 1);
       const diagnosticMessage = result.diagnostics.length > 0 ? result.diagnostics.join(' ') : undefined;
       setDiagnostic(diagnosticMessage);
       if (result.publications.length === 0) {
+        setImportProgress(null);
         setAnnouncement(t('app.nativeNoPublication'));
         return false;
+      }
+
+      if (result.diagnostics.length === 0) {
+        setRetryableNativePaths(null);
       }
 
       setLibrary((current) => {
@@ -1287,9 +1483,11 @@ export function App() {
       await refreshCacheInfo();
       const openingPublication = result.publications[0];
       await openPublication(openingPublication);
+      setImportProgress(null);
       setAnnouncement(t('app.publicationImportedNative', { title: openingPublication.title }));
       return true;
     } catch {
+      setImportProgress(null);
       setDiagnostic(t('app.nativeImportError'));
       setAnnouncement(t('app.nativeImportFailed'));
       return false;
@@ -1361,6 +1559,7 @@ export function App() {
               setNavigatorVisible(false);
               setShowProfile((current) => !current);
             }}
+            settingsOpen={showProfile}
             onToggleFullscreen={() => void toggleFullscreen()}
             onFlowCorrected={() => setAnnouncement(t('app.panelOrderCorrected'))}
             onFlowManualRoute={() => setAnnouncement(t('app.fullPageReadingEnabled'))}
@@ -1374,6 +1573,7 @@ export function App() {
             }}
             onSaveReaderState={saveActiveReaderState}
             onSelectPage={selectActivePage}
+            onWebtoonPageVisible={recordWebtoonVisiblePage}
             onToggleBookmark={toggleActiveBookmark}
             navigatorVisible={navigatorVisible}
             navigatorTriggerRef={navigatorTriggerRef}
@@ -1391,6 +1591,8 @@ export function App() {
             sort={sort}
             diagnostic={diagnostic}
             isImporting={isImporting}
+            importProgress={importProgress}
+            canRetryImport={retryableNativePaths !== null && retryableNativePaths.length > 0}
             onQueryChange={setQuery}
             onSortChange={setSort}
             onOpen={openPublication}
@@ -1398,11 +1600,17 @@ export function App() {
             isNativeRuntime={nativeRuntime}
             onImportNative={() => void handleNativeImport({ kind: 'files' })}
             onImportFolder={() => void handleNativeImport({ kind: 'folder' })}
+            onRetryImport={() => {
+              if (retryableNativePaths && retryableNativePaths.length > 0) {
+                void handleNativeImport({ kind: 'paths', paths: retryableNativePaths });
+              }
+            }}
             onOpenSettings={() => {
               void refreshCacheInfo();
               setShowProfile(true);
             }}
             onToggleFavorite={(publication) => void toggleFavorite(publication)}
+            onMarkRead={markPublicationRead}
             onDelete={(publication) => removePublication(publication)}
             onReplaceCover={replaceBrowserCover}
             onCoverError={handleBrowserCoverError}

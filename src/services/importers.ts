@@ -33,7 +33,7 @@ export function sortImageNames(names: string[]): string[] {
 export function formatForFile(name: string): PublicationFormat | undefined {
   const extension = fileExtension(name);
   if (extension === 'cbz') return 'cbz';
-  if (extension === 'cbr') return 'cbr';
+  if (extension === 'cbr' || extension === 'rar') return 'cbr';
   if (extension === 'pdf') return 'pdf';
   if (isImageName(name)) return 'images';
   return undefined;
@@ -182,7 +182,7 @@ export async function importFiles(files: File[]): Promise<ImportResult> {
     return importCbz(cbz);
   }
 
-  const unsupported = files.find((file) => ['cbr', 'pdf'].includes(fileExtension(file.name)));
+  const unsupported = files.find((file) => ['cbr', 'rar', 'pdf'].includes(fileExtension(file.name)));
   if (unsupported) {
     const format = fileExtension(unsupported.name).toUpperCase();
     return { diagnostic: t('import.nativeOnly', { format }) };

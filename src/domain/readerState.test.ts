@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
-import { defaultReaderState } from './readerState';
+import { defaultReaderState, normalizeReaderState } from './readerState';
 import {
   loadBookmarks,
   loadFavorites,
@@ -46,5 +46,16 @@ describe('reader state storage contracts', () => {
     expect(loadBookmarks('book-a')).toEqual(bookmarks);
     expect(loadReaderState('book-b')).toEqual(defaultReaderState);
     expect(loadBookmarks('book-b')).toEqual([]);
+  });
+
+  it('normalizes the Webtoon page position without trusting malformed values', () => {
+    expect(normalizeReaderState({ pageId: 'page-12', scrollRatio: 1.4 })).toMatchObject({
+      pageId: 'page-12',
+      scrollRatio: 1,
+    });
+    expect(normalizeReaderState({ pageId: '', scrollRatio: -0.2 })).toMatchObject({
+      pageId: undefined,
+      scrollRatio: 0,
+    });
   });
 });

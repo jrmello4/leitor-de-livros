@@ -70,6 +70,10 @@ pub struct NativeReaderState {
     pub zoom_scale: f64,
     pub pan_x: f64,
     pub pan_y: f64,
+    #[serde(default)]
+    pub page_id: Option<String>,
+    #[serde(default)]
+    pub scroll_ratio: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -85,6 +89,16 @@ pub struct CacheInfo {
 pub struct NativeImportResult {
     pub publications: Vec<NativePublication>,
     pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeImportProgress {
+    pub processed: usize,
+    pub total: usize,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub current_name: String,
 }
 
 #[derive(Debug, Clone)]

@@ -48,10 +48,13 @@ export function normalizeReaderState(value: unknown): ReaderState {
     panY: typeof value.panY === 'number' && Number.isFinite(value.panY) ? value.panY : defaultReaderState.panY,
     rotation,
     background,
+    pageId: typeof value.pageId === 'string' && value.pageId.length > 0 ? value.pageId : undefined,
+    scrollRatio: typeof value.scrollRatio === 'number' && Number.isFinite(value.scrollRatio)
+      ? Math.max(0, Math.min(1, value.scrollRatio))
+      : undefined,
   };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
-

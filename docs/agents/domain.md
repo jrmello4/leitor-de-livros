@@ -1,21 +1,12 @@
 # Domain Docs
 
-Consult these when relevant to the task and present:
+This is an **Android-first** comic reader. Desktop Windows packaging is retired; a host shell may still exist for local `vitest`/`cargo test`.
 
-- `CONTEXT.md` for domain vocabulary and behavior.
-- `docs/adr/` entries for architectural decisions affecting the change.
+Consult when relevant:
 
-If they do not exist, proceed silently. Domain-modeling skills create them lazily when terminology or architectural decisions are resolved.
+- `docs/android-status.md` — what is implemented and physically validated on device.
+- `docs/superpowers/specs/2026-09-08-mobile-android-comic-reader-design.md` — mobile product/spec.
+- `docs/roadmap-melhorias.md` — prioritized Android work.
+- `PRODUCT.md` — product boundaries and principles.
 
-## Layout
-
-This is a single-context repository:
-
-```
-/
-├── CONTEXT.md
-├── docs/adr/
-└── src/
-```
-
-Use the vocabulary defined in `CONTEXT.md`. Surface conflicts with existing ADRs explicitly instead of silently overriding them.
+Do not reintroduce Windows installer, NSIS, or desktop release promises without an explicit product decision.

@@ -1,4 +1,5 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import { calculateProgress } from '../domain/reader';
 import { defaultReaderState, normalizeReaderState } from '../domain/readerState';
@@ -82,10 +83,12 @@ export async function chooseNativeFiles(): Promise<string[]> {
   if (!isNativeRuntime()) {
     return [];
   }
+  if (isAndroidRuntime()) {
+    return pickAndroidImport('pick_files');
+  }
   const selection = await open({
     multiple: true,
     directory: false,
-    filters: [{ name: 'Tactile publications', extensions: ['cbz', 'cbr', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif'] }],
   });
   return normalizeSelection(selection);
 }
@@ -94,8 +97,32 @@ export async function chooseNativeFolder(): Promise<string[]> {
   if (!isNativeRuntime()) {
     return [];
   }
+  if (isAndroidRuntime()) {
+    return pickAndroidImport('pick_folder');
+  }
   const selection = await open({ multiple: false, directory: true });
   return normalizeSelection(selection);
+}
+
+export interface NativeImportProgress {
+  processed: number;
+  total: number;
+  succeeded: number;
+  failed: number;
+  currentName: string;
+}
+
+function isAndroidRuntime(): boolean {
+  return typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+}
+
+async function pickAndroidImport(command: 'pick_files' | 'pick_folder'): Promise<string[]> {
+  const result = await invoke<unknown>(`plugin:mobile-import|${command}`);
+  if (!result || typeof result !== 'object' || !('paths' in result)) {
+    return [];
+  }
+  const paths = (result as { paths?: unknown }).paths;
+  return Array.isArray(paths) ? paths.filter((path): path is string => typeof path === 'string') : [];
 }
 
 export async function listNativePublications(direction: ReadingDirection): Promise<Publication[]> {
@@ -150,6 +177,12 @@ export async function importNativePaths(
     publications: nativeResult.publications.map((publication) => mapPublication(publication, direction)),
     diagnostics: nativeResult.diagnostics.filter((diagnostic): diagnostic is string => typeof diagnostic === 'string'),
   };
+}
+
+export function listenNativeImportProgress(
+  callback: (progress: NativeImportProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<NativeImportProgress>('import-progress', (event) => callback(event.payload));
 }
 
 export async function saveNativeProgress(publicationId: string, currentPage: number): Promise<void> {

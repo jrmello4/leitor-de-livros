@@ -13,15 +13,15 @@
     "windows": [
       {
         "title": "Tactile Reader",
-        "width": 1440,
-        "height": 960,
-        "minWidth": 980,
-        "minHeight": 680,
+        "width": 420,
+        "height": 900,
+        "minWidth": 360,
+        "minHeight": 640,
         "resizable": true
       }
     ],
     "security": {
-      "csp": "default-src 'self' ipc: http://ipc.localhost asset: http://asset.localhost https://asset.localhost; img-src 'self' asset: http://asset.localhost https://asset.localhost blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval'",
+      "csp": "default-src 'self' ipc: http://ipc.localhost asset: http://asset.localhost https://asset.localhost; img-src 'self' asset: http://asset.localhost https://asset.localhost blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self'",
       "assetProtocol": {
         "enable": true,
         "scope": ["$APPDATA/**"]
@@ -29,12 +29,9 @@
     }
   },
   "bundle": {
-    "active": true,
-    "targets": ["nsis"],
-    "resources": {
-      "resources/pdfium/pdfium.dll": "pdfium.dll",
-      "resources/licenses/pdfium/": "licenses/pdfium/",
-      "resources/licenses/unrar/": "licenses/unrar/"
-    }
-  }
+    "active": false,
+    "targets": [],
+    "resources": {}
+  },
+  "plugins": {}
 }

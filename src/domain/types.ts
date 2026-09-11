@@ -96,6 +96,9 @@ export interface ReaderState {
   panY: number;
   rotation: PageRotation;
   background: StageBackground;
+  /** Webtoon resume position within the page, persisted independently of page index. */
+  pageId?: string;
+  scrollRatio?: number;
 }
 
 export interface Bookmark {

@@ -2,7 +2,7 @@ use std::{
     cmp::Ordering,
     collections::HashSet,
     fs::{self, File, OpenOptions},
-    io::{Cursor, Read, Write},
+    io::{copy, sink, Cursor, Read, Write},
     path::{Component, Path, PathBuf},
 };
 
@@ -13,17 +13,50 @@ use zip::ZipArchive;
 use crate::{
     db::LibraryDb,
     error::{CoreError, CoreResult},
-    models::{NativeImportResult, NativePublication, NewPage, NewPublication, PageSourceRef},
+    models::{
+        NativeImportProgress, NativeImportResult, NativePublication, NewPage, NewPublication,
+        PageSourceRef,
+    },
 };
 
 pub(crate) const MAX_PAGE_BYTES: u64 = 64 * 1024 * 1024;
 pub(crate) const MAX_ARCHIVE_BYTES: u64 = 1024 * 1024 * 1024;
 pub(crate) const MAX_TOTAL_UNCOMPRESSED_BYTES: u64 = 512 * 1024 * 1024;
 pub(crate) const MAX_PAGE_COUNT: usize = 1024;
+const MAX_COLLECTION_ITEMS: usize = 2048;
+const MAX_COLLECTION_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 pub(crate) const MAX_IMAGE_DIMENSION: u32 = 20_000;
 pub(crate) const MAX_IMAGE_PIXELS: u64 = 100_000_000;
 
 const IMAGE_EXTENSIONS: &[&str] = &["avif", "gif", "jpeg", "jpg", "png", "webp"];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ComicArchiveContainer {
+    Zip,
+    Rar,
+    SevenZip,
+    Unknown,
+}
+
+fn detect_comic_archive_container(path: &Path) -> CoreResult<ComicArchiveContainer> {
+    let mut file = File::open(path)?;
+    let mut signature = [0_u8; 8];
+    let read = file.read(&mut signature)?;
+    let bytes = &signature[..read];
+    if bytes.starts_with(b"PK\x03\x04")
+        || bytes.starts_with(b"PK\x05\x06")
+        || bytes.starts_with(b"PK\x07\x08")
+    {
+        return Ok(ComicArchiveContainer::Zip);
+    }
+    if bytes.starts_with(b"Rar!\x1a\x07\x00") || bytes.starts_with(b"Rar!\x1a\x07\x01\x00") {
+        return Ok(ComicArchiveContainer::Rar);
+    }
+    if bytes.starts_with(b"7z\xBC\xAF\x27\x1C") {
+        return Ok(ComicArchiveContainer::SevenZip);
+    }
+    Ok(ComicArchiveContainer::Unknown)
+}
 
 // Used through the staged cache command API introduced in the next task.
 #[allow(dead_code)]
@@ -35,11 +68,24 @@ pub(crate) struct RebuiltPage {
 }
 
 pub fn import_paths(db: &LibraryDb, raw_paths: &[String]) -> CoreResult<NativeImportResult> {
+    import_paths_with_progress(db, raw_paths, |_| {})
+}
+
+pub fn import_paths_with_progress<F>(
+    db: &LibraryDb,
+    raw_paths: &[String],
+    mut on_progress: F,
+) -> CoreResult<NativeImportResult>
+where
+    F: FnMut(NativeImportProgress),
+{
     let mut image_paths = Vec::new();
     let mut image_sources = Vec::new();
     let mut archive_paths = Vec::new();
     let mut cbr_paths = Vec::new();
+    let mut sevenz_paths = Vec::new();
     let mut pdf_paths = Vec::new();
+    let mut collection_paths = Vec::new();
     let mut diagnostics = Vec::new();
 
     for raw_path in raw_paths {
@@ -53,19 +99,40 @@ pub fn import_paths(db: &LibraryDb, raw_paths: &[String]) -> CoreResult<NativeIm
 
         if path.is_dir() {
             let mut files = Vec::new();
-            if let Err(error) = collect_image_files(&path, &path, &mut files) {
+            if let Err(error) = collect_publication_files(&path, &path, &mut files) {
                 diagnostics.push(format!("{}: {error}", path.display()));
                 continue;
             }
             if files.is_empty() {
                 diagnostics.push(format!(
-                    "{}: no supported raster images were found.",
+                    "{}: no supported comics or raster images were found.",
                     path.display()
                 ));
                 continue;
             }
-            image_sources.push(format!("directory:{}", path.display()));
-            image_paths.extend(files);
+            for file in files {
+                match extension(&file).as_deref() {
+                    Some(extension) if is_image_extension(extension) => {
+                        image_sources.push(format!("image:{}", file.display()));
+                        image_paths.push(file);
+                    }
+                    Some("cbz") | Some("cbr") | Some("rar") | Some("7z") => {
+                        match detect_comic_archive_container(&file) {
+                            Ok(ComicArchiveContainer::Zip) => archive_paths.push(file),
+                            Ok(ComicArchiveContainer::Rar) => cbr_paths.push(file),
+                            Ok(ComicArchiveContainer::SevenZip) => sevenz_paths.push(file),
+                            Ok(ComicArchiveContainer::Unknown) => diagnostics.push(format!(
+                                "{}: file contents are not a supported ZIP/CBZ, RAR/CBR, or 7z archive.",
+                                file.display()
+                            )),
+                            Err(error) => diagnostics.push(format!("{}: {error}", file.display())),
+                        }
+                    }
+                    Some("pdf") => pdf_paths.push(file),
+                    Some("zip") => collection_paths.push(file),
+                    _ => {}
+                }
+            }
             continue;
         }
 
@@ -74,43 +141,134 @@ pub fn import_paths(db: &LibraryDb, raw_paths: &[String]) -> CoreResult<NativeIm
                 image_sources.push(format!("image:{}", path.display()));
                 image_paths.push(path);
             }
-            Some("cbz") => archive_paths.push(path),
-            Some("cbr") => cbr_paths.push(path),
+            Some("cbz") | Some("cbr") | Some("rar") | Some("7z") => {
+                match detect_comic_archive_container(&path) {
+                    Ok(ComicArchiveContainer::Zip) => archive_paths.push(path),
+                    Ok(ComicArchiveContainer::Rar) => cbr_paths.push(path),
+                    Ok(ComicArchiveContainer::SevenZip) => sevenz_paths.push(path),
+                    Ok(ComicArchiveContainer::Unknown) => diagnostics.push(format!(
+                        "{}: file contents are not a supported ZIP/CBZ, RAR/CBR, or 7z archive.",
+                        path.display()
+                    )),
+                    Err(error) => diagnostics.push(format!("{}: {error}", path.display())),
+                }
+            }
             Some("pdf") => pdf_paths.push(path),
+            Some("zip") => collection_paths.push(path),
             _ => diagnostics.push(format!("{}: unsupported publication file.", path.display())),
         }
     }
 
+    let total = archive_paths.len()
+        + cbr_paths.len()
+        + pdf_paths.len()
+        + sevenz_paths.len()
+        + collection_paths.len()
+        + if image_paths.is_empty() { 0 } else { 1 };
+    let mut processed = 0;
+    let mut succeeded = 0;
+    let mut failed = 0;
+    let mut emit = |name: &Path, ok: bool| {
+        processed += 1;
+        if ok {
+            succeeded += 1;
+        } else {
+            failed += 1;
+        }
+        on_progress(NativeImportProgress {
+            processed,
+            total,
+            succeeded,
+            failed,
+            current_name: name
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("arquivo")
+                .to_owned(),
+        });
+    };
     let mut publications = Vec::new();
     if !image_paths.is_empty() {
         let source_key = source_key("images", &image_sources);
         match import_image_set(db, &source_key, image_paths) {
-            Ok(publication) => publications.push(publication),
-            Err(error) => diagnostics.push(format!("image set: {error}")),
+            Ok(publication) => {
+                publications.push(publication);
+                emit(Path::new("conjunto de imagens"), true);
+            }
+            Err(error) => {
+                diagnostics.push(format!("image set: {error}"));
+                emit(Path::new("conjunto de imagens"), false);
+            }
         }
     }
 
     for path in archive_paths {
         let source_key = format!("archive:{}", path.display());
         match import_cbz(db, &source_key, &path) {
-            Ok(publication) => publications.push(publication),
-            Err(error) => diagnostics.push(format!("{}: {error}", path.display())),
+            Ok(publication) => {
+                publications.push(publication);
+                emit(&path, true);
+            }
+            Err(error) => {
+                diagnostics.push(format!("{}: {error}", path.display()));
+                emit(&path, false);
+            }
         }
     }
 
     for path in cbr_paths {
         let source_key = format!("cbr:{}", path.display());
         match crate::adapters::import_cbr(db, &source_key, &path) {
-            Ok(publication) => publications.push(publication),
-            Err(error) => diagnostics.push(format!("{}: {error}", path.display())),
+            Ok(publication) => {
+                publications.push(publication);
+                emit(&path, true);
+            }
+            Err(error) => {
+                diagnostics.push(format!("{}: {error}", path.display()));
+                emit(&path, false);
+            }
         }
     }
 
     for path in pdf_paths {
         let source_key = format!("pdf:{}", path.display());
         match crate::adapters::import_pdf(db, &source_key, &path) {
-            Ok(publication) => publications.push(publication),
-            Err(error) => diagnostics.push(format!("{}: {error}", path.display())),
+            Ok(publication) => {
+                publications.push(publication);
+                emit(&path, true);
+            }
+            Err(error) => {
+                diagnostics.push(format!("{}: {error}", path.display()));
+                emit(&path, false);
+            }
+        }
+    }
+
+    for path in sevenz_paths {
+        let source_key = format!("7z:{}", path.display());
+        match import_sevenz(db, &source_key, &path) {
+            Ok(publication) => {
+                publications.push(publication);
+                emit(&path, true);
+            }
+            Err(error) => {
+                diagnostics.push(format!("{}: {error}", path.display()));
+                emit(&path, false);
+            }
+        }
+    }
+
+    for path in collection_paths {
+        match import_collection_zip(db, &path) {
+            Ok(result) => {
+                publications.extend(result.publications);
+                diagnostics.extend(result.diagnostics);
+                emit(&path, true);
+            }
+            Err(error) => {
+                diagnostics.push(format!("{}: {error}", path.display()));
+                emit(&path, false);
+            }
         }
     }
 
@@ -118,6 +276,202 @@ pub fn import_paths(db: &LibraryDb, raw_paths: &[String]) -> CoreResult<NativeIm
         publications,
         diagnostics,
     })
+}
+
+fn import_collection_zip(db: &LibraryDb, path: &Path) -> CoreResult<NativeImportResult> {
+    let file = File::open(path)?;
+    let mut archive = ZipArchive::new(file)?;
+    if archive.len() > MAX_COLLECTION_ITEMS {
+        return Err(CoreError::from(format!(
+            "collection exceeds the {MAX_COLLECTION_ITEMS} item safety limit"
+        )));
+    }
+    let collection_id = digest_id("collection", path.to_string_lossy().as_bytes());
+    let parent = path
+        .parent()
+        .ok_or_else(|| CoreError::from("collection archive has no parent directory"))?;
+    let target_dir = parent.join(format!("collection-{collection_id}"));
+    fs::create_dir_all(&target_dir)?;
+    let mut nested_paths = Vec::new();
+    let mut total_bytes = 0_u64;
+
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index)?;
+        if entry.is_dir() {
+            continue;
+        }
+        let normalized = validate_archive_name(entry.name())?;
+        let nested_extension = extension_from_name(&normalized).unwrap_or_default();
+        if !matches!(
+            nested_extension.as_str(),
+            "cbr" | "rar" | "cbz" | "7z" | "pdf"
+        ) {
+            continue;
+        }
+        if entry.encrypted() {
+            return Err(CoreError::from(format!(
+                "encrypted collection item is not supported: {normalized}"
+            )));
+        }
+        if entry.size() > MAX_ARCHIVE_BYTES {
+            return Err(CoreError::from(format!(
+                "collection item exceeds the 1 GiB safety limit: {normalized}"
+            )));
+        }
+        total_bytes = total_bytes.saturating_add(entry.size());
+        if total_bytes > MAX_COLLECTION_BYTES {
+            return Err(CoreError::from(
+                "collection exceeds the 64 GiB extracted size safety limit",
+            ));
+        }
+        let file_name = Path::new(&normalized)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("comic.cbr");
+        // Keep legacy paths stable on reimport (IDs are derived from them).
+        // New entries keep the original basename in an isolated directory.
+        let legacy_target = target_dir.join(format!("{index:04}-{file_name}"));
+        let target = if legacy_target.is_file() {
+            legacy_target
+        } else {
+            let item_dir = target_dir.join(format!("{index:04}"));
+            fs::create_dir_all(&item_dir)?;
+            item_dir.join(file_name)
+        };
+        if !target.is_file() || fs::metadata(&target)?.len() != entry.size() {
+            let temporary = target_dir.join(format!(".{index:04}.tmp"));
+            let mut output = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&temporary)?;
+            std::io::copy(&mut entry, &mut output)?;
+            output.sync_all()?;
+            drop(output);
+            fs::rename(&temporary, &target)?;
+        }
+        nested_paths.push(target.to_string_lossy().into_owned());
+    }
+
+    if nested_paths.is_empty() {
+        return Err(CoreError::from(
+            "collection ZIP contains no CBR, CBZ, or PDF publications",
+        ));
+    }
+    import_paths(db, &nested_paths)
+}
+
+fn import_sevenz(db: &LibraryDb, source_key: &str, path: &Path) -> CoreResult<NativePublication> {
+    if let Some(existing) = db.find_by_source_path(source_key)? {
+        return Ok(existing);
+    }
+    if fs::metadata(path)?.len() > MAX_ARCHIVE_BYTES {
+        return Err(CoreError::from("7z exceeds the archive size safety limit"));
+    }
+    let publication_id = digest_id("publication", source_key.as_bytes());
+    let parent = path
+        .parent()
+        .ok_or_else(|| CoreError::from("7z archive has no parent directory"))?;
+    let extract_dir = parent.join(format!("7z-{publication_id}"));
+    fs::create_dir_all(&extract_dir)?;
+    let mut image_paths = Vec::new();
+    let mut total_bytes = 0_u64;
+    let extraction = sevenz_rust::decompress_file_with_extract_fn(
+        path,
+        &extract_dir,
+        |entry, reader, _destination| {
+            if entry.is_directory() {
+                return Ok(true);
+            }
+            let normalized = validate_archive_name(entry.name())
+                .map_err(|error| sevenz_rust::Error::other(error.to_string()))?;
+            let extension = extension_from_name(&normalized).unwrap_or_default();
+            if !is_image_extension(&extension) {
+                copy(reader, &mut sink()).map_err(sevenz_rust::Error::io)?;
+                return Ok(true);
+            }
+            if image_paths.len() >= MAX_PAGE_COUNT {
+                return Err(sevenz_rust::Error::other(format!(
+                    "7z exceeds the {MAX_PAGE_COUNT} page safety limit"
+                )));
+            }
+            if entry.size() > MAX_PAGE_BYTES {
+                return Err(sevenz_rust::Error::other(format!(
+                    "7z page {normalized} exceeds the {} MiB page limit",
+                    MAX_PAGE_BYTES / 1024 / 1024
+                )));
+            }
+            total_bytes = total_bytes.saturating_add(entry.size());
+            if total_bytes > MAX_TOTAL_UNCOMPRESSED_BYTES {
+                return Err(sevenz_rust::Error::other(
+                    "7z exceeds the total uncompressed size safety limit",
+                ));
+            }
+            let file_name = Path::new(&normalized)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("page");
+            let target = extract_dir.join(format!("{:04}-{file_name}", image_paths.len()));
+            let mut bytes = Vec::with_capacity(entry.size() as usize);
+            reader
+                .read_to_end(&mut bytes)
+                .map_err(sevenz_rust::Error::io)?;
+            validate_image(&bytes, &normalized)
+                .map_err(|error| sevenz_rust::Error::other(error.to_string()))?;
+            fs::write(&target, bytes).map_err(sevenz_rust::Error::io)?;
+            image_paths.push(target);
+            Ok(true)
+        },
+    );
+    if let Err(error) = extraction {
+        let _ = fs::remove_dir_all(&extract_dir);
+        return Err(CoreError::from(format!("Unable to read 7z comic: {error}")));
+    }
+    if image_paths.is_empty() {
+        let _ = fs::remove_dir_all(&extract_dir);
+        return Err(CoreError::from(
+            "7z contains no supported raster image pages",
+        ));
+    }
+    image_paths.sort_by(|left, right| {
+        let left_name = left
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        let right_name = right
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        natural_compare(left_name, right_name).then_with(|| left.cmp(right))
+    });
+    let cache_dir = db.cache_dir().join(&publication_id);
+    let title = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or("Imported 7z")
+        .to_owned();
+    let source_label = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("7z archive")
+        .to_owned();
+    let publication = match build_image_publication(
+        publication_id,
+        source_key.to_owned(),
+        title,
+        source_label,
+        image_paths,
+        cache_dir.clone(),
+    ) {
+        Ok(publication) => publication,
+        Err(error) => {
+            let _ = fs::remove_dir_all(&extract_dir);
+            let _ = fs::remove_dir_all(cache_dir);
+            return Err(error);
+        }
+    };
+    persist_publication(db, &publication, &cache_dir)
 }
 
 fn import_image_set(
@@ -227,9 +581,8 @@ fn build_image_publication(
     title: String,
     source_label: String,
     paths: Vec<PathBuf>,
-    cache_dir: PathBuf,
+    _cache_dir: PathBuf,
 ) -> CoreResult<NewPublication> {
-    fs::create_dir_all(&cache_dir)?;
     let mut pages = Vec::with_capacity(paths.len());
     let mut total_bytes = 0_u64;
     for (index, path) in paths.iter().enumerate() {
@@ -249,10 +602,7 @@ fn build_image_publication(
         }
         let bytes = fs::read(path)?;
         let (width, height) = validate_image(&bytes, path.to_string_lossy().as_ref())?;
-        let extension =
-            extension(path).ok_or_else(|| CoreError::from("image extension missing"))?;
         let page_id = format!("{publication_id}-page-{index:04}");
-        let cache_path = cache_page(&cache_dir, &page_id, &extension, &bytes)?;
         pages.push(NewPage {
             id: page_id,
             index,
@@ -261,7 +611,9 @@ fn build_image_publication(
                 .and_then(|name| name.to_str())
                 .unwrap_or("page")
                 .to_owned(),
-            cache_path,
+            // The reader reconstructs the current working set on demand. Do
+            // not duplicate an entire image directory during indexing.
+            cache_path: PathBuf::new(),
             source_ref: PageSourceRef::Image {
                 path: path.to_string_lossy().into_owned(),
             },
@@ -284,14 +636,12 @@ fn build_cbz_publication(
     publication_id: String,
     source_key: String,
     path: &Path,
-    cache_dir: PathBuf,
+    _cache_dir: PathBuf,
 ) -> CoreResult<NewPublication> {
     let archive_size = fs::metadata(path)?.len();
     if archive_size > MAX_ARCHIVE_BYTES {
         return Err(CoreError::from("CBZ exceeds the archive size safety limit"));
     }
-    fs::create_dir_all(&cache_dir)?;
-
     let file = File::open(path)?;
     let mut archive = ZipArchive::new(file)?;
     let mut pages = Vec::new();
@@ -337,10 +687,7 @@ fn build_cbz_publication(
         let mut bytes = Vec::with_capacity(entry_size.min(MAX_PAGE_BYTES) as usize);
         entry.read_to_end(&mut bytes)?;
         let (width, height) = validate_image(&bytes, &normalized_name)?;
-        let extension = extension_from_name(&normalized_name)
-            .ok_or_else(|| CoreError::from("CBZ image extension missing"))?;
         let page_id = format!("{publication_id}-page-{:04}", pages.len());
-        let cache_path = cache_page(&cache_dir, &page_id, &extension, &bytes)?;
         pages.push(NewPage {
             id: page_id,
             index: pages.len(),
@@ -349,7 +696,9 @@ fn build_cbz_publication(
                 .and_then(|name| name.to_str())
                 .unwrap_or(&normalized_name)
                 .to_owned(),
-            cache_path,
+            // Indexing validates the archive but keeps no derived image
+            // bytes. `ensure_page_cache` extracts only pages the reader uses.
+            cache_path: PathBuf::new(),
             source_ref: PageSourceRef::Archive {
                 path: path.to_string_lossy().into_owned(),
                 member: normalized_name,
@@ -574,7 +923,11 @@ fn canonicalize_input(raw_path: &str) -> CoreResult<PathBuf> {
     Ok(path.canonicalize()?)
 }
 
-fn collect_image_files(root: &Path, current: &Path, output: &mut Vec<PathBuf>) -> CoreResult<()> {
+fn collect_publication_files(
+    root: &Path,
+    current: &Path,
+    output: &mut Vec<PathBuf>,
+) -> CoreResult<()> {
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let file_type = entry.file_type()?;
@@ -583,15 +936,24 @@ fn collect_image_files(root: &Path, current: &Path, output: &mut Vec<PathBuf>) -
             continue;
         }
         if file_type.is_dir() {
-            collect_image_files(root, &path, output)?;
+            collect_publication_files(root, &path, output)?;
             continue;
         }
-        if !file_type.is_file() || !is_image_extension(&extension(&path).unwrap_or_default()) {
+        let file_extension = extension(&path).unwrap_or_default();
+        if !file_type.is_file()
+            || (!is_image_extension(&file_extension)
+                && !matches!(
+                    file_extension.as_str(),
+                    "cbz" | "cbr" | "rar" | "7z" | "pdf" | "zip"
+                ))
+        {
             continue;
         }
         let canonical = path.canonicalize()?;
         if !canonical.starts_with(root) {
-            return Err(CoreError::from("image path escaped the selected folder"));
+            return Err(CoreError::from(
+                "publication path escaped the selected folder",
+            ));
         }
         output.push(canonical);
     }
@@ -729,6 +1091,102 @@ mod tests {
 
     use super::*;
 
+    fn test_comic_bytes() -> Vec<u8> {
+        let mut png = Cursor::new(Vec::new());
+        DynamicImage::new_rgb8(3, 3).write_to(&mut png, ImageFormat::Png).expect("png");
+        let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for name in ["01.png", "02.png"] {
+            archive.start_file(name, SimpleFileOptions::default()).expect("page entry");
+            archive.write_all(png.get_ref()).expect("page bytes");
+        }
+        archive.finish().expect("comic").into_inner()
+    }
+
+    #[test]
+    fn legacy_import_names_are_repaired_without_changing_sources_or_reading_data() {
+        let root = std::env::temp_dir().join(format!("tactile-reader-legacy-names-{}", timestamp()));
+        let app_dir = root.join("app");
+        let database = LibraryDb::open(app_dir.clone()).expect("database");
+        let original = test_comic_bytes();
+        let paths: Vec<String> = [
+            "imports/batch-1788979885761-684528334738766/0-Arqueiro Verde Absoluto #00.cbr",
+            "imports/collection-collection-0123456789abcdef01234567/0000-Arqueiro Verde Absoluto #01.cbr",
+            "imports/collection-collection-0123456789abcdef01234567/0001-Arqueiro Verde Absoluto #02.cbr",
+            "imports/1788956256851-0-Batman Absoluto #01.cbz",
+            "imports/batch-123-456/0/2000 AD #01.cbr",
+        ].iter().map(|name| {
+            let path = app_dir.join(name);
+            fs::create_dir_all(path.parent().expect("parent")).expect("source directory");
+            fs::write(&path, &original).expect("source");
+            path.to_string_lossy().into_owned()
+        }).collect();
+        let imported = import_paths(&database, &paths).expect("import");
+        assert!(imported.diagnostics.is_empty());
+        let expected = ["Arqueiro Verde Absoluto #00", "Arqueiro Verde Absoluto #01", "Arqueiro Verde Absoluto #02", "Batman Absoluto #01", "2000 AD #01"];
+        for (publication, title) in imported.publications.iter().zip(expected) {
+            assert_eq!(publication.title, title);
+            assert_eq!(Path::new(&publication.source_label).file_stem().unwrap().to_str(), Some(title));
+            database.save_progress(&publication.id, 1).expect("progress");
+            database.upsert_bookmark(&publication.id, &crate::models::NativeBookmark {
+                page_id: publication.pages[1].id.clone(), label: "Minha página".into(), created_at: "1".into(), updated_at: "1".into(),
+            }).expect("bookmark");
+        }
+        drop(database);
+        let reopened = LibraryDb::open(app_dir).expect("reopen");
+        let summaries = reopened.list_publications().expect("existing library");
+        assert_eq!(summaries.len(), expected.len());
+        let reimported = import_paths(&reopened, &paths).expect("reimport");
+        for (before, after) in imported.publications.iter().zip(&reimported.publications) {
+            assert_eq!(before.id, after.id);
+            assert_eq!(before.title, after.title);
+            assert_eq!(after.current_page, 1);
+            assert_eq!(reopened.list_bookmarks(&after.id).expect("bookmarks")[0].page_id, before.pages[1].id);
+            let summary = summaries.iter().find(|book| book.id == after.id).expect("summary");
+            assert_eq!(summary.title, after.title);
+            assert_eq!(summary.current_page, 1);
+            assert_eq!(summary.source_label, after.source_label);
+        }
+        for path in paths { assert_eq!(fs::read(path).expect("unchanged source"), original); }
+        drop(reopened);
+        fs::remove_dir_all(root).expect("cleanup fixture");
+    }
+
+    #[test]
+    fn collection_keeps_original_names_and_reuses_legacy_paths_on_reimport() {
+        let root = std::env::temp_dir().join(format!("tactile-reader-collection-names-{}", timestamp()));
+        fs::create_dir_all(&root).expect("root");
+        let path = root.join("HQ.zip");
+        let comic = test_comic_bytes();
+        let mut archive = ZipWriter::new(File::create(&path).expect("collection"));
+        for name in ["A/Arqueiro Verde Absoluto #01.cbr", "B/Arqueiro Verde Absoluto #01.cbr", "Batman Absoluto #00.cbz"] {
+            archive.start_file(name, SimpleFileOptions::default()).expect("comic entry");
+            archive.write_all(&comic).expect("comic bytes");
+        }
+        archive.finish().expect("finish collection");
+        let path = path.canonicalize().expect("canonical source");
+        let collection_id = digest_id("collection", path.to_string_lossy().as_bytes());
+        let extracted = path.parent().unwrap().join(format!("collection-{collection_id}"));
+        fs::create_dir_all(&extracted).expect("legacy directory");
+        let legacy = extracted.join("0000-Arqueiro Verde Absoluto #01.cbr");
+        fs::write(&legacy, &comic).expect("legacy entry");
+        let database = LibraryDb::open(root.join("app")).expect("database");
+        let existing = import_paths(&database, &[legacy.to_string_lossy().into_owned()]).expect("legacy import");
+        let imported = import_paths(&database, &[path.to_string_lossy().into_owned()]).expect("collection import");
+        assert!(imported.diagnostics.is_empty());
+        assert_eq!(imported.publications.len(), 3);
+        assert_eq!(imported.publications[0].id, existing.publications[0].id);
+        assert_ne!(imported.publications[0].id, imported.publications[1].id);
+        assert_eq!(imported.publications[0].title, "Arqueiro Verde Absoluto #01");
+        assert_eq!(imported.publications[1].title, "Arqueiro Verde Absoluto #01");
+        assert_eq!(imported.publications[2].title, "Batman Absoluto #00");
+        assert!(extracted.join("0001/Arqueiro Verde Absoluto #01.cbr").is_file());
+        assert!(extracted.join("0002/Batman Absoluto #00.cbz").is_file());
+        assert_eq!(fs::read(legacy).expect("legacy source"), comic);
+        assert_eq!(database.list_publications().expect("library").len(), 3);
+        drop(database);
+        fs::remove_dir_all(root).expect("cleanup fixture");
+    }
+
     #[test]
     fn natural_order_keeps_page_two_before_page_ten() {
         let mut names = vec!["page10.png", "page2.png", "page1.png"];
@@ -741,6 +1199,38 @@ mod tests {
         assert!(validate_archive_name("../page.png").is_err());
         assert!(validate_archive_name("C:/page.png").is_err());
         assert!(validate_archive_name("pages/page.png").is_ok());
+    }
+
+    #[test]
+    fn comic_archive_detection_uses_bytes_instead_of_the_extension() {
+        let root = std::env::temp_dir().join(format!("tactile-reader-signature-{}", timestamp()));
+        fs::create_dir_all(&root).expect("test directory");
+        let zip_named_cbr = root.join("actually-a-zip.cbr");
+        let rar_named_cbz = root.join("actually-a-rar.cbz");
+        let sevenz_named_cbr = root.join("actually-a-7z.cbr");
+        let invalid = root.join("invalid.cbr");
+        fs::write(&zip_named_cbr, b"PK\x03\x04payload").expect("zip signature");
+        fs::write(&rar_named_cbz, b"Rar!\x1a\x07\x01\x00payload").expect("rar signature");
+        fs::write(&sevenz_named_cbr, b"7z\xBC\xAF\x27\x1C\x00\x00").expect("7z signature");
+        fs::write(&invalid, b"not an archive").expect("invalid signature");
+
+        assert_eq!(
+            detect_comic_archive_container(&zip_named_cbr).expect("detect zip"),
+            ComicArchiveContainer::Zip
+        );
+        assert_eq!(
+            detect_comic_archive_container(&rar_named_cbz).expect("detect rar"),
+            ComicArchiveContainer::Rar
+        );
+        assert_eq!(
+            detect_comic_archive_container(&sevenz_named_cbr).expect("detect 7z"),
+            ComicArchiveContainer::SevenZip
+        );
+        assert_eq!(
+            detect_comic_archive_container(&invalid).expect("detect unknown"),
+            ComicArchiveContainer::Unknown
+        );
+        fs::remove_dir_all(root).expect("cleanup test directory");
     }
 
     #[test]
@@ -784,7 +1274,25 @@ mod tests {
                     .into_owned(),
             })
         );
-        assert!(Path::new(&first_publication.pages[0].cache_path).exists());
+        assert!(first_publication
+            .pages
+            .iter()
+            .all(|page| page.cache_path.is_empty()));
+        assert_eq!(
+            database.cache_info().expect("empty cache info").entry_count,
+            0
+        );
+        let rebuilt = database
+            .ensure_page_cache(&first_publication.id, &first_publication.pages[0].id)
+            .expect("rebuild image page");
+        assert!(Path::new(&rebuilt.cache_path).is_file());
+        assert_eq!(
+            database
+                .cache_info()
+                .expect("cache info after rebuild")
+                .entry_count,
+            1
+        );
 
         database
             .save_progress(&first_publication.id, 1)
@@ -817,7 +1325,7 @@ mod tests {
     }
 
     #[test]
-    fn cbz_import_is_natural_ordered_and_rejects_traversal() {
+    fn zip_comic_with_cbr_extension_imports_and_is_natural_ordered() {
         let root = std::env::temp_dir().join(format!("tactile-reader-cbz-{}", timestamp()));
         fs::create_dir_all(&root).expect("test directory");
         let mut image_bytes = Cursor::new(Vec::new());
@@ -826,7 +1334,7 @@ mod tests {
             .expect("png");
         let image_bytes = image_bytes.into_inner();
 
-        let archive_path = root.join("ordered.cbz");
+        let archive_path = root.join("ordered.cbr");
         let archive_file = fs::File::create(&archive_path).expect("archive file");
         let mut archive = ZipWriter::new(archive_file);
         let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
@@ -838,7 +1346,7 @@ mod tests {
 
         let database = LibraryDb::open(root.join("app")).expect("database");
         let imported = import_paths(&database, &[archive_path.to_string_lossy().into_owned()])
-            .expect("CBZ import")
+            .expect("ZIP-backed CBR import")
             .publications;
         assert_eq!(imported[0].format, "cbz");
         assert_eq!(imported[0].pages[0].name, "page2.png");
@@ -854,15 +1362,20 @@ mod tests {
                 member: "page2.png".to_owned(),
             })
         );
-        let cached_path = imported[0].pages[0].cache_path.clone();
-        let expected_page = fs::read(&cached_path).expect("cached CBZ page");
-        fs::remove_file(&cached_path).expect("remove derived CBZ page");
+        assert!(imported[0]
+            .pages
+            .iter()
+            .all(|page| page.cache_path.is_empty()));
+        assert_eq!(
+            database.cache_info().expect("empty cache info").entry_count,
+            0
+        );
         let rebuilt = database
             .ensure_page_cache(&imported[0].id, &imported[0].pages[0].id)
             .expect("rebuild CBZ page");
         assert_eq!(
             fs::read(rebuilt.cache_path).expect("rebuilt CBZ page"),
-            expected_page
+            image_bytes
         );
 
         let malicious_path = root.join("malicious.cbz");

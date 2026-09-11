@@ -4,50 +4,50 @@
 
 ## Platform
 
-desktop
+Android (phone). Development host may be Windows or Linux; the product ships as an Android APK.
 
 ## Users
 
-People who read locally stored comics and manga on Windows and want a more immersive, responsive, and personal reading experience than conventional page viewers provide. The initial product is global and ships with an English interface.
+People who read locally stored comics and manga on an Android phone and want continuous vertical reading (Webtoon/manhwa), a local library, and a more immersive experience than a file browser or basic image viewer.
 
 ## Product Purpose
 
-Provide a local-first library and reader for CBZ, CBR, PDF, and image folders. Success means the interface disappears into the work, page turns feel physically convincing, panel guidance respects the intended reading order, and readers can tune the experience without surrendering reliable defaults.
+Provide a local-first library and reader for CBZ, CBR, ZIP/7z collections, and image folders on Android. Success means the interface disappears into the work, Webtoon scrolling stays smooth on mid-range phones, series are easy to navigate, and progress restores exactly where the reader stopped.
 
 ## Positioning
 
-The product combines a direct-manipulation tactile paper simulation with an adaptive, locally computed panel flow. It preserves the full-page composition while offering guided focus and never uploads the reader's files.
+A local-first Android comic reader with a virtualized Webtoon engine, SAF-based import that never moves or rewrites originals, and a series-oriented shelf. No account, no cloud, no store.
 
 ## Operating Context
 
-The v1 runs on Windows 10/11 x64 desktops with 8 GB RAM and a WebGL2-capable integrated GPU. Readers import files and folders from local storage, organize a small personal library, read fullscreen with mouse or keyboard, and resume later. Hardware ranges from common integrated graphics to high-refresh gaming displays.
+v1 targets mid-range Android phones (for example Moto G34 5G class: 4–8 GB RAM, ARM64, Android 13+). Readers import from Downloads/SD via Storage Access Framework, organize a personal library, read fullscreen with touch, and resume later.
 
 ## Capabilities and Constraints
 
-- Local CBZ, CBR, PDF, JPEG, PNG, WebP, AVIF, and image-folder reading.
-- Adaptive left-to-right and right-to-left panel ordering with manual correction.
-- Tactile corner drag, automated page turns, single pages, spreads, fullscreen, and reduced motion.
-- Named, versioned visual, physics, input, and layout profiles with safe repositioning zones.
-- Local SQLite persistence and derived cache; originals remain read-only.
-- Fluidity takes precedence over effects when a device cannot sustain both.
-- V1 excludes EPUB, accounts, sync, online metadata, a store, discovery, and the download website.
+- Local CBZ, CBR (RAR4/RAR5), ZIP/7z mixed collections, and image-folder reading.
+- Webtoon vertical mode is the default reading mode on Android.
+- SAF file and folder pickers; originals remain read-only.
+- Progress is stored as page id + scroll ratio inside the page.
+- Series grouping with natural issue order and non-destructive duplicate hints.
+- PDF is not available on Android yet.
+- V1 excludes EPUB, accounts, sync, online metadata, a store, discovery, iOS, and desktop distribution.
 
 ## Brand Commitments
 
-The default interface is “Paper Atelier”: tactile and editorial, using warm print-room materials without obscuring colorful cover art. It must be deeply customizable. The product name is undecided; temporary UI naming must not be treated as a final brand.
+The default interface keeps the Paper Atelier materials direction for covers and chrome, adapted to phone density and safe areas. The product name is temporary.
 
 ## Evidence on Hand
 
-The approved design specification is `docs/superpowers/specs/2026-08-11-tactile-comic-reader-design.md`. No final name, logo, licensed comic imagery, customer claims, benchmarks, or production model weights are available and none may be fabricated.
+Android implementation log: `docs/android-status.md`. Design specification: `docs/superpowers/specs/2026-09-08-mobile-android-comic-reader-design.md`. Physical validation on Moto G34 5G. No final name, logo, licensed comic imagery, customer claims, or store listing assets are available and none may be fabricated.
 
 ## Product Principles
 
 1. Reading remains in the reader's control even when assistance is active.
 2. Every gesture responds immediately; quality adapts before motion stutters.
-3. Powerful customization is progressive, reversible, and safe.
-4. Processing and personal files stay on the device.
-5. Failures degrade gracefully without losing progress or modifying originals.
+3. Files stay on the device and are never rewritten by the app.
+4. Failures degrade gracefully without losing progress or modifying originals.
+5. Android-only: do not promise desktop distribution.
 
 ## Accessibility & Inclusion
 
-The library and reader must be keyboard-complete, expose visible focus, support scalable contrast, and provide reduced-motion and static-page fallbacks. Both left-to-right and right-to-left reading are first-class.
+Touch targets at least 44px, visible focus for keyboard/switch access when available, scalable contrast, reduced-motion support, and Android Back as a universal escape route.

@@ -24,18 +24,29 @@ const CACHE_UNREBUILDABLE_DIAGNOSTIC: &str =
     "The derived page cannot be reconstructed because its source reference is unavailable.";
 const CUSTOM_COVER_MISSING_DIAGNOSTIC: &str =
     "The custom cover is unavailable; the original publication cover is shown.";
-const MIGRATION_VERSION: i64 = 5;
+const MIGRATION_VERSION: i64 = 6;
 const MAX_CUSTOM_COVER_BYTES: u64 = 10 * 1024 * 1024;
 
 pub struct LibraryDb {
     connection: Mutex<Connection>,
     cache_dir: PathBuf,
+    /// Android's SAF bridge temporarily copies a selected source into this
+    /// private directory because the Rust importer currently consumes paths.
+    /// These copies belong to the application, unlike every external source.
+    managed_import_dir: PathBuf,
 }
 
 impl LibraryDb {
     pub fn open(data_dir: PathBuf) -> CoreResult<Self> {
         std::fs::create_dir_all(&data_dir)?;
         let cache_dir = data_dir.join("cache").join("pages");
+        // Tauri's Android data directory is the package root, while the SAF
+        // bridge uses Activity.filesDir. Desktop imports live beside the DB.
+        let managed_import_dir = data_dir.canonicalize()?.join(if cfg!(target_os = "android") {
+            "files/imports"
+        } else {
+            "imports"
+        });
         std::fs::create_dir_all(&cache_dir)?;
 
         let database_path = data_dir.join("reader.sqlite3");
@@ -53,6 +64,7 @@ impl LibraryDb {
         Ok(Self {
             connection: Mutex::new(connection),
             cache_dir,
+            managed_import_dir,
         })
     }
 
@@ -68,7 +80,7 @@ impl LibraryDb {
         let mut statement = connection.prepare(
             "SELECT id, title, source_label, format, cover_page_id, direction,
                     added_at, updated_at, is_favorite, diagnostic,
-                    custom_cover_cache, custom_cover_name
+                    custom_cover_cache, custom_cover_name, source_path
                FROM publications
               ORDER BY updated_at DESC, title COLLATE NOCASE ASC",
         )?;
@@ -86,6 +98,7 @@ impl LibraryDb {
                 diagnostic: row.get(9)?,
                 custom_cover_cache: row.get(10)?,
                 custom_cover_name: row.get(11)?,
+                source_path: row.get(12)?,
             })
         })?;
 
@@ -105,7 +118,7 @@ impl LibraryDb {
             .query_row(
                 "SELECT id, title, source_label, format, cover_page_id, direction,
                         added_at, updated_at, is_favorite, diagnostic,
-                        custom_cover_cache, custom_cover_name
+                        custom_cover_cache, custom_cover_name, source_path
                    FROM publications
                   WHERE source_path = ?1",
                 [source_path],
@@ -123,6 +136,7 @@ impl LibraryDb {
                         diagnostic: row.get(9)?,
                         custom_cover_cache: row.get(10)?,
                         custom_cover_name: row.get(11)?,
+                        source_path: row.get(12)?,
                     })
                 },
             )
@@ -167,7 +181,11 @@ impl LibraryDb {
                 .cache_path
                 .to_str()
                 .ok_or_else(|| CoreError::from("cache path is not valid UTF-8"))?;
-            let byte_size = cache_file_size(&self.cache_dir, &page.cache_path)?;
+            // Imports are indexes first: their derived page bytes are created
+            // only when the reader asks for a page. A cache entry must exist
+            // only for a real, validated file; otherwise an empty path would
+            // look like an evictable cache item for every page in a new book.
+            let byte_size = cache_file_size_if_valid(&self.cache_dir, &page.cache_path)?;
             transaction.execute(
                 "INSERT INTO pages
                     (id, publication_id, page_index, name, cache_path, source_ref, width, height)
@@ -183,18 +201,20 @@ impl LibraryDb {
                     page.height as i64,
                 ],
             )?;
-            transaction.execute(
-                "INSERT INTO cache_entries
-                    (page_id, publication_id, cache_path, byte_size, last_accessed_at, pinned)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 0)",
-                params![
-                    page.id,
-                    publication.id,
-                    cache_path,
-                    byte_size,
-                    publication.updated_at
-                ],
-            )?;
+            if let Some(byte_size) = byte_size {
+                transaction.execute(
+                    "INSERT INTO cache_entries
+                        (page_id, publication_id, cache_path, byte_size, last_accessed_at, pinned)
+                     VALUES (?1, ?2, ?3, ?4, ?5, 0)",
+                    params![
+                        page.id,
+                        publication.id,
+                        cache_path,
+                        byte_size,
+                        publication.updated_at
+                    ],
+                )?;
+            }
         }
 
         transaction.execute(
@@ -511,13 +531,15 @@ impl LibraryDb {
             .map_err(|_| CoreError::from("database lock poisoned"))?;
         connection.execute(
             "INSERT INTO reader_states
-                (publication_id, zoom_mode, zoom_scale, pan_x, pan_y, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                (publication_id, zoom_mode, zoom_scale, pan_x, pan_y, page_id, scroll_ratio, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(publication_id) DO UPDATE SET
                  zoom_mode = excluded.zoom_mode,
                  zoom_scale = excluded.zoom_scale,
                  pan_x = excluded.pan_x,
                  pan_y = excluded.pan_y,
+                 page_id = excluded.page_id,
+                 scroll_ratio = excluded.scroll_ratio,
                  updated_at = excluded.updated_at",
             params![
                 publication_id,
@@ -525,6 +547,8 @@ impl LibraryDb {
                 state.zoom_scale,
                 state.pan_x,
                 state.pan_y,
+                state.page_id,
+                state.scroll_ratio,
                 now(),
             ],
         )?;
@@ -538,7 +562,7 @@ impl LibraryDb {
             .map_err(|_| CoreError::from("database lock poisoned"))?;
         connection
             .query_row(
-                "SELECT zoom_mode, zoom_scale, pan_x, pan_y
+                "SELECT zoom_mode, zoom_scale, pan_x, pan_y, page_id, scroll_ratio
                    FROM reader_states
                   WHERE publication_id = ?1",
                 [publication_id],
@@ -548,6 +572,8 @@ impl LibraryDb {
                         zoom_scale: row.get(1)?,
                         pan_x: row.get(2)?,
                         pan_y: row.get(3)?,
+                        page_id: row.get(4)?,
+                        scroll_ratio: row.get(5)?,
                     })
                 },
             )
@@ -930,7 +956,10 @@ impl LibraryDb {
             if let Ok(path) = std::fs::canonicalize(&page.cache_path) {
                 let _ = std::fs::remove_file(path);
             }
-            if self.ensure_page_cache_with_protected(publication_id, &page.id, &[]).is_ok() {
+            if self
+                .ensure_page_cache_with_protected(publication_id, &page.id, &[])
+                .is_ok()
+            {
                 count += 1;
             }
         }
@@ -1021,6 +1050,9 @@ impl LibraryDb {
             return Err(CoreError::from("publication does not exist"));
         }
         let origin_paths = canonical_origin_paths(&connection)?;
+        let publication_origins = canonical_publication_origin_paths(&connection, publication_id)?;
+        let other_publication_origins =
+            canonical_origins_excluding_publication(&connection, publication_id)?;
 
         // Stage derived files before changing SQLite. If any filesystem step
         // fails, the publication row and all dependent metadata remain intact.
@@ -1109,7 +1141,34 @@ impl LibraryDb {
         if cache_publication_is_empty {
             let _ = std::fs::remove_dir(&cache_publication_dir);
         }
+        // A SAF import currently creates a private fallback copy for the path-
+        // based importer. It is not an original owned by the reader, so remove
+        // it with the library entry. Never make deletion of already-committed
+        // metadata fail because a best-effort private-file cleanup is blocked.
+        let _ = self
+            .remove_unreferenced_managed_imports(&publication_origins, &other_publication_origins);
         Ok(())
+    }
+
+    fn remove_unreferenced_managed_imports(
+        &self,
+        publication_origins: &HashSet<PathBuf>,
+        other_publication_origins: &HashSet<PathBuf>,
+    ) -> CoreResult<()> {
+        let import_root = match self.managed_import_dir.canonicalize() {
+            Ok(path) => path,
+            Err(_) => return Ok(()),
+        };
+
+        for path in publication_origins {
+            if path.starts_with(&import_root)
+                && !other_publication_origins.contains(path)
+                && path.is_file()
+            {
+                std::fs::remove_file(path)?;
+            }
+        }
+        remove_empty_directories(&import_root)
     }
 
     pub fn load_profile(&self) -> CoreResult<Option<Value>> {
@@ -1263,6 +1322,7 @@ impl LibraryDb {
         connection: &Connection,
         row: PublicationRow,
     ) -> CoreResult<NativePublication> {
+        let row = self.normalize_import_names(row);
         let mut page_statement = connection.prepare(
             "SELECT id, page_index, name, cache_path, source_ref, width, height
                FROM pages
@@ -1351,6 +1411,7 @@ impl LibraryDb {
         connection: &Connection,
         row: PublicationRow,
     ) -> CoreResult<NativePublication> {
+        let row = self.normalize_import_names(row);
         let page_count: usize = connection.query_row(
             "SELECT COUNT(*) FROM pages WHERE publication_id = ?1",
             [&row.id],
@@ -1445,6 +1506,24 @@ impl LibraryDb {
         })
     }
 
+    /// Presentation-only repair: old IDs, source paths, files, progress and
+    /// bookmarks stay untouched, and a custom title is never replaced.
+    fn normalize_import_names(&self, mut row: PublicationRow) -> PublicationRow {
+        if let Some(original) = crate::publication_names::original_import_name(
+            &row.source_path,
+            &self.managed_import_dir,
+        ) {
+            let stored_stem = Path::new(&row.source_label).file_stem().and_then(|name| name.to_str());
+            if stored_stem == Some(row.title.as_str()) {
+                if let Some(stem) = Path::new(&original).file_stem().and_then(|name| name.to_str()) {
+                    row.title = stem.to_owned();
+                }
+            }
+            row.source_label = original;
+        }
+        row
+    }
+
     /// Pages of one publication, read when the reader opens it.
     pub fn list_publication_pages(&self, publication_id: &str) -> CoreResult<Vec<NativePage>> {
         let connection = self
@@ -1495,6 +1574,7 @@ struct PublicationRow {
     id: String,
     title: String,
     source_label: String,
+    source_path: String,
     format: String,
     cover_page_id: String,
     direction: String,
@@ -1605,6 +1685,8 @@ fn migrate(connection: &mut Connection) -> CoreResult<()> {
                  zoom_scale REAL NOT NULL DEFAULT 1.0,
                  pan_x REAL NOT NULL DEFAULT 0.0,
                  pan_y REAL NOT NULL DEFAULT 0.0,
+                 page_id TEXT,
+                 scroll_ratio REAL NOT NULL DEFAULT 0.0,
                  updated_at TEXT NOT NULL,
                  FOREIGN KEY(publication_id) REFERENCES publications(id) ON DELETE CASCADE
              );
@@ -1657,7 +1739,7 @@ fn migrate(connection: &mut Connection) -> CoreResult<()> {
         )?;
     }
 
-    if current_version < MIGRATION_VERSION {
+    if current_version < 5 {
         for (column, definition) in [
             ("custom_cover_source", "TEXT"),
             ("custom_cover_cache", "TEXT"),
@@ -1672,6 +1754,37 @@ fn migrate(connection: &mut Connection) -> CoreResult<()> {
         }
         transaction.execute(
             "INSERT INTO schema_migrations (version, applied_at) VALUES (5, ?1)",
+            params![now()],
+        )?;
+    }
+
+    if current_version < MIGRATION_VERSION {
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS reader_states (
+                 publication_id TEXT PRIMARY KEY,
+                 zoom_mode TEXT NOT NULL DEFAULT 'page',
+                 zoom_scale REAL NOT NULL DEFAULT 1.0,
+                 pan_x REAL NOT NULL DEFAULT 0.0,
+                 pan_y REAL NOT NULL DEFAULT 0.0,
+                 page_id TEXT,
+                 scroll_ratio REAL NOT NULL DEFAULT 0.0,
+                 updated_at TEXT NOT NULL,
+                 FOREIGN KEY(publication_id) REFERENCES publications(id) ON DELETE CASCADE
+             );",
+        )?;
+        for (column, definition) in [
+            ("page_id", "TEXT"),
+            ("scroll_ratio", "REAL NOT NULL DEFAULT 0.0"),
+        ] {
+            if !column_exists(&transaction, "reader_states", column)? {
+                transaction.execute(
+                    &format!("ALTER TABLE reader_states ADD COLUMN {column} {definition}"),
+                    [],
+                )?;
+            }
+        }
+        transaction.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (6, ?1)",
             params![now()],
         )?;
     }
@@ -1875,6 +1988,47 @@ fn canonical_origin_paths(connection: &Connection) -> CoreResult<HashSet<PathBuf
     Ok(origin_paths)
 }
 
+fn canonical_publication_origin_paths(
+    connection: &Connection,
+    publication_id: &str,
+) -> CoreResult<HashSet<PathBuf>> {
+    canonical_page_origin_paths(
+        connection,
+        "SELECT source_ref FROM pages WHERE publication_id = ?1 AND source_ref <> ''",
+        [publication_id],
+    )
+}
+
+fn canonical_origins_excluding_publication(
+    connection: &Connection,
+    publication_id: &str,
+) -> CoreResult<HashSet<PathBuf>> {
+    canonical_page_origin_paths(
+        connection,
+        "SELECT source_ref FROM pages WHERE publication_id <> ?1 AND source_ref <> ''",
+        [publication_id],
+    )
+}
+
+fn canonical_page_origin_paths<P>(
+    connection: &Connection,
+    query: &str,
+    params: P,
+) -> CoreResult<HashSet<PathBuf>>
+where
+    P: rusqlite::Params,
+{
+    let mut statement = connection.prepare(query)?;
+    let source_refs = statement
+        .query_map(params, |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(source_refs
+        .iter()
+        .filter_map(|value| decode_source_ref(value))
+        .filter_map(|source_ref| source_ref_path(&source_ref).canonicalize().ok())
+        .collect())
+}
+
 fn legacy_origin_path(source_path: &str) -> Option<&Path> {
     ["archive:", "cbr:", "pdf:", "image:"]
         .iter()
@@ -2061,7 +2215,7 @@ fn validate_profile_object(
     if name.is_empty() {
         return Err(CoreError::from("profile name is invalid"));
     }
-    validate_enum(profile, "mode", &["single", "spread"])?;
+    validate_enum(profile, "mode", &["single", "spread", "webtoon"])?;
     validate_enum(profile, "direction", &["ltr", "rtl"])?;
     validate_enum(profile, "contrast", &["standard", "high"])?;
     validate_enum(profile, "layoutZone", &["top", "bottom", "left", "right"])?;
@@ -2396,7 +2550,7 @@ mod tests {
     fn profile_ipc_payload_validates_named_profile_schema() {
         let root = temporary_root("profile-validation");
         let database = LibraryDb::open(root.clone()).expect("database");
-        let valid = serde_json::json!({
+        let mut valid = serde_json::json!({
             "version": 2,
             "activeProfileId": "paper-atelier",
             "profiles": [{
@@ -2422,13 +2576,23 @@ mod tests {
                 }
             }]
         });
-        database.save_profile(&valid).expect("valid profile");
+        // Mobile startup normalizes every profile to webtoon before saving it.
+        // Rejecting this mode prevents the native library from opening at all.
+        for mode in ["single", "spread", "webtoon"] {
+            valid["profiles"][0]["mode"] = serde_json::json!(mode);
+            database.save_profile(&valid).expect("valid reading mode");
+            assert_eq!(
+                database.load_profile().expect("load reading mode"),
+                Some(valid.clone())
+            );
+        }
         assert_eq!(
             database.load_profile().expect("load profile"),
             Some(valid.clone())
         );
 
         for (field, value) in [
+            ("mode", "carousel"),
             ("direction", "diagonal"),
             ("zoomMode", "warp"),
             ("layoutZone", "center"),
@@ -2710,6 +2874,8 @@ mod tests {
             zoom_scale: 1.7,
             pan_x: 20.0,
             pan_y: -12.0,
+            page_id: Some("page-1".to_owned()),
+            scroll_ratio: 0.42,
         };
         database
             .save_reader_state("publication-1", &state)
@@ -3007,6 +3173,31 @@ mod tests {
             std::fs::read(&source_path).expect("read sentinel"),
             source_bytes
         );
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
+    fn deleting_publication_removes_a_managed_import_copy() {
+        let root = temporary_root("delete-managed-import");
+        let import_dir = root.join("imports").join("batch-1");
+        let source_path = import_dir.join("chapter.cbz");
+        std::fs::create_dir_all(&import_dir).expect("managed import directory");
+        std::fs::write(&source_path, b"private imported copy").expect("managed import source");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        insert_test_publication(&database, &source_path.to_string_lossy());
+
+        database
+            .delete_publication("publication-1")
+            .expect("delete publication");
+
+        assert!(database
+            .list_publications()
+            .expect("publications")
+            .is_empty());
+        assert!(!source_path.exists());
+        assert!(!import_dir.exists());
 
         drop(database);
         std::fs::remove_dir_all(root).expect("cleanup database");
@@ -3627,7 +3818,10 @@ mod tests {
                 .publications
                 .remove(0);
         let page = &imported.pages[0];
-        std::fs::remove_file(&page.cache_path).expect("remove derived page");
+        assert!(
+            page.cache_path.is_empty(),
+            "indexing does not eagerly create a cache file"
+        );
 
         let rebuilt = database
             .ensure_page_cache(&imported.id, &page.id)

@@ -262,10 +262,8 @@ export function ProfilePanel({
           <span className="settings-label">{t('profile.surface')}</span>
           <label className="setting-row" htmlFor="page-arrangement">
             <span>{t('profile.arrangement')}</span>
-            <select id="page-arrangement" value={profile.mode} onChange={(event) => onChange({ mode: event.target.value as ReadingProfile['mode'] })}>
-              <option value="single">{t('profile.single')}</option>
-              <option value="spread">{t('profile.spread')}</option>
-              <option value="webtoon">{t('profile.webtoon')}</option>
+            <select id="page-arrangement" value="webtoon" disabled aria-label="Modo vertical">
+              <option value="webtoon">Vertical</option>
             </select>
           </label>
           <label className="setting-row" htmlFor="reading-direction">

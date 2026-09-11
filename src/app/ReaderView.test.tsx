@@ -120,6 +120,7 @@ describe('ReaderView physical page-turn integration', () => {
   afterEach(() => {
     act(() => root.unmount());
     document.body.replaceChildren();
+    vi.useRealTimers();
   });
 
   async function renderReader({
@@ -130,6 +131,7 @@ describe('ReaderView physical page-turn integration', () => {
     onRegisterTurnRequest = vi.fn(),
     onNextVolume,
     nextVolumeTitle,
+    onSaveReaderState = vi.fn(),
   }: {
     publication?: Publication;
     profile?: ReadingProfile;
@@ -138,6 +140,7 @@ describe('ReaderView physical page-turn integration', () => {
     onRegisterTurnRequest?: ReturnType<typeof vi.fn>;
     onNextVolume?: () => void;
     nextVolumeTitle?: string;
+    onSaveReaderState?: ReturnType<typeof vi.fn>;
   } = {}) {
     const props = {
       publication,
@@ -154,7 +157,7 @@ describe('ReaderView physical page-turn integration', () => {
       settingsTriggerRef: { current: null },
       bookmarks: [] as Bookmark[],
       readerState: { zoomMode: 'page', zoomScale: 1, panX: 0, panY: 0, rotation: 0, background: 'atelier' } as ReaderState,
-      onSaveReaderState: vi.fn(),
+      onSaveReaderState,
       onSelectPage: vi.fn(),
       onToggleBookmark: vi.fn(),
       onUpdateBookmarkLabel: vi.fn(),
@@ -264,6 +267,166 @@ describe('ReaderView physical page-turn integration', () => {
     });
 
     expect(host.querySelector('[data-testid="webtoon-reader"]')).not.toBeNull();
+  });
+
+  it('keeps a touch pinch out of page navigation', async () => {
+    const onNext = vi.fn();
+    const onPrevious = vi.fn();
+    await renderReader({ onNext, onPrevious });
+
+    const stage = host.querySelector<HTMLElement>('.reading-stage');
+    expect(stage).not.toBeNull();
+
+    const dispatchPointer = (type: string, pointerId: number, clientX: number) => {
+      const event = new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        clientX,
+        clientY: 400,
+        button: 0,
+      });
+      Object.defineProperties(event, {
+        pointerId: { value: pointerId },
+        pointerType: { value: 'touch' },
+        isPrimary: { value: pointerId === 1 },
+      });
+      act(() => stage?.dispatchEvent(event));
+      return event;
+    };
+
+    dispatchPointer('pointerdown', 1, 100);
+    // The first finger is deliberately on the page edge. It must remain a
+    // pending touch so the second finger can claim the gesture as a pinch.
+    expect(host.querySelector('[data-testid="page-turn-canvas"]')).toBeNull();
+    dispatchPointer('pointerdown', 2, 200);
+    dispatchPointer('pointermove', 1, 50);
+    dispatchPointer('pointermove', 2, 250);
+    expect(host.querySelector<HTMLElement>('[data-reader-content]')?.style.transform).toContain('scale(2)');
+
+    dispatchPointer('pointerup', 1, 50);
+    dispatchPointer('pointerup', 2, 250);
+
+    expect(onNext).not.toHaveBeenCalled();
+    expect(onPrevious).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-testid="page-turn-canvas"]')).toBeNull();
+  });
+
+  it('treats two quick touch taps as zoom instead of advancing the page', async () => {
+    vi.useFakeTimers();
+    const onNext = vi.fn();
+    await renderReader({ onNext });
+
+    const stage = host.querySelector<HTMLElement>('.reading-stage');
+    const content = host.querySelector<HTMLElement>('[data-reader-content]');
+    expect(stage).not.toBeNull();
+    expect(content).not.toBeNull();
+
+    const tap = (clientX: number) => {
+      const down = new MouseEvent('pointerdown', {
+        bubbles: true,
+        cancelable: true,
+        clientX,
+        clientY: 300,
+        button: 0,
+      });
+      const up = new MouseEvent('pointerup', {
+        bubbles: true,
+        cancelable: true,
+        clientX,
+        clientY: 300,
+        button: 0,
+      });
+      Object.defineProperties(down, { pointerId: { value: 1 }, pointerType: { value: 'touch' } });
+      Object.defineProperties(up, { pointerId: { value: 1 }, pointerType: { value: 'touch' } });
+      act(() => {
+        stage?.dispatchEvent(down);
+        stage?.dispatchEvent(up);
+      });
+    };
+
+    tap(500);
+    expect(onNext).not.toHaveBeenCalled();
+    tap(500);
+
+    expect(onNext).not.toHaveBeenCalled();
+    expect(content?.style.transform).toContain('scale(2)');
+
+    act(() => {
+      stage?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, clientX: 500, clientY: 300 }));
+    });
+    expect(content?.style.transform).toContain('scale(2)');
+  });
+
+  it('leaves ordinary webtoon wheel input to the scroll container', async () => {
+    const onNext = vi.fn();
+    await renderReader({
+      onNext,
+      profile: createProfile({ mode: 'webtoon' }),
+    });
+
+    const container = host.querySelector<HTMLElement>('[data-testid="webtoon-reader"]');
+    expect(container).not.toBeNull();
+
+    const wheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 120 });
+    act(() => container?.dispatchEvent(wheel));
+
+    expect(wheel.defaultPrevented).toBe(false);
+    expect(onNext).not.toHaveBeenCalled();
+  });
+
+  it('keeps modified-wheel zoom anchored at the cursor', async () => {
+    await renderReader();
+
+    const stage = host.querySelector<HTMLElement>('.reading-stage');
+    const paper = host.querySelector<HTMLElement>('.paper-spread');
+    const content = host.querySelector<HTMLElement>('[data-reader-content]');
+    expect(stage).not.toBeNull();
+    expect(paper).not.toBeNull();
+    expect(content).not.toBeNull();
+
+    if (!stage || !paper || !content) return;
+    paper.getBoundingClientRect = () => ({
+      left: 0,
+      top: 0,
+      right: 400,
+      bottom: 600,
+      width: 400,
+      height: 600,
+      x: 0,
+      y: 0,
+      toJSON: () => {},
+    });
+
+    act(() => {
+      stage.dispatchEvent(new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 100,
+        clientY: 300,
+        ctrlKey: true,
+        deltaY: -100,
+      }));
+    });
+
+    expect(content.style.transform).toContain('translate(25px, 0px) scale(1.25)');
+  });
+
+  it('coalesces rapid zoom state saves until the gesture settles', async () => {
+    vi.useFakeTimers();
+    const onSaveReaderState = vi.fn();
+    await renderReader({ onSaveReaderState });
+    const stage = host.querySelector<HTMLElement>('.reading-stage');
+    expect(stage).not.toBeNull();
+
+    act(() => {
+      stage?.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -100 }));
+      stage?.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -100 }));
+    });
+
+    expect(onSaveReaderState).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(200));
+    expect(onSaveReaderState).toHaveBeenCalledTimes(1);
+    expect(onSaveReaderState).toHaveBeenLastCalledWith(expect.objectContaining({ zoomScale: 1.5 }));
   });
 
   it('navigates with mouse lateral buttons 3 and 4 via auxclick', async () => {

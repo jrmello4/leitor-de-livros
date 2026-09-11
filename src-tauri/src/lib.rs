@@ -3,10 +3,13 @@ mod db;
 mod error;
 mod importer;
 mod models;
+mod publication_names;
 
 use db::LibraryDb;
 use models::{CacheInfo, NativeBookmark, NativeImportResult, NativePublication, NativeReaderState};
-use tauri::{path::BaseDirectory, Manager, State};
+#[cfg(not(target_os = "android"))]
+use tauri::path::BaseDirectory;
+use tauri::{Emitter, Manager, State};
 
 #[tauri::command]
 fn list_publications(database: State<'_, LibraryDb>) -> Result<Vec<NativePublication>, String> {
@@ -29,8 +32,12 @@ fn list_publication_pages(
 fn import_publications(
     paths: Vec<String>,
     database: State<'_, LibraryDb>,
+    app: tauri::AppHandle,
 ) -> Result<NativeImportResult, String> {
-    importer::import_paths(&database, &paths).map_err(|error| error.to_string())
+    importer::import_paths_with_progress(&database, &paths, |progress| {
+        let _ = app.emit("import-progress", progress);
+    })
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -241,8 +248,11 @@ fn save_panel_graph(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_mobile_import::init())
         .setup(|app| {
+            #[cfg(not(target_os = "android"))]
             let pdfium_resource = app.path().resolve("pdfium.dll", BaseDirectory::Resource)?;
+            #[cfg(not(target_os = "android"))]
             adapters::configure_pdfium_resource_path(pdfium_resource);
             let data_dir = app.path().app_data_dir()?;
             let database = LibraryDb::open(data_dir)?;
@@ -275,7 +285,7 @@ pub fn run() {
             save_panel_graph
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Tactile Reader");
+        .expect("error while running Tactile Reader (Android)");
 }
 
 #[cfg(test)]
@@ -329,6 +339,8 @@ mod tests {
             zoom_scale: 1.5,
             pan_x: 10.0,
             pan_y: -5.0,
+            page_id: Some("page-1".to_owned()),
+            scroll_ratio: 0.42,
         };
         let bookmark = NativeBookmark {
             page_id: "page-1".to_owned(),
@@ -353,6 +365,8 @@ mod tests {
                 "zoomScale": 1.5,
                 "panX": 10.0,
                 "panY": -5.0,
+                "pageId": "page-1",
+                "scrollRatio": 0.42,
             })
         );
         assert_eq!(

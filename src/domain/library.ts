@@ -1,6 +1,6 @@
 import type { Bookmark, PageDescriptor, Publication, PublicationFormat } from './types';
 
-export type LibrarySort = 'recent' | 'title' | 'added';
+export type LibrarySort = 'recent' | 'title' | 'added' | 'year';
 export type FormatFilter = 'all' | PublicationFormat;
 export type ReadingStatus = 'unread' | 'reading' | 'completed';
 export type ReadingStatusFilter = 'all' | ReadingStatus;
@@ -59,6 +59,13 @@ export function visiblePublications(
       const searchable = [
         publication.title,
         ...safeSourceNames(publication),
+        publication.metadata?.series,
+        publication.metadata?.publisher,
+        publication.metadata?.writer,
+        publication.metadata?.penciller,
+        publication.metadata?.year?.toString(),
+        ...(publication.metadata?.characters ?? []),
+        ...(publication.metadata?.tags ?? []),
       ].join('\n').toLowerCase();
       return searchable.includes(normalizedQuery);
     })
@@ -74,6 +81,18 @@ function comparePublications(left: Publication, right: Publication, sort: Librar
   if (sort === 'added') {
     return compareDescending(left.addedAt, right.addedAt)
       || compareText(left.title, right.title)
+      || compareText(left.sourceLabel, right.sourceLabel)
+      || compareText(left.id, right.id);
+  }
+  if (sort === 'year') {
+    const leftYear = left.metadata?.year;
+    const rightYear = right.metadata?.year;
+    if (leftYear !== rightYear) {
+      if (leftYear === undefined) return 1;
+      if (rightYear === undefined) return -1;
+      return rightYear - leftYear;
+    }
+    return compareText(left.title, right.title)
       || compareText(left.sourceLabel, right.sourceLabel)
       || compareText(left.id, right.id);
   }

@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
+import { comparePublicationsBySeries, publicationSeries } from '../domain/seriesMatching';
 import { filterPublications, mostRecentPublication, safeSourceName, visiblePublications as getVisiblePublications, type FormatFilter, type LibrarySort, type ReadingStatusFilter } from '../domain/library';
 import { publicationCoverSrc } from '../domain/covers';
 import type { Publication } from '../domain/types';
@@ -6,7 +7,7 @@ import { evaluateAchievements, isCurrentHourNight } from '../domain/achievements
 import { loadAchievementsMap, loadAllReviews, loadReadingStats, saveReview as saveReviewStorage, clearReview as clearReviewStorage } from '../services/storage';
 import type { PublicationReview } from '../domain/reviews';
 import { t } from '../i18n/catalog';
-import { FlameIcon, SearchIcon, SparklesIcon, StarFilledIcon, StarIcon, SyncIcon } from './Icons';
+import { CollectionIcon, FlameIcon, SearchIcon, SparklesIcon, StarFilledIcon, StarIcon, SyncIcon } from './Icons';
 import { ReadingStatsModal } from './ReadingStatsModal';
 import { ReviewModal } from './ReviewModal';
 import { RecapModal } from './RecapModal';
@@ -18,15 +19,19 @@ interface LibraryViewProps {
   sort: LibrarySort;
   diagnostic?: string;
   isImporting: boolean;
+  importProgress?: ImportProgress | null;
+  canRetryImport?: boolean;
   onQueryChange: (query: string) => void;
   onSortChange: (sort: LibrarySort) => void;
   onOpen: (publication: Publication) => void;
   onImport: (files: File[]) => void;
   isNativeRuntime: boolean;
   onImportNative: () => void;
+  onRetryImport?: () => void;
   onImportFolder: () => void;
   onOpenSettings: () => void;
   onToggleFavorite: (publication: Publication) => void | Promise<void>;
+  onMarkRead?: (publication: Publication) => void | Promise<void>;
   onDelete: (publication: Publication) => void | Promise<void>;
   onReplaceCover: (publication: Publication, file: File) => void | Promise<void>;
   onCoverError?: (publication: Publication) => void;
@@ -42,8 +47,98 @@ interface LibraryViewProps {
   settingsTriggerRef: RefObject<HTMLButtonElement | null>;
 }
 
+export interface ImportProgress {
+  phase: 'selecting' | 'processing' | 'finishing';
+  total?: number;
+  completed?: number;
+  currentName?: string;
+  failed?: number;
+}
+
 function formatProgress(progress: number): string {
   return t('library.progress', { percent: Math.round(progress * 100) });
+}
+
+interface SeriesFolder {
+  key: string;
+  label: string;
+  publications: Publication[];
+  cover: Publication;
+  possibleDuplicates: number;
+}
+
+function duplicateSignatures(publications: Publication[]): Map<string, number> {
+  const groups = new Map<string, Publication[]>();
+  publications.forEach((publication) => {
+    const series = publicationSeries(publication);
+    // This is intentionally conservative: equal series, edition and page
+    // count are a review cue, never evidence that a file should be deleted.
+    const signature = `${series.key}\u0000${series.number ?? publication.title.trim().toLowerCase()}\u0000${publication.pageCount}`;
+    groups.set(signature, [...(groups.get(signature) ?? []), publication]);
+  });
+  const matches = new Map<string, number>();
+  groups.forEach((group) => {
+    if (group.length > 1) group.forEach((publication) => matches.set(publication.id, group.length));
+  });
+  return matches;
+}
+
+function LazyCoverImage({
+  src,
+  fallbackSrc,
+  alt,
+  loading,
+  onError,
+}: {
+  src: string;
+  fallbackSrc?: string;
+  alt: string;
+  loading?: 'eager' | 'lazy';
+  onError?: () => void;
+}) {
+  const imageRef = useRef<HTMLImageElement>(null);
+  const canObserve = typeof window !== 'undefined' && 'IntersectionObserver' in window;
+  const [resolvedSrc, setResolvedSrc] = useState<string | undefined>(() => canObserve ? undefined : src);
+
+  useEffect(() => {
+    if (!src) return undefined;
+    if (!canObserve) {
+      setResolvedSrc(src);
+      return undefined;
+    }
+    const element = imageRef.current;
+    if (!element) return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setResolvedSrc(src);
+        observer.disconnect();
+      }
+    }, { rootMargin: '320px 0px' });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [canObserve, src]);
+
+  useEffect(() => {
+    setResolvedSrc((current) => current === undefined ? current : src);
+  }, [src]);
+
+  return (
+    <img
+      ref={imageRef}
+      className="cover-image"
+      src={resolvedSrc}
+      alt={alt}
+      loading={loading}
+      decoding="async"
+      onLoad={(event) => event.currentTarget.classList.add('cover-image--loaded')}
+      onError={() => {
+        if (fallbackSrc && resolvedSrc !== fallbackSrc) {
+          setResolvedSrc(fallbackSrc);
+          onError?.();
+        }
+      }}
+    />
+  );
 }
 
 export function LibraryView({
@@ -52,15 +147,19 @@ export function LibraryView({
   sort,
   diagnostic,
   isImporting,
+  importProgress = null,
+  canRetryImport = false,
   onQueryChange,
   onSortChange,
   onOpen,
   onImport,
   isNativeRuntime,
   onImportNative,
+  onRetryImport,
   onImportFolder,
   onOpenSettings,
   onToggleFavorite,
+  onMarkRead,
   onDelete,
   onReplaceCover,
   onCoverError = () => undefined,
@@ -85,6 +184,15 @@ export function LibraryView({
   const [reviewTarget, setReviewTarget] = useState<Publication | null>(null);
   const [recapTarget, setRecapTarget] = useState<Publication | null>(null);
   const [ratingFilter, setRatingFilter] = useState<number>(0);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedPublicationIds, setSelectedPublicationIds] = useState<Set<string>>(() => new Set());
+  // Android starts in the lightweight series shelf. The browser harness keeps
+  // its flat view so drag-and-drop work stays immediate and familiar.
+  const [groupBySeries, setGroupBySeries] = useState(() => isNativeRuntime);
+  const [openSeriesKey, setOpenSeriesKey] = useState<string | null>(null);
+  const [showPossibleDuplicates, setShowPossibleDuplicates] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [renderLimit, setRenderLimit] = useState(40);
 
   const [readingStats, setReadingStats] = useState(loadReadingStats);
   const [achievementsMap, setAchievementsMap] = useState(loadAchievementsMap);
@@ -139,7 +247,67 @@ export function LibraryView({
     }
     return visible;
   }, [favoriteOnly, formatFilter, publications, query, sort, statusFilter, ratingFilter, reviewsMap]);
+  const possibleDuplicateCounts = useMemo(() => duplicateSignatures(publications), [publications]);
+  const filteredPublications = useMemo(
+    () => showPossibleDuplicates
+      ? visiblePublications.filter((publication) => possibleDuplicateCounts.has(publication.id))
+      : visiblePublications,
+    [possibleDuplicateCounts, showPossibleDuplicates, visiblePublications],
+  );
+  const seriesFolders = useMemo(() => {
+    const folders = new Map<string, SeriesFolder>();
+    [...filteredPublications].sort(comparePublicationsBySeries).forEach((publication) => {
+      const series = publicationSeries(publication);
+      const existing = folders.get(series.key);
+      if (existing) {
+        existing.publications.push(publication);
+        if (possibleDuplicateCounts.has(publication.id)) existing.possibleDuplicates += 1;
+        return;
+      }
+      folders.set(series.key, {
+        key: series.key,
+        label: series.label,
+        publications: [publication],
+        cover: publication,
+        possibleDuplicates: possibleDuplicateCounts.has(publication.id) ? 1 : 0,
+      });
+    });
+    return [...folders.values()].sort((left, right) => left.label.localeCompare(right.label, undefined, { numeric: true, sensitivity: 'base' }));
+  }, [filteredPublications, possibleDuplicateCounts]);
+  const openSeries = useMemo(
+    () => seriesFolders.find((folder) => folder.key === openSeriesKey) ?? null,
+    [openSeriesKey, seriesFolders],
+  );
+  const orderedPublications = useMemo(() => {
+    if (groupBySeries && openSeries) return openSeries.publications;
+    return groupBySeries ? [] : filteredPublications;
+  }, [filteredPublications, groupBySeries, openSeries]);
+  const displayPublications = useMemo(
+    () => orderedPublications.slice(0, renderLimit),
+    [orderedPublications, renderLimit],
+  );
+  const selectedPublications = useMemo(
+    () => publications.filter((publication) => selectedPublicationIds.has(publication.id)),
+    [publications, selectedPublicationIds],
+  );
   const continuePublication = useMemo(() => mostRecentPublication(publications), [publications]);
+  const hasActiveFilters = Boolean(query.trim() || favoriteOnly || formatFilter !== 'all' || statusFilter !== 'all' || ratingFilter > 0 || showPossibleDuplicates);
+
+  useEffect(() => {
+    setSelectedPublicationIds((current) => {
+      const available = new Set(publications.map((publication) => publication.id));
+      const next = new Set([...current].filter((id) => available.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [publications]);
+
+  useEffect(() => {
+    setRenderLimit(40);
+  }, [groupBySeries, openSeriesKey, query, sort, formatFilter, statusFilter, favoriteOnly, ratingFilter, showPossibleDuplicates]);
+
+  useEffect(() => {
+    if (openSeriesKey && !openSeries) setOpenSeriesKey(null);
+  }, [openSeries, openSeriesKey]);
 
   useLayoutEffect(() => {
     if (!pendingDelete) {
@@ -210,6 +378,37 @@ export function LibraryView({
     }
   };
 
+  const toggleSelectedPublication = (publicationId: string) => {
+    setSelectedPublicationIds((current) => {
+      const next = new Set(current);
+      if (next.has(publicationId)) next.delete(publicationId);
+      else next.add(publicationId);
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelectedPublicationIds(new Set());
+
+  const selectAllVisible = () => {
+    setSelectedPublicationIds(new Set(orderedPublications.map((publication) => publication.id)));
+  };
+
+  const markSelectedRead = async () => {
+    if (!onMarkRead || selectedPublications.length === 0) return;
+    await Promise.all(selectedPublications.map((publication) => onMarkRead(publication)));
+    clearSelection();
+    setSelectionMode(false);
+  };
+
+  const removeSelected = async () => {
+    if (selectedPublications.length === 0) return;
+    for (const publication of selectedPublications) {
+      await onDelete(publication);
+    }
+    clearSelection();
+    setSelectionMode(false);
+  };
+
   const confirmDelete = () => {
     if (!pendingDelete || isDeleting) {
       return;
@@ -270,11 +469,23 @@ export function LibraryView({
       </header>
 
       {continuePublication && (
-        <section className="continue-card" aria-label={t('library.continueReading')}>
-          <div>
+        <section
+          className="continue-card"
+          aria-label={t('library.continueReading')}
+          style={{ '--continue-progress': `${Math.round(continuePublication.progress * 100)}%` } as CSSProperties}
+        >
+          <img
+            className="continue-cover cover-image"
+            src={publicationCoverSrc(continuePublication)}
+            alt=""
+            loading="eager"
+            decoding="async"
+            onLoad={(event) => event.currentTarget.classList.add('cover-image--loaded')}
+          />
+          <div className="continue-copy">
             <span className="eyebrow">{t('library.pickUp')}</span>
             <strong className="continue-title">{continuePublication.title}</strong>
-            <p>{formatProgress(continuePublication.progress)} · {t('library.pages', { count: continuePublication.pageCount })}</p>
+            <p>{formatProgress(continuePublication.progress)} · {t('reader.pageOf', { page: continuePublication.currentPage + 1, count: continuePublication.pageCount })}</p>
           </div>
           <button className="continue-button" type="button" onClick={() => onOpen(continuePublication)}>
             {t('library.continue')} <span aria-hidden="true">↗</span>
@@ -304,7 +515,7 @@ export function LibraryView({
                 {isImporting ? t('library.readingFile') : t('library.importPublication')}
                 <input
                   type="file"
-                  accept=".cbz,.cbr,.pdf,image/*"
+                  accept=".cbz,.cbr,.rar,.pdf,image/*"
                   multiple
                   disabled={isImporting}
                   onChange={onFileInput}
@@ -325,7 +536,7 @@ export function LibraryView({
         </aside>
       </section>
 
-      <section className="library-toolbar" aria-label={t('library.tools')}>
+      <section className={`library-toolbar ${filtersOpen ? 'library-toolbar--filters-open' : ''}`} aria-label={t('library.tools')}>
         <div className="section-heading">
           <span className="eyebrow">{t('library.shelf')}</span>
           <strong>{t('library.publications', { count: visiblePublications.length })}</strong>
@@ -341,6 +552,7 @@ export function LibraryView({
               <option value="recent">{t('library.sortRecent')}</option>
               <option value="title">{t('library.sortTitle')}</option>
               <option value="added">{t('library.sortAdded')}</option>
+              <option value="year">{t('library.sortYear')}</option>
             </select>
           </label>
           <label className="sort-field format-filter-field">
@@ -373,17 +585,17 @@ export function LibraryView({
             </select>
           </label>
           <label className="sort-field rating-filter-field">
-            <span>Avaliação</span>
+            <span>{t('library.rating')}</span>
             <select
               className="library-focus-control"
               aria-label="Filtrar por avaliação"
               value={ratingFilter}
               onChange={(event) => setRatingFilter(Number(event.target.value))}
             >
-              <option value={0}>Todas as notas</option>
-              <option value={5}>⭐⭐⭐⭐⭐ (5 estrelas)</option>
-              <option value={4}>⭐⭐⭐⭐ (4+ estrelas)</option>
-              <option value={3}>⭐⭐⭐ (3+ estrelas)</option>
+              <option value={0}>{t('library.ratingAll')}</option>
+              <option value={5}>{t('library.ratingAtLeast', { count: 5 })}</option>
+              <option value={4}>{t('library.ratingAtLeast', { count: 4 })}</option>
+              <option value={3}>{t('library.ratingAtLeast', { count: 3 })}</option>
             </select>
           </label>
           <label className="favorite-filter" htmlFor="favorite-only">
@@ -395,29 +607,176 @@ export function LibraryView({
             />
             <span>{t('library.favoriteOnly')}</span>
           </label>
+          <button
+            type="button"
+            className={`library-view-toggle ${groupBySeries ? 'library-view-toggle--active' : ''}`}
+            aria-pressed={groupBySeries}
+            onClick={() => {
+              setGroupBySeries((current) => !current);
+              setOpenSeriesKey(null);
+            }}
+          >
+            {groupBySeries ? t('library.grouped') : t('library.group')}
+          </button>
+          {possibleDuplicateCounts.size > 0 && (
+            <button
+              type="button"
+              className={`library-view-toggle ${showPossibleDuplicates ? 'library-view-toggle--active' : ''}`}
+              aria-pressed={showPossibleDuplicates}
+              onClick={() => {
+                setShowPossibleDuplicates((current) => !current);
+                setOpenSeriesKey(null);
+              }}
+            >
+              {t('library.possibleDuplicates', { count: possibleDuplicateCounts.size })}
+            </button>
+          )}
+          <button
+            type="button"
+            className={`library-view-toggle library-filter-toggle ${filtersOpen ? 'library-view-toggle--active' : ''}`}
+            aria-expanded={filtersOpen}
+            onClick={() => setFiltersOpen((current) => !current)}
+          >
+            {filtersOpen ? t('library.hideFilters') : t('library.filters')}
+          </button>
+          {(!groupBySeries || openSeries) && <button
+            type="button"
+            className={`library-view-toggle ${selectionMode ? 'library-view-toggle--active' : ''}`}
+            aria-pressed={selectionMode}
+            onClick={() => {
+              setSelectionMode((current) => !current);
+              if (selectionMode) clearSelection();
+            }}
+          >
+            {selectionMode ? t('library.done') : t('library.select')}
+          </button>}
         </div>
       </section>
 
-      {diagnostic && <div className="diagnostic-banner" role="alert">{diagnostic}</div>}
+      {diagnostic && (
+        <div className={`diagnostic-banner ${canRetryImport ? 'diagnostic-banner--with-action' : ''}`} role="alert">
+          <span>{diagnostic}</span>
+          {canRetryImport && onRetryImport && (
+            <button type="button" className="quiet-button" disabled={isImporting} onClick={onRetryImport}>
+              {t('library.retryImport')}
+            </button>
+          )}
+        </div>
+      )}
 
-      {visiblePublications.length > 0 ? (
-        <section className="publication-grid" aria-label={t('library.publicationsAria')}>
-          {visiblePublications.map((publication) => (
+      {importProgress && (
+        <section
+          className={`import-progress ${importProgress.completed !== undefined && importProgress.total !== undefined ? 'import-progress--determinate' : ''}`}
+          role="status"
+          aria-live="polite"
+          aria-busy={importProgress.phase !== 'finishing'}
+        >
+          <div className="import-progress__copy">
+            <span className="import-progress__mark" aria-hidden="true" />
+            <div>
+              <strong>
+                {importProgress.phase === 'selecting'
+          ? t('library.importChoose')
+          : importProgress.phase === 'finishing'
+                    ? t('library.importFinishing')
+                    : importProgress.total
+                      ? t('library.importingItems', { count: importProgress.total })
+                      : t('library.importing')}
+              </strong>
+              <span>
+                {importProgress.currentName
+                  ? `${t('library.importProgress', { completed: importProgress.completed ?? 0, total: importProgress.total ?? '?' })} · ${importProgress.currentName}${importProgress.failed ? ` · ${t('library.importFailedCount', { count: importProgress.failed })}` : ''}`
+                  : importProgress.completed !== undefined && importProgress.total
+                    ? t('library.importProgress', { completed: importProgress.completed, total: importProgress.total })
+                    : t('library.importOriginals')}
+              </span>
+            </div>
+          </div>
+          <div className="import-progress__track" aria-hidden="true">
+            <span style={{ width: importProgress.completed !== undefined && importProgress.total ? `${Math.min(100, (importProgress.completed / importProgress.total) * 100)}%` : undefined }} />
+          </div>
+        </section>
+      )}
+
+      {selectionMode && (!groupBySeries || openSeries) && (
+        <section className="library-selection-toolbar" aria-label={t('library.batchActions')}>
+          <span>{t('library.selected', { count: selectedPublications.length })}</span>
+          <button type="button" className="quiet-button" onClick={selectAllVisible}>{t('library.selectVisible')}</button>
+          {onMarkRead && <button type="button" className="quiet-button" disabled={selectedPublications.length === 0} onClick={() => void markSelectedRead()}>{t('library.markRead')}</button>}
+          <button type="button" className="quiet-button quiet-button--danger" disabled={selectedPublications.length === 0} onClick={() => void removeSelected()}>{t('library.removeSelected')}</button>
+          {selectedPublications.length > 0 && <button type="button" className="quiet-button" onClick={clearSelection}>{t('library.clearSelection')}</button>}
+        </section>
+      )}
+
+      {filteredPublications.length > 0 ? (
+        <>
+        {groupBySeries && !openSeries && (
+          <section className="series-grid" aria-label={t('library.seriesAria')}>
+            {seriesFolders.slice(0, renderLimit).map((folder, index) => (
+              <article className="series-card" key={folder.key} data-testid="library-series-card" data-series-key={folder.key}>
+                <button
+                  className="series-card__open"
+                  type="button"
+                  onClick={() => setOpenSeriesKey(folder.key)}
+                  aria-label={t('library.openSeries', { title: folder.label })}
+                >
+                  <span className="series-card__cover" aria-hidden="true">
+                    <LazyCoverImage
+                      src={publicationCoverSrc(folder.cover)}
+                      fallbackSrc={folder.cover.coverSrc}
+                      alt=""
+                      loading={index < 4 ? 'eager' : 'lazy'}
+                    />
+                    <span className="series-card__collection"><CollectionIcon /></span>
+                  </span>
+                  <span className="series-card__copy">
+                    <strong>{folder.label}</strong>
+                    <small>{t('library.volumes', { count: folder.publications.length })}</small>
+                    {folder.possibleDuplicates > 0 && (
+                      <em>{t('library.possibleDuplicates', { count: folder.possibleDuplicates })}</em>
+                    )}
+                  </span>
+                </button>
+              </article>
+            ))}
+          </section>
+        )}
+        {groupBySeries && openSeries && (
+          <div className="series-breadcrumb" aria-label={t('library.seriesNavigation')}>
+            <button type="button" className="quiet-button" onClick={() => setOpenSeriesKey(null)}>{t('library.allSeries')}</button>
+            <span aria-hidden="true">/</span>
+            <strong>{openSeries.label}</strong>
+            <small>{t('library.volumes', { count: openSeries.publications.length })}</small>
+          </div>
+        )}
+        {(!groupBySeries || openSeries) && <section className="publication-grid" aria-label={t('library.publicationsAria')}>
+          {displayPublications.map((publication, index) => {
+            return (
             <article
-              className="publication-card"
+              className={`publication-card ${selectedPublicationIds.has(publication.id) ? 'publication-card--selected' : ''}`}
               key={publication.id}
               data-testid="library-publication-card"
               data-publication-id={publication.id}
               data-publication-format={publication.format}
               data-publication-source={publication.sourceLabel}
             >
+              {selectionMode && (
+                <label className="publication-select" aria-label={t('library.selectPublication', { title: publication.title })}>
+                  <input
+                    type="checkbox"
+                    checked={selectedPublicationIds.has(publication.id)}
+                    onChange={() => toggleSelectedPublication(publication.id)}
+                  />
+                  <span aria-hidden="true" />
+                </label>
+              )}
               <button className="cover-button" type="button" onClick={() => onOpen(publication)} aria-label={t('library.open', { title: publication.title })}>
-                <img
+                <LazyCoverImage
                   src={publicationCoverSrc(publication)}
+                  fallbackSrc={publication.coverSrc}
                   alt=""
-                  onError={(event) => {
-                    event.currentTarget.onerror = null;
-                    event.currentTarget.src = publication.coverSrc ?? '';
+                  loading={index < 4 ? 'eager' : 'lazy'}
+                  onError={() => {
                     if (publication.customCover) {
                       onCoverError(publication);
                     }
@@ -430,6 +789,16 @@ export function LibraryView({
                 <div>
                   <p className="eyebrow">{safeSourceName(publication.sourceLabel)}</p>
                   <h2>{publication.title}</h2>
+                  {possibleDuplicateCounts.has(publication.id) && (
+                    <p className="possible-duplicate">{t('library.possibleDuplicate')}</p>
+                  )}
+                  {(publication.metadata?.series || publication.metadata?.year || publication.metadata?.publisher) && (
+                    <p className="publication-submeta">
+                      {[publication.metadata?.series, publication.metadata?.year, publication.metadata?.publisher]
+                        .filter((value) => value !== undefined && value !== '')
+                        .join(' · ')}
+                    </p>
+                  )}
                 </div>
                 <div className="publication-actions">
                   <button
@@ -451,8 +820,8 @@ export function LibraryView({
                   type="button"
                   className="card-review-btn"
                   onClick={() => setReviewTarget(publication)}
-                  aria-label="Avaliar e fazer anotações"
-                  title="Avaliar edição"
+                  aria-label={t('review.title')}
+                  title={t('review.title')}
                 >
                   {reviewsMap[publication.id]?.rating ? (
                     <span className="card-stars-filled">
@@ -464,7 +833,7 @@ export function LibraryView({
                   ) : (
                     <span className="card-stars-empty">
                       <StarIcon />
-                      <small>Avaliar</small>
+                      <small>{t('review.rateThis')}</small>
                     </span>
                   )}
                 </button>
@@ -472,8 +841,8 @@ export function LibraryView({
                   type="button"
                   className="card-recap-btn"
                   onClick={() => setRecapTarget(publication)}
-                  aria-label="Resumo até aqui sem spoilers"
-                  title="Resumo da história até onde você leu"
+                  aria-label={t('recap.button')}
+                  title={t('recap.title')}
                 >
                   <SparklesIcon />
                   <span>Recap</span>
@@ -523,8 +892,17 @@ export function LibraryView({
                 </button>
               </div>
             </article>
-          ))}
-        </section>
+            );
+          })}
+        </section>}
+        {((groupBySeries && !openSeries ? seriesFolders.length : orderedPublications.length) > renderLimit) && (
+          <div className="library-load-more">
+            <button type="button" className="secondary-button" onClick={() => setRenderLimit((current) => Math.min(current + 40, groupBySeries && !openSeries ? seriesFolders.length : orderedPublications.length))}>
+              {t('library.loadMore')} · {Math.min(renderLimit, groupBySeries && !openSeries ? seriesFolders.length : orderedPublications.length)}/{groupBySeries && !openSeries ? seriesFolders.length : orderedPublications.length}
+            </button>
+          </div>
+        )}
+        </>
       ) : (
         <section className="empty-shelf">
           <span className="empty-mark" aria-hidden="true">∅</span>
@@ -532,6 +910,21 @@ export function LibraryView({
           <p>{isNativeRuntime
             ? t('library.emptyNative')
             : t('library.emptyBrowser')}</p>
+          {hasActiveFilters && (
+            <button
+              type="button"
+              className="secondary-button empty-shelf__clear"
+              onClick={() => {
+                onQueryChange('');
+                onFavoriteOnlyChange(false);
+                onFormatFilterChange('all');
+                onStatusFilterChange('all');
+                setRatingFilter(0);
+              }}
+            >
+              {t('library.clearFilters')}
+            </button>
+          )}
         </section>
       )}
 
@@ -539,6 +932,27 @@ export function LibraryView({
         <span>{t('library.footerEdition')}</span>
         <span>{t('library.footerFeatures')}</span>
       </footer>
+
+      <div className="mobile-import-actions" aria-label={t('library.importOptions')}>
+        <button
+          className="mobile-import-folder"
+          type="button"
+          disabled={isImporting}
+          onClick={() => isNativeRuntime && onImportFolder()}
+        >
+          <span aria-hidden="true">▣</span>
+          {t('library.importFolder')}
+        </button>
+        <button
+          className="mobile-import-fab"
+          type="button"
+          disabled={isImporting}
+          onClick={() => isNativeRuntime && onImportNative()}
+        >
+          <span aria-hidden="true">+</span>
+          {isImporting ? t('library.importing') : t('library.importComic')}
+        </button>
+      </div>
 
       {statsModalOpen && (
         <ReadingStatsModal

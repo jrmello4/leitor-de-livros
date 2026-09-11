@@ -11,6 +11,7 @@ describe('local publication import contracts', () => {
     ]);
     expect(fileExtension('chapter.CBZ')).toBe('cbz');
     expect(formatForFile('chapter.CBR')).toBe('cbr');
+    expect(formatForFile('chapter.RAR')).toBe('cbr');
     expect(formatForFile('scan.webp')).toBe('images');
   });
 

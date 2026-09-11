@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractTitlePattern, findNextPublication } from './seriesMatching';
+import { comparePublicationsBySeries, extractTitlePattern, findNextPublication, publicationSeries } from './seriesMatching';
 import type { Publication } from './types';
 
 function createMockPublication(id: string, title: string, metadata?: Publication['metadata']): Publication {
@@ -34,6 +34,41 @@ describe('extractTitlePattern', () => {
   it('returns null for unnumbered titles', () => {
     expect(extractTitlePattern('Watchmen Deluxe Edition')).toBeNull();
   });
+
+  it('reads issue zero and ignores release dates, scan credits and subtitles after the issue', () => {
+    expect(extractTitlePattern('Arqueiro Verde Absoluto #00 (2025) [Equipe]')).toEqual({ prefix: 'arqueiro verde absoluto', number: 0 });
+    expect(extractTitlePattern('Batman Absoluto #10 - O retorno (2026)')).toEqual({ prefix: 'batman absoluto', number: 10 });
+    expect(extractTitlePattern('Saga 02 (2025) [Digital]')).toEqual({ prefix: 'saga', number: 2 });
+    expect(extractTitlePattern('Batman v02')).toEqual({ prefix: 'batman', number: 2 });
+    expect(extractTitlePattern('2000 AD #01')).toEqual({ prefix: '2000 ad', number: 1 });
+    expect(extractTitlePattern('100 Bullets #02')).toEqual({ prefix: '100 bullets', number: 2 });
+    expect(extractTitlePattern('1984')).toBeNull();
+    expect(extractTitlePattern('2000 AD')).toBeNull();
+  });
+});
+
+describe('series grouping', () => {
+  it('uses one case-insensitive identity and numeric issue order, starting at zero', () => {
+    const books = [
+      createMockPublication('ten', 'Arqueiro Verde Absoluto #10 (2026) [Digital]'),
+      createMockPublication('two', 'arqueiro  verde absoluto #02'),
+      createMockPublication('zero', 'Arqueiro Verde Absoluto #00'),
+      createMockPublication('one', 'ARQUEIRO VERDE ABSOLUTO #1 - Origem'),
+    ];
+    expect(new Set(books.map((book) => publicationSeries(book).key)).size).toBe(1);
+    expect(books.sort(comparePublicationsBySeries).map((book) => book.id)).toEqual(['zero', 'one', 'two', 'ten']);
+    expect(publicationSeries(books[0]).label).toBe('Arqueiro Verde Absoluto');
+  });
+
+  it('prefers metadata numbers over alphabetical subtitles and handles unnumbered specials last', () => {
+    const books = [
+      createMockPublication('ten', 'A tempestade', { series: 'Batman', number: '10' }),
+      createMockPublication('special', 'Batman'),
+      createMockPublication('zero', 'Zero absoluto', { series: ' batman ', number: '0' }),
+      createMockPublication('two', 'Batman #02'),
+    ];
+    expect(books.sort(comparePublicationsBySeries).map((book) => book.id)).toEqual(['zero', 'two', 'ten', 'special']);
+  });
 });
 
 describe('findNextPublication', () => {
@@ -58,11 +93,17 @@ describe('findNextPublication', () => {
     expect(nextFrom2?.id).toBe('3');
   });
 
-  it('falls back to natural alphabetical sort successor', () => {
-    const pubA = createMockPublication('a', 'Watchmen Chapter 1');
-    const pubB = createMockPublication('b', 'Watchmen Chapter 2');
+  it('does not guess a next volume from an alphabetical neighbour', () => {
+    const pubA = createMockPublication('a', 'Watchmen Deluxe Edition');
+    const pubB = createMockPublication('b', 'X-Men Omnibus');
 
     const next = findNextPublication(pubA, [pubB, pubA]);
-    expect(next?.id).toBe('b');
+    expect(next).toBeUndefined();
+  });
+
+  it('continues from issue zero using the same group identity despite suffixes and casing', () => {
+    const zero = createMockPublication('zero', 'Arqueiro Verde Absoluto #00 (2025) [Digital]');
+    const one = createMockPublication('one', 'ARQUEIRO VERDE ABSOLUTO #01 - Origem');
+    expect(findNextPublication(zero, [one, zero])).toBe(one);
   });
 });

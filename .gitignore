@@ -8,8 +8,13 @@ test-results/
 .worktrees/
 .superpowers/
 *.log
+*.apk
+*.idsig
+.tmp-*/
+.gradle-sockets/
 src-tauri/icons/icon.ico
 src-tauri/gen/
+src-tauri/mobile-import-plugin/android/build/
+src-tauri/mobile-import-plugin/android/.tauri/
 .DS_Store
 Thumbs.db
-

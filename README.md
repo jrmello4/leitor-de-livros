@@ -1,98 +1,68 @@
-# Tactile Reader
+# Tactile Reader (Android)
 
-> A local-first Windows reader built around the feeling of touching and turning a real comic page.
+> A local-first Android comic and manga reader built around continuous Webtoon reading and physical device validation.
 
-## Install
+## Platform
 
-Windows 10/11 x64. Download `TactileReader_<version>_x64-setup.exe` from the
-[latest release](https://github.com/jrmello4/leitor-de-livros/releases/latest) and run it.
-The PDFium runtime needed for PDF reading ships inside the installer; nothing else to set up.
+**Android is the product.** The Windows desktop installer and desktop release pipeline are retired. Development and host-side tests still run on a Windows machine; the shipped artifact is the Android APK.
 
-The installer is **not code signed**, so Windows SmartScreen shows "Windows protected your PC".
-Verify the download against the `.sha256` file published beside it before choosing
-**More info → Run anyway**:
+## Status
 
-```powershell
-Get-FileHash .\TactileReader_0.1.0_x64-setup.exe -Algorithm SHA256
-```
+Validated on a physical Motorola Moto G34 5G (ARM64, Android 15) via Wi‑Fi ADB:
 
-To remove it, use Windows Settings › Apps, or the `uninstall.exe` in the install directory.
-Uninstalling leaves your comics untouched: the reader never writes to the files you import.
+- Webtoon vertical reader with virtualized pages, pinch zoom (up to 5x), double-tap 1x/2x, autoscroll
+- Library with series folders, natural issue order, and possible-duplicate flags
+- SAF import of files and folders (`content://`), including mixed ZIP collections
+- CBZ / CBR (RAR4/RAR5 via `unrar-rs`) / 7z / image folders
+- SQLite progress as `{pageId, scrollRatio}` with migration and restore
+- CBR works without WinRAR or any external app; PDF is **not** available on Android yet
 
-### Build it yourself
+See [`docs/android-status.md`](docs/android-status.md) for the full validation log and [`docs/superpowers/specs/2026-09-08-mobile-android-comic-reader-design.md`](docs/superpowers/specs/2026-09-08-mobile-android-comic-reader-design.md) for the product spec.
+
+Test APKs live under `artifacts/android-test/` (local only; not published).
+
+## Build
 
 ```bash
 npm ci
-npm run tauri:build
+npm run build
+
+# One-time Android project setup (generates src-tauri/gen/android, gitignored)
+npm run tauri -- android init
+
+# Debug build / install on a connected device
+npm run android:dev
+
+# Release APK
+npm run android:build
 ```
 
-The installer lands in `src-tauri/target/release/bundle/nsis/`. Building needs Node 24 and a
-stable Rust toolchain.
+Requirements: Node 24, stable Rust with `aarch64-linux-android` target, Android SDK/NDK, JDK 21. On Windows hosts, set a short `TEMP`/`TMP` (for example `C:\tmp`) so Gradle can open its local socket.
 
-## The idea
+## Development on the host
 
-Most digital readers treat comics as static images inside a file browser. Tactile Reader is designed around the reading moment itself: a page that bends under the pointer, a transition that follows the reader's gesture, and an adaptive flow that understands panel order without taking control away.
+The same React + Rust core still compiles as a desktop shell for local UI work and `cargo test`/`vitest`. That shell is a development aid only — it is not a product, not packaged, and not released.
 
-The first version is planned for Windows 10/11 x64 and local CBZ, CBR, PDF, and image folders. The current native
-slice supports raster image folders, CBZ, CBR, and PDF. PDF import requires a PDFium runtime beside the application
-or available as a system library; without it, the importer reports an actionable diagnostic and preserves the source.
+```bash
+npm test
+npm run tauri:dev
+cargo test --manifest-path src-tauri/Cargo.toml
+```
 
 ## What makes it different
 
-- **Tactile page turning:** drag a corner and control the fold, light, shadow, reveal, inertia, completion, and cancellation in real time.
-- **Adaptive Flow:** detect left-to-right or right-to-left panel order locally, begin from the full composition, and guide focus only when wanted.
-- **Fluidity first:** target 60 FPS on common PCs and use high-refresh displays automatically, reducing effect complexity before motion stutters.
-- **Deep personalization:** tune colors, paper, contrast, physics, camera, shortcuts, and control placement through safe, reusable profiles.
-- **Private by design:** publications, analysis, progress, and profiles stay on the device; source files remain read-only.
-- **Graceful fallback:** WebGPU → WebGL2 → accessible static pages, without interrupting a reading session.
+- **Webtoon first:** sliding window keeps only visible pages mounted; zero-gap strip; position restored by page + scroll ratio.
+- **Local-first:** publications, progress, and profiles stay on the device; source files are never modified.
+- **Physical gestures:** central tap toggles HUD, double-tap zoom, pinch, Android Back always has an escape route.
+- **Series shelf:** Android opens on series folders; issues load only when a series is opened.
+- **Safe import:** SAF picker, signature-based container detection (a ZIP named `.cbr` is handled as CBZ), original names preserved.
 
-## Default experience
+## Out of scope for now
 
-The default library uses the **Paper Atelier** direction: saturated bookcloth, ink, brass, crop marks, stacked jackets, and restrained editorial controls. The interface recedes when a publication opens, leaving the page as the dominant object.
+EPUB, accounts, cloud sync, online metadata, store, discovery, iOS, and desktop distribution.
 
-Customization is progressive: useful presets remain close at hand, while an advanced studio exposes the complete system. Layout controls move between safe top, bottom, left, and right zones so experimentation remains reversible and accessible.
+PDF import on Android, OPDS/Komga/Kavita, and automatic volume-to-volume binge transition are planned next — see `docs/android-status.md`.
 
-## Planned architecture
+## License
 
-- Tauri 2 desktop shell
-- Rust local core and importer boundaries
-- React, TypeScript, and Vite interface
-- SQLite library, progress, corrections, and profiles
-- WebGPU renderer with WebGL2 fallback
-- Geometry-first panel analysis with a local ONNX fallback model
-- PDFium for PDF rendering; ZIP/UnRAR adapters for CBZ/CBR
-
-## V1 scope
-
-The first delivery covers:
-
-- local import and deduplication;
-- continue reading, search, sort, covers, and progress;
-- single pages, spreads, fullscreen, RTL/LTR, keyboard, wheel, and pointer navigation;
-- tactile page physics and Adaptive Flow correction;
-- named, versioned, importable/exportable profiles;
-- English UI prepared for later localization.
-
-EPUB, accounts, cloud synchronization, online metadata, a store, discovery, and the download website are intentionally outside v1.
-
-## Project status
-
-The product concept and engineering design are approved. The current slice includes the React/Vite reader plus a
-Tauri native core for SQLite library/progress/profile persistence, safe raster image, CBZ, CBR, and PDF import, and
-derived page caching. PDF pages are rendered into bounded PNG cache entries; CBR pages are extracted through the
-native UnRAR adapter. The reader uses WebGPU first, then WebGL2, then an accessible static page, retaining adjacent
-pages and reducing effects before it sacrifices frame time.
-
-Adaptive Flow now performs geometry-only analysis on-device and stores a versioned panel graph per publication/page.
-The reader reveals its panel markers only on request; a reader can swap two detected markers or select a persistent
-full-page manual route for low-confidence pages. No ONNX weights are bundled yet: that fallback remains deliberately
-deferred until a licensed model and validation set are supplied. The browser fallback remains available for review;
-installer smoke tests, reference-hardware performance work, and signed production packaging remain subsequent phases.
-
-The Windows x64 package includes the compatible PDFium runtime as a Tauri resource. The native core first resolves
-that bundled DLL, then a side-by-side executable DLL, then a system library; it surfaces a diagnostic if none can be
-loaded. PDFium and third-party license notices ship under the package `licenses/pdfium/` directory.
-
-Read the complete design specification in [docs/superpowers/specs/2026-08-11-tactile-comic-reader-design.md](docs/superpowers/specs/2026-08-11-tactile-comic-reader-design.md).
-
-Read the prioritized product improvement roadmap in [docs/roadmap-melhorias.md](docs/roadmap-melhorias.md).
+MIT — see [LICENSE](LICENSE).

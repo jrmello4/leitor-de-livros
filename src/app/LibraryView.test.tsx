@@ -150,6 +150,111 @@ describe('LibraryView favorites and safe deletion', () => {
     expect(onOpen).not.toHaveBeenCalled();
   });
 
+  it('offers a persistent mobile import action through the native picker', () => {
+    const onImportNative = vi.fn();
+    root = renderLibrary(host, [], { isNativeRuntime: true, onImportNative });
+
+    const action = Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent?.includes('Import comic'));
+    expect(action).toBeDefined();
+    act(() => action?.click());
+
+    expect(onImportNative).toHaveBeenCalledOnce();
+  });
+
+  it('offers a retry action after a native import diagnostic', () => {
+    const onRetryImport = vi.fn();
+    root = renderLibrary(host, [], {
+      isNativeRuntime: true,
+      diagnostic: 'The native import failed.',
+      canRetryImport: true,
+      onRetryImport,
+    });
+
+    const retryButton = [...host.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('Try again'));
+    expect(retryButton).not.toBeNull();
+    act(() => retryButton?.click());
+
+    expect(onRetryImport).toHaveBeenCalledOnce();
+  });
+
+  it('supports selecting a batch and marking it as read', async () => {
+    const first = publication('book-a', 'Saga #01', false);
+    const second = publication('book-b', 'Saga #02', false);
+    const onMarkRead = vi.fn(async () => undefined);
+    root = renderLibrary(host, [first, second], { onMarkRead });
+
+    act(() => {
+      [...host.querySelectorAll<HTMLButtonElement>('.library-view-toggle')]
+        .find((button) => button.textContent?.includes('Select'))?.click();
+    });
+    const checks = host.querySelectorAll<HTMLInputElement>('.publication-select input');
+    expect(checks).toHaveLength(2);
+    await act(async () => {
+      checks[0]?.click();
+      [...host.querySelectorAll<HTMLButtonElement>('.library-selection-toolbar .quiet-button')]
+        .find((button) => button.textContent?.includes('Mark as read'))?.click();
+      await Promise.resolve();
+    });
+
+    expect(onMarkRead).toHaveBeenCalledWith(first);
+  });
+
+  it('opens an inferred series folder instead of rendering all of its issues', () => {
+    root = renderLibrary(host, [
+      publication('book-a', 'Saga #01', false),
+      publication('book-b', 'Saga #02', false),
+    ]);
+    act(() => {
+      [...host.querySelectorAll<HTMLButtonElement>('.library-view-toggle')]
+        .find((button) => button.textContent?.includes('Group'))?.click();
+    });
+
+    const folder = host.querySelector<HTMLButtonElement>('[data-series-key="saga"] .series-card__open');
+    expect(folder?.textContent).toContain('Saga');
+    expect(folder?.textContent).toContain('2 volumes');
+    expect(host.querySelectorAll('.publication-card')).toHaveLength(0);
+    act(() => folder?.click());
+    expect([...host.querySelectorAll('.publication-card h2')].map((node) => node.textContent)).toEqual(['Saga #01', 'Saga #02']);
+  });
+
+  it('renders one group per series with issues in numeric order regardless of casing and suffixes', () => {
+    root = renderLibrary(host, [
+      publication('ten', 'Arqueiro Verde Absoluto #10 (2026) [Digital]', false),
+      publication('batman', 'Batman Absoluto #01', false),
+      publication('two', 'ARQUEIRO VERDE ABSOLUTO #02', false),
+      publication('zero', 'Arqueiro Verde Absoluto #00', false),
+      publication('one', 'Arqueiro  Verde Absoluto #01 - Origem', false),
+    ]);
+    act(() => {
+      [...host.querySelectorAll<HTMLButtonElement>('.library-view-toggle')]
+        .find((button) => button.textContent?.includes('Group'))?.click();
+    });
+
+    const folders = host.querySelectorAll('.series-card');
+    expect(folders).toHaveLength(2);
+    expect(folders[0].textContent).toBe('Arqueiro Verde Absoluto4 volumes');
+    expect(folders[1].textContent).toBe('Batman Absoluto1 volume');
+    act(() => folders[0].querySelector<HTMLButtonElement>('.series-card__open')?.click());
+    expect([...host.querySelectorAll('.publication-card')].map((card) => card.getAttribute('data-publication-id')))
+      .toEqual(['zero', 'one', 'two', 'ten']);
+  });
+
+  it('flags possible duplicates for review without removing them', () => {
+    root = renderLibrary(host, [
+      publication('first', 'Arqueiro Verde Absoluto #01', false, { pageCount: 36 }),
+      publication('second', 'ARQUEIRO VERDE ABSOLUTO #01', false, { pageCount: 36 }),
+      publication('third', 'Arqueiro Verde Absoluto #02', false, { pageCount: 36 }),
+    ], { isNativeRuntime: true });
+
+    const folder = host.querySelector<HTMLButtonElement>('[data-series-key="arqueiro verde absoluto"] .series-card__open');
+    expect(folder?.textContent).toContain('2 possible duplicates');
+    act(() => folder?.click());
+    expect(host.querySelectorAll('.possible-duplicate')).toHaveLength(2);
+    expect(host.querySelectorAll('.publication-card')).toHaveLength(3);
+  });
+
   it('searches by a safe filename without exposing an absolute source path', () => {
     const privatePath = 'C:\\private\\library\\chapter-07.cbz';
     const book = publication('book-a', 'Untitled', false, {
@@ -391,6 +496,8 @@ describe('LibraryView favorites and safe deletion', () => {
     const book = publication('book-a', 'Book A', false, { format: 'cbz' });
     const onRebuildCache = vi.fn();
     root = renderLibrary(host, [book], { isNativeRuntime: true, onRebuildCache });
+
+    act(() => host.querySelector<HTMLButtonElement>('[data-series-key="book a"] .series-card__open')?.click());
 
     const rebuildBtn = host.querySelector<HTMLButtonElement>('[aria-label="Rebuild cache"]');
     expect(rebuildBtn).not.toBeNull();

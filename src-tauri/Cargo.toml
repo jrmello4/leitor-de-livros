@@ -1,7 +1,7 @@
 [package]
 name = "tactile-reader"
 version = "0.1.1"
-description = "A local-first tactile comic reader"
+description = "A local-first Android comic reader"
 authors = ["Tactile Reader"]
 edition = "2021"
 
@@ -21,17 +21,24 @@ serde_json = "1"
 sha2 = "0.10"
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
-unrar = "0.5"
+tauri-plugin-mobile-import = { path = "mobile-import-plugin" }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+sevenz-rust = { version = "0.6.1", default-features = false }
 
-# The reader ships as a single Windows installer, so the release build is
-# optimised for the artifact a reader downloads rather than for build time.
-# Measured on the reference machine: default 17.87 MB, thin LTO 18.68 MB,
-# whole-program LTO with one codegen unit 13.59 MB. Thin LTO is the worst of
-# both, so this takes the build time and the 24% smaller download. `strip`
-# earns little on Windows, where symbols already live in a separate PDB, but
-# costs nothing.
+[target.'cfg(windows)'.dependencies]
+unrar = "0.5"
+
+[target.'cfg(target_os = "android")'.dependencies]
+# Pure Rust RAR4/RAR5 reader: avoids shipping an external executable or a C++
+# runtime in the APK. The Rust crypto backend also cross-compiles with the NDK.
+unrar-rs = { version = "0.10.3", default-features = false, features = ["crypto-rust"] }
+
+# Host-side (non-Android) PDF import only. PDF is not available in the Android
+# APK; this crate is still compiled on the Windows/Linux dev host for cargo test.
+# Measured on the reference host: whole-program LTO with one codegen unit is the
+# smallest artifact; keep it for the host binary, not for shipping a desktop app.
 [profile.release]
 codegen-units = 1
 lto = true
 strip = true
+panic = "abort"

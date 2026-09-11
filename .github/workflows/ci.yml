@@ -5,19 +5,6 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
-    inputs:
-      performance_gpu_class:
-        description: 'Reference GPU class for the manual performance run'
-        required: true
-        type: choice
-        options:
-          - integrated
-          - dedicated
-      performance_runner:
-        description: 'Runner label or self-hosted runner name for the reference machine'
-        required: true
-        default: windows-latest
-        type: string
 
 permissions:
   contents: read
@@ -53,9 +40,6 @@ jobs:
       - name: Validate release scripts
         run: npm run test:release-scripts
 
-      - name: Validate installed app harness
-        run: npm run test:installed-app-harness
-
       - name: Validate performance contract
         run: npm run test:performance-contract
 
@@ -63,12 +47,9 @@ jobs:
         run: npm run test:workflow
 
   native:
-    name: Rust and Tauri Windows verification
+    name: Rust core verification
     runs-on: windows-latest
-    # The installer build alone used 27m35s of a 30 minute budget before the
-    # release profile was tuned, so this was already one slow runner away from
-    # failing on time rather than on merit.
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -88,9 +69,6 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
 
-      # Every Rust job compiles the same tree from scratch and two of them also
-      # build the installer, so caching the registry and target directory is the
-      # difference between a twenty minute job and a short one.
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
@@ -104,17 +82,6 @@ jobs:
 
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
-
-      - name: Build Tauri Windows installer
-        run: npm run tauri build
-
-      - name: Upload Windows installer artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: tactile-reader-windows-installer
-          path: src-tauri/target/release/bundle/**
-          if-no-files-found: error
-          retention-days: 14
 
   visual:
     name: Reader visual matrix evidence
@@ -149,106 +116,3 @@ jobs:
             test-results/visual/**
           if-no-files-found: warn
           retention-days: 14
-
-  installer-smoke:
-    name: Windows installer smoke evidence
-    runs-on: windows-latest
-    # This job builds its own installer before it can drive one.
-    timeout-minutes: 60
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-
-      - name: Install JavaScript dependencies
-        run: npm ci
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-
-      # Every Rust job compiles the same tree from scratch and two of them also
-      # build the installer, so caching the registry and target directory is the
-      # difference between a twenty minute job and a short one.
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      - name: Install Playwright Chromium
-        run: npx playwright install chromium
-
-      - name: Run installer smoke
-        env:
-          SMOKE_EVIDENCE_DIR: ${{ github.workspace }}/artifacts/installer-smoke
-        run: npm run test:installer-smoke
-
-      - name: Upload installer smoke evidence
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: tactile-reader-installer-smoke-evidence
-          path: |
-            artifacts/installer-smoke/**
-            src-tauri/target/release/bundle/**
-          if-no-files-found: warn
-          retention-days: 14
-
-  performance:
-    name: Reference hardware performance evidence
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ${{ inputs.performance_runner }}
-    timeout-minutes: 90
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-
-      - name: Install JavaScript dependencies
-        run: npm ci
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      # Every Rust job compiles the same tree from scratch and two of them also
-      # build the installer, so caching the registry and target directory is the
-      # difference between a twenty minute job and a short one.
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      - name: Install Playwright Chromium
-        run: npx playwright install chromium
-
-      - name: Validate performance contract
-        run: npm run test:performance-contract
-
-      - name: Run reference performance matrix
-        env:
-          PERFORMANCE_GPU_CLASS: ${{ inputs.performance_gpu_class }}
-          PERFORMANCE_RUNNER_LABEL: ${{ inputs.performance_runner }}
-          PERFORMANCE_REPORT_DIR: ${{ github.workspace }}/artifacts/performance
-        run: npm run test:performance
-
-      - name: Upload performance evidence
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: tactile-reader-performance-${{ inputs.performance_gpu_class }}
-          path: |
-            artifacts/performance/**
-            src-tauri/target/release/bundle/**
-          if-no-files-found: warn
-          retention-days: 30
