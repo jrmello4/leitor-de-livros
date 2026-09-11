@@ -23,7 +23,7 @@ tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-mobile-import = { path = "mobile-import-plugin" }
 tauri-plugin-app-updater = { path = "app-updater-plugin" }
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 sevenz-rust = { version = "0.6.1", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
