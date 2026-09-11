@@ -319,10 +319,22 @@
           "markdownDescription": "Denies the download_and_install command without any pre-configured scope."
         },
         {
-          "description": "Allows checking GitHub Releases and prompting an APK install.\n#### This default permission set includes:\n\n- `allow-check-update`\n- `allow-download-and-install`",
+          "description": "Enables the get_installed_version command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-installed-version",
+          "markdownDescription": "Enables the get_installed_version command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_installed_version command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-installed-version",
+          "markdownDescription": "Denies the get_installed_version command without any pre-configured scope."
+        },
+        {
+          "description": "Allows checking GitHub Releases and prompting an APK install.\n#### This default permission set includes:\n\n- `allow-check-update`\n- `allow-download-and-install`\n- `allow-get-installed-version`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Allows checking GitHub Releases and prompting an APK install.\n#### This default permission set includes:\n\n- `allow-check-update`\n- `allow-download-and-install`"
+          "markdownDescription": "Allows checking GitHub Releases and prompting an APK install.\n#### This default permission set includes:\n\n- `allow-check-update`\n- `allow-download-and-install`\n- `allow-get-installed-version`"
         }
       ]
     }

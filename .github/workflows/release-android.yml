@@ -1,0 +1,183 @@
+name: Android release (rolling)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release
+  cancel-in-progress: false
+
+env:
+  NDK_VERSION: 28.2.13676358
+
+jobs:
+  build-and-publish:
+    name: Build signed APK and update android-latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Validate release versions
+        run: npm run test:release-scripts
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install platform, build tools and NDK
+        run: |
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;${NDK_VERSION}"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Initialize Android project
+        run: |
+          export NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
+          export ANDROID_NDK_HOME="$NDK_HOME"
+          if [ ! -d src-tauri/gen/android ]; then
+            npm run tauri -- android init --ci --skip-targets-install
+          fi
+          test -f src-tauri/gen/android/app/build.gradle.kts
+
+      - name: Configure release signing
+        env:
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
+        run: |
+          if [ -z "$ANDROID_KEY_BASE64" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
+            echo "Missing one of ANDROID_KEY_BASE64, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD secrets."
+            echo "Follow docs/android-updater.md (Keystore) to create them, then re-run."
+            exit 1
+          fi
+          cd src-tauri/gen/android
+          {
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "password=$ANDROID_KEY_PASSWORD"
+            echo "$ANDROID_KEY_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "storeFile=$RUNNER_TEMP/release.keystore"
+          } > keystore.properties
+          python3 - <<'EOF'
+          from pathlib import Path
+          gradle = Path("app/build.gradle.kts")
+          text = gradle.read_text()
+          marker = "// android-release-signing"
+          if marker not in text:
+              signing = marker + "\nsigningConfigs {\n    create(\"release\") {\n        val keystorePropertiesFile = rootProject.file(\"keystore.properties\")\n        val keystoreProperties = java.util.Properties()\n        if (keystorePropertiesFile.exists()) {\n            keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile))\n        }\n        keyAlias = keystoreProperties[\"keyAlias\"] as String\n        keyPassword = keystoreProperties[\"password\"] as String\n        storeFile = file(keystoreProperties[\"storeFile\"] as String)\n        storePassword = keystoreProperties[\"password\"] as String\n    }\n}\n"
+              text = text.replace("buildTypes {", signing + "buildTypes {", 1)
+              text = text.replace(
+                  'getByName("release") {',
+                  'getByName("release") {\n        signingConfig = signingConfigs.getByName("release")',
+                  1,
+              )
+              gradle.write_text(text)
+              print("release signing config added")
+          else:
+              print("release signing config already present")
+          EOF
+
+      - name: Set Android versionCode
+        run: |
+          python3 - "$GITHUB_RUN_NUMBER" <<'EOF'
+          import re, sys
+          from pathlib import Path
+          run_number = sys.argv[1]
+          gradle = Path("src-tauri/gen/android/app/build.gradle.kts")
+          text = gradle.read_text()
+          updated, count = re.subn(r"versionCode\s*=\s*\d+", f"versionCode = {run_number}", text, count=1)
+          if count == 0:
+              updated = re.sub(
+                  r"(defaultConfig\s*\{)",
+                  rf"\1\n        versionCode = {run_number}",
+                  text,
+                  count=1,
+              )
+          gradle.write_text(updated)
+          print(f"versionCode set to {run_number}")
+          EOF
+
+      - name: Build signed release APK
+        run: |
+          export NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
+          export ANDROID_NDK_HOME="$NDK_HOME"
+          npm run tauri -- android build --apk --ci
+
+      - name: Collect and verify APK
+        id: apk
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          APK_NAME="tactile-reader-${VERSION}-arm64.apk"
+          mkdir -p release-artifacts
+          CANDIDATE=$(find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' -path '*release*' | head -n 1)
+          if [ -z "$CANDIDATE" ]; then
+            echo "No release APK found under app/build/outputs/apk."
+            find src-tauri/gen/android/app/build/outputs -maxdepth 4 || true
+            exit 1
+          fi
+          echo "Using $CANDIDATE"
+          cp "$CANDIDATE" "release-artifacts/$APK_NAME"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "release-artifacts/$APK_NAME"
+          echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Generate latest.json
+        env:
+          ANDROID_VERSION_CODE: ${{ github.run_number }}
+          RELEASE_NOTES: "main @ ${{ github.sha }} — build ${{ github.run_number }}"
+        run: |
+          node scripts/android/make-latest-json.mjs \
+            "${{ steps.apk.outputs.apk_name }}" \
+            "$ANDROID_VERSION_CODE" \
+            "$RELEASE_NOTES" \
+            --out release-artifacts/latest.json
+          cat release-artifacts/latest.json
+
+      - name: Publish android-latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-latest
+          name: "Android rolling (${{ steps.apk.outputs.version }}+${{ github.run_number }})"
+          body: |
+            Rolling build from `main`.
+
+            - Version: `${{ steps.apk.outputs.version }}`
+            - Version code: `${{ github.run_number }}`
+            - Commit: `${{ github.sha }}`
+            - Install: download `${{ steps.apk.outputs.apk_name }}`, allow “Install unknown apps” for Tactile Reader, then open it — or use Settings → App update inside the app.
+            - First install from this pipeline requires uninstalling APKs signed with a different key (debug builds); the library database is recreated.
+          prerelease: true
+          make_latest: false
+          files: |
+            release-artifacts/${{ steps.apk.outputs.apk_name }}
+            release-artifacts/latest.json

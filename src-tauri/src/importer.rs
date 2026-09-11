@@ -1093,10 +1093,14 @@ mod tests {
 
     fn test_comic_bytes() -> Vec<u8> {
         let mut png = Cursor::new(Vec::new());
-        DynamicImage::new_rgb8(3, 3).write_to(&mut png, ImageFormat::Png).expect("png");
+        DynamicImage::new_rgb8(3, 3)
+            .write_to(&mut png, ImageFormat::Png)
+            .expect("png");
         let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
         for name in ["01.png", "02.png"] {
-            archive.start_file(name, SimpleFileOptions::default()).expect("page entry");
+            archive
+                .start_file(name, SimpleFileOptions::default())
+                .expect("page entry");
             archive.write_all(png.get_ref()).expect("page bytes");
         }
         archive.finish().expect("comic").into_inner()
@@ -1104,7 +1108,8 @@ mod tests {
 
     #[test]
     fn legacy_import_names_are_repaired_without_changing_sources_or_reading_data() {
-        let root = std::env::temp_dir().join(format!("tactile-reader-legacy-names-{}", timestamp()));
+        let root =
+            std::env::temp_dir().join(format!("tactile-reader-legacy-names-{}", timestamp()));
         let app_dir = root.join("app");
         let database = LibraryDb::open(app_dir.clone()).expect("database");
         let original = test_comic_bytes();
@@ -1122,14 +1127,36 @@ mod tests {
         }).collect();
         let imported = import_paths(&database, &paths).expect("import");
         assert!(imported.diagnostics.is_empty());
-        let expected = ["Arqueiro Verde Absoluto #00", "Arqueiro Verde Absoluto #01", "Arqueiro Verde Absoluto #02", "Batman Absoluto #01", "2000 AD #01"];
+        let expected = [
+            "Arqueiro Verde Absoluto #00",
+            "Arqueiro Verde Absoluto #01",
+            "Arqueiro Verde Absoluto #02",
+            "Batman Absoluto #01",
+            "2000 AD #01",
+        ];
         for (publication, title) in imported.publications.iter().zip(expected) {
             assert_eq!(publication.title, title);
-            assert_eq!(Path::new(&publication.source_label).file_stem().unwrap().to_str(), Some(title));
-            database.save_progress(&publication.id, 1).expect("progress");
-            database.upsert_bookmark(&publication.id, &crate::models::NativeBookmark {
-                page_id: publication.pages[1].id.clone(), label: "Minha página".into(), created_at: "1".into(), updated_at: "1".into(),
-            }).expect("bookmark");
+            assert_eq!(
+                Path::new(&publication.source_label)
+                    .file_stem()
+                    .unwrap()
+                    .to_str(),
+                Some(title)
+            );
+            database
+                .save_progress(&publication.id, 1)
+                .expect("progress");
+            database
+                .upsert_bookmark(
+                    &publication.id,
+                    &crate::models::NativeBookmark {
+                        page_id: publication.pages[1].id.clone(),
+                        label: "Minha página".into(),
+                        created_at: "1".into(),
+                        updated_at: "1".into(),
+                    },
+                )
+                .expect("bookmark");
         }
         drop(database);
         let reopened = LibraryDb::open(app_dir).expect("reopen");
@@ -1140,46 +1167,74 @@ mod tests {
             assert_eq!(before.id, after.id);
             assert_eq!(before.title, after.title);
             assert_eq!(after.current_page, 1);
-            assert_eq!(reopened.list_bookmarks(&after.id).expect("bookmarks")[0].page_id, before.pages[1].id);
-            let summary = summaries.iter().find(|book| book.id == after.id).expect("summary");
+            assert_eq!(
+                reopened.list_bookmarks(&after.id).expect("bookmarks")[0].page_id,
+                before.pages[1].id
+            );
+            let summary = summaries
+                .iter()
+                .find(|book| book.id == after.id)
+                .expect("summary");
             assert_eq!(summary.title, after.title);
             assert_eq!(summary.current_page, 1);
             assert_eq!(summary.source_label, after.source_label);
         }
-        for path in paths { assert_eq!(fs::read(path).expect("unchanged source"), original); }
+        for path in paths {
+            assert_eq!(fs::read(path).expect("unchanged source"), original);
+        }
         drop(reopened);
         fs::remove_dir_all(root).expect("cleanup fixture");
     }
 
     #[test]
     fn collection_keeps_original_names_and_reuses_legacy_paths_on_reimport() {
-        let root = std::env::temp_dir().join(format!("tactile-reader-collection-names-{}", timestamp()));
+        let root =
+            std::env::temp_dir().join(format!("tactile-reader-collection-names-{}", timestamp()));
         fs::create_dir_all(&root).expect("root");
         let path = root.join("HQ.zip");
         let comic = test_comic_bytes();
         let mut archive = ZipWriter::new(File::create(&path).expect("collection"));
-        for name in ["A/Arqueiro Verde Absoluto #01.cbr", "B/Arqueiro Verde Absoluto #01.cbr", "Batman Absoluto #00.cbz"] {
-            archive.start_file(name, SimpleFileOptions::default()).expect("comic entry");
+        for name in [
+            "A/Arqueiro Verde Absoluto #01.cbr",
+            "B/Arqueiro Verde Absoluto #01.cbr",
+            "Batman Absoluto #00.cbz",
+        ] {
+            archive
+                .start_file(name, SimpleFileOptions::default())
+                .expect("comic entry");
             archive.write_all(&comic).expect("comic bytes");
         }
         archive.finish().expect("finish collection");
         let path = path.canonicalize().expect("canonical source");
         let collection_id = digest_id("collection", path.to_string_lossy().as_bytes());
-        let extracted = path.parent().unwrap().join(format!("collection-{collection_id}"));
+        let extracted = path
+            .parent()
+            .unwrap()
+            .join(format!("collection-{collection_id}"));
         fs::create_dir_all(&extracted).expect("legacy directory");
         let legacy = extracted.join("0000-Arqueiro Verde Absoluto #01.cbr");
         fs::write(&legacy, &comic).expect("legacy entry");
         let database = LibraryDb::open(root.join("app")).expect("database");
-        let existing = import_paths(&database, &[legacy.to_string_lossy().into_owned()]).expect("legacy import");
-        let imported = import_paths(&database, &[path.to_string_lossy().into_owned()]).expect("collection import");
+        let existing = import_paths(&database, &[legacy.to_string_lossy().into_owned()])
+            .expect("legacy import");
+        let imported = import_paths(&database, &[path.to_string_lossy().into_owned()])
+            .expect("collection import");
         assert!(imported.diagnostics.is_empty());
         assert_eq!(imported.publications.len(), 3);
         assert_eq!(imported.publications[0].id, existing.publications[0].id);
         assert_ne!(imported.publications[0].id, imported.publications[1].id);
-        assert_eq!(imported.publications[0].title, "Arqueiro Verde Absoluto #01");
-        assert_eq!(imported.publications[1].title, "Arqueiro Verde Absoluto #01");
+        assert_eq!(
+            imported.publications[0].title,
+            "Arqueiro Verde Absoluto #01"
+        );
+        assert_eq!(
+            imported.publications[1].title,
+            "Arqueiro Verde Absoluto #01"
+        );
         assert_eq!(imported.publications[2].title, "Batman Absoluto #00");
-        assert!(extracted.join("0001/Arqueiro Verde Absoluto #01.cbr").is_file());
+        assert!(extracted
+            .join("0001/Arqueiro Verde Absoluto #01.cbr")
+            .is_file());
         assert!(extracted.join("0002/Batman Absoluto #00.cbz").is_file());
         assert_eq!(fs::read(legacy).expect("legacy source"), comic);
         assert_eq!(database.list_publications().expect("library").len(), 3);

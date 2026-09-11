@@ -21,6 +21,17 @@ See [`docs/android-status.md`](docs/android-status.md) for the full validation l
 
 Test APKs live under `artifacts/android-test/` (local only; not published).
 
+## Download
+
+Every push to `main` publishes a signed APK to the rolling
+[`android-latest`](https://github.com/jrmello4/leitor-de-livros/releases/tag/android-latest)
+release. Download the `tactile-reader-*-arm64.apk`, allow “Install unknown
+apps” for Tactile Reader, and open it. Afterwards the app updates itself via
+Settings → App update whenever `main` moves (see
+[`docs/android-updater.md`](docs/android-updater.md)). Migrating from a
+manually installed debug APK requires one uninstall first (different signing
+key).
+
 ## Build
 
 ```bash

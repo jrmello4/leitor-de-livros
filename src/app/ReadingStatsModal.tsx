@@ -84,7 +84,7 @@ export function ReadingStatsModal({ stats, achievements, onClose }: ReadingStats
             <div className="stats-kpi-card">
               <span className="stats-kpi-icon">📖</span>
               <div className="stats-kpi-info">
-                <span className="stats-kpi-value">{stats.totalPagesRead.toLocaleString()}</span>
+                <span className="stats-kpi-value">{stats.totalPagesRead.toLocaleString('pt-BR')}</span>
                 <span className="stats-kpi-label">Páginas Lidas</span>
               </div>
             </div>

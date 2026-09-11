@@ -35,9 +35,36 @@ class AppUpdaterPlugin(private val host: Activity) : Plugin(host) {
   private val executor = Executors.newSingleThreadExecutor()
 
   @Command
+  fun getInstalledVersion(invoke: Invoke) {
+    try {
+      val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        host.packageManager.getPackageInfo(
+          host.packageName,
+          PackageManager.PackageInfoFlags.of(0),
+        )
+      } else {
+        @Suppress("DEPRECATION")
+        host.packageManager.getPackageInfo(host.packageName, 0)
+      }
+      val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        packageInfo.longVersionCode
+      } else {
+        @Suppress("DEPRECATION")
+        packageInfo.versionCode.toLong()
+      }
+      val result = JSObject()
+      result.put("versionName", packageInfo.versionName ?: "")
+      result.put("versionCode", versionCode)
+      invoke.resolve(result)
+    } catch (error: Exception) {
+      invoke.reject(error.message ?: "Could not read the installed version")
+    }
+  }
+
+  @Command
   fun checkUpdate(invoke: Invoke) {
     val manifestUrl = invoke.getString("manifestUrl")
-      ?: "https://github.com/jrmello4/leitor-de-livros/releases/latest/download/latest.json"
+      ?: "https://github.com/jrmello4/leitor-de-livros/releases/download/android-latest/latest.json"
     executor.execute {
       try {
         val payload = fetchJson(manifestUrl)

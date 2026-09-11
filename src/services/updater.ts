@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { isAndroidRuntime, isNativeRuntime } from './platform';
 
 export const DEFAULT_UPDATE_MANIFEST_URL =
-  'https://github.com/jrmello4/leitor-de-livros/releases/latest/download/latest.json';
+  'https://github.com/jrmello4/leitor-de-livros/releases/download/android-latest/latest.json';
 
 export interface UpdateManifest {
   version: string;
@@ -37,6 +37,36 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
+export async function getInstalledVersionCode(): Promise<number> {
+  if (!isUpdaterAvailable()) {
+    return -1;
+  }
+  try {
+    const info = await invoke<{ versionCode?: unknown }>(
+      'plugin:app-updater|get_installed_version',
+    );
+    return typeof info.versionCode === 'number' ? info.versionCode : -1;
+  } catch {
+    return -1;
+  }
+}
+
+export function shouldOfferUpdate(
+  currentVersion: string,
+  manifest: UpdateManifest,
+  installedVersionCode: number,
+): boolean {
+  const versionDelta = compareVersions(manifest.version, currentVersion);
+  if (versionDelta !== 0) {
+    return versionDelta > 0;
+  }
+  return (
+    manifest.versionCode > 0 &&
+    installedVersionCode >= 0 &&
+    manifest.versionCode > installedVersionCode
+  );
+}
+
 export async function checkForUpdate(
   currentVersion: string,
   manifestUrl = DEFAULT_UPDATE_MANIFEST_URL,
@@ -52,15 +82,17 @@ export async function checkForUpdate(
   if (!version || !url.startsWith('https://')) {
     return null;
   }
-  if (compareVersions(version, currentVersion) <= 0) {
-    return null;
-  }
-  return {
+  const manifest: UpdateManifest = {
     version,
     versionCode: typeof raw.versionCode === 'number' ? raw.versionCode : -1,
     url,
     notes: typeof raw.notes === 'string' ? raw.notes : '',
   };
+  const installedVersionCode = await getInstalledVersionCode();
+  if (!shouldOfferUpdate(currentVersion, manifest, installedVersionCode)) {
+    return null;
+  }
+  return manifest;
 }
 
 export async function downloadAndInstallUpdate(apkUrl: string): Promise<{ path: string; bytes: number }> {

@@ -35,6 +35,7 @@ export default defineConfig({
       'scripts/release/**',
       'scripts/performance/**',
       'scripts/windows/**',
+      'scripts/android/**',
     ],
   },
 });

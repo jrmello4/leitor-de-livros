@@ -6,6 +6,7 @@ Allows checking GitHub Releases and prompting an APK install.
 
 - `allow-check-update`
 - `allow-download-and-install`
+- `allow-get-installed-version`
 
 ## Permission Table
 
@@ -64,6 +65,32 @@ Enables the download_and_install command without any pre-configured scope.
 <td>
 
 Denies the download_and_install command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`app-updater:allow-get-installed-version`
+
+</td>
+<td>
+
+Enables the get_installed_version command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`app-updater:deny-get-installed-version`
+
+</td>
+<td>
+
+Denies the get_installed_version command without any pre-configured scope.
 
 </td>
 </tr>

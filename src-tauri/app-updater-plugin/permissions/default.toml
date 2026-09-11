@@ -2,4 +2,4 @@
 
 [default]
 description = "Allows checking GitHub Releases and prompting an APK install."
-permissions = ["allow-check-update", "allow-download-and-install"]
+permissions = ["allow-check-update", "allow-download-and-install", "allow-get-installed-version"]

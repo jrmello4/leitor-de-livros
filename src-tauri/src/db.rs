@@ -42,11 +42,13 @@ impl LibraryDb {
         let cache_dir = data_dir.join("cache").join("pages");
         // Tauri's Android data directory is the package root, while the SAF
         // bridge uses Activity.filesDir. Desktop imports live beside the DB.
-        let managed_import_dir = data_dir.canonicalize()?.join(if cfg!(target_os = "android") {
-            "files/imports"
-        } else {
-            "imports"
-        });
+        let managed_import_dir = data_dir
+            .canonicalize()?
+            .join(if cfg!(target_os = "android") {
+                "files/imports"
+            } else {
+                "imports"
+            });
         std::fs::create_dir_all(&cache_dir)?;
 
         let database_path = data_dir.join("reader.sqlite3");
@@ -1513,9 +1515,14 @@ impl LibraryDb {
             &row.source_path,
             &self.managed_import_dir,
         ) {
-            let stored_stem = Path::new(&row.source_label).file_stem().and_then(|name| name.to_str());
+            let stored_stem = Path::new(&row.source_label)
+                .file_stem()
+                .and_then(|name| name.to_str());
             if stored_stem == Some(row.title.as_str()) {
-                if let Some(stem) = Path::new(&original).file_stem().and_then(|name| name.to_str()) {
+                if let Some(stem) = Path::new(&original)
+                    .file_stem()
+                    .and_then(|name| name.to_str())
+                {
                     row.title = stem.to_owned();
                 }
             }
