@@ -5,6 +5,7 @@ import { t } from '../i18n/catalog';
 import { clamp, clampPan, clampZoomScale, navigationAvailability, pageCounter, visiblePageIndexes } from '../domain/reader';
 import { defaultReaderState, nextRotation, normalizeReaderState } from '../domain/readerState';
 import type { Bookmark, PageDescriptor, PageRotation, Publication, ReaderState, ReadingProfile, StageBackground, ZoomMode } from '../domain/types';
+import { isAndroidRuntime } from '../services/platform';
 import { touchNativePages } from '../services/nativeLibrary';
 import { useAdaptiveFlow } from '../flow/useAdaptiveFlow';
 import { ReaderSurface } from '../rendering/ReaderSurface';
@@ -518,20 +519,19 @@ export function ReaderView({
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [collectorInfoOpen, zoomMenuOpen]);
+  }, [collectorInfoOpen, recapModalOpen, zoomMenuOpen]);
 
   // Android's system Back must always provide an escape route. The event is
   // emitted by some WebView shells instead of arriving as a keyboard Escape;
   // close the most local surface first, then leave the reader.
   useEffect(() => {
-    const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
-    if (!isAndroid) {
+    if (!isAndroidRuntime()) {
       return undefined;
     }
     let disposed = false;
     let pluginListener: PluginListener | undefined;
     const handleBackButton = (event?: Event) => {
-      if (typeof navigator !== 'undefined' && !/Android/i.test(navigator.userAgent)) {
+      if (!isAndroidRuntime()) {
         return;
       }
       const state = readerBackStateRef.current;

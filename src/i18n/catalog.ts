@@ -387,6 +387,8 @@ const ENGLISH_CATALOG: MessageCatalog = {
   'webtoon.play': 'Play autoscroll',
   'webtoon.pause': 'Pause autoscroll',
   'webtoon.speed': 'Speed',
+  'webtoon.bingeOpening': 'Opening next volume…',
+  'webtoon.bingeCancel': 'Cancel',
   'achievement.firstPageTitle': 'First Step',
   'achievement.firstPageDesc': 'Read your very first comic page',
   'achievement.streak3Title': 'Heating Up',

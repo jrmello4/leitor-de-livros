@@ -384,6 +384,8 @@ export const PT_BR_CATALOG: MessageCatalog = {
   'webtoon.play': 'Iniciar rolagem',
   'webtoon.pause': 'Pausar rolagem',
   'webtoon.speed': 'Velocidade',
+  'webtoon.bingeOpening': 'Abrindo o próximo volume…',
+  'webtoon.bingeCancel': 'Cancelar',
   'achievement.firstPageTitle': 'Primeiro Passo',
   'achievement.firstPageDesc': 'Leia sua primeiríssima página de quadrinho',
   'achievement.streak3Title': 'Embalado',

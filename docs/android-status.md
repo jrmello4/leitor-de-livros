@@ -276,3 +276,17 @@ aparecer no ADB sem fio; o dispositivo ficou offline após o teste anterior.
   `moto-series-folder-open.png`. APK instalado:
   `artifacts/android-test/tactile-series-folders-v2-debug.apk` (assinaturas v2
   e v3 verificadas).
+
+## Gestos e plataforma — rodada Android-only
+
+- Flag nativa `runtime_platform` (Rust) substitui a detecção por user-agent na
+  importação SAF e nos handlers de Back (`src/services/platform.ts`).
+- Webtoon: componente `PageImage` limpa `src` ao sair da janela virtual, pedindo
+  à WebView que descarte o bitmap decodificado.
+- Teclas de volume tentam rolar um bloco quando a WebView as entrega via
+  keydown (`AudioVolumeUp`/`AudioVolumeDown`). No Moto G34 as teclas ainda
+  podem controlar o volume do sistema; confirmar em device.
+- Binge: o card de próximo volume, ao ficar visível (~35%) por ~1,6s, abre a
+  próxima edição automaticamente, com botão Cancelar.
+- Escape do recap incluído nas dependências do efeito de teclado do leitor.
+- Pipeline desktop removido do produto; shell host segue só para testes.

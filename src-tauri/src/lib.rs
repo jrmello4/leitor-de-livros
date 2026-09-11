@@ -12,6 +12,19 @@ use tauri::path::BaseDirectory;
 use tauri::{Emitter, Manager, State};
 
 #[tauri::command]
+fn runtime_platform() -> &'static str {
+    if cfg!(target_os = "android") {
+        "android"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    }
+}
+
+#[tauri::command]
 fn list_publications(database: State<'_, LibraryDb>) -> Result<Vec<NativePublication>, String> {
     database
         .list_publications()
@@ -260,6 +273,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            runtime_platform,
             list_publications,
             list_publication_pages,
             import_publications,

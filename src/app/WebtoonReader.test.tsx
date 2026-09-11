@@ -320,4 +320,76 @@ describe('WebtoonReader', () => {
     act(() => autoBtn?.click());
     expect(autoBtn?.textContent).toContain('Autoscroll');
   });
+  it('scrolls with hardware volume keys when the WebView forwards them', () => {
+    act(() => {
+      root.render(
+        <WebtoonReader publication={SAMPLE_PUBLICATION} currentPage={0} onPageVisible={vi.fn()} />,
+      );
+    });
+    const container = host.querySelector<HTMLElement>('[data-testid="webtoon-reader"]')!;
+    const scrollBy = vi.fn();
+    Object.defineProperty(container, 'clientHeight', { value: 800, configurable: true });
+    container.scrollBy = scrollBy;
+
+    const press = (key: string, keyCode: number) => {
+      const event = new KeyboardEvent('keydown', { key, keyCode, cancelable: true, bubbles: true });
+      // keyCode is not settable via KeyboardEventInit in jsdom; force it.
+      Object.defineProperty(event, 'keyCode', { value: keyCode });
+      window.dispatchEvent(event);
+      return event;
+    };
+
+    press('AudioVolumeDown', 25);
+    expect(scrollBy).toHaveBeenCalledWith(expect.objectContaining({ top: expect.any(Number) }));
+    const downTop = scrollBy.mock.calls[0][0].top;
+    expect(downTop).toBeGreaterThan(0);
+
+    press('AudioVolumeUp', 24);
+    const upTop = scrollBy.mock.calls[1][0].top;
+    expect(upTop).toBeLessThan(0);
+  });
+
+  it('clears image src when a page leaves the virtual window', () => {
+    act(() => {
+      root.render(
+        <WebtoonReader publication={SAMPLE_PUBLICATION} currentPage={0} onPageVisible={vi.fn()} />,
+      );
+    });
+    // Default window is [0, 1]; page index 2 is outside and has no img.
+    expect(host.querySelectorAll('img').length).toBeLessThan(SAMPLE_PUBLICATION.pages.length);
+
+    act(() => {
+      notifyIntersections(
+        [
+          {
+            target: host.querySelector('[data-page-index="2"]'),
+            isIntersecting: true,
+            intersectionRatio: 1,
+          } as IntersectionObserverEntry,
+        ],
+        {} as IntersectionObserver,
+      );
+    });
+    const img = host.querySelector<HTMLImageElement>('[data-page-index="2"] img');
+    expect(img).not.toBeNull();
+
+    act(() => {
+      notifyIntersections(
+        [
+          {
+            target: host.querySelector('[data-page-index="2"]'),
+            isIntersecting: false,
+            intersectionRatio: 0,
+          } as IntersectionObserverEntry,
+          {
+            target: host.querySelector('[data-page-index="0"]'),
+            isIntersecting: true,
+            intersectionRatio: 1,
+          } as IntersectionObserverEntry,
+        ],
+        {} as IntersectionObserver,
+      );
+    });
+    expect(host.querySelector('[data-page-index="2"] img')).toBeNull();
+  });
 });

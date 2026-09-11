@@ -5257,3 +5257,15 @@ html:fullscreen .reader-controls:focus-within {
   .reader-title strong { max-width: 29vw; }
   .reader-topbar-end .reader-tool--compact-hide { display: none; }
 }
+
+
+.webtoon-binge-hint {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: center;
+  margin: 0.75rem 0 0;
+  font-size: 0.9rem;
+  opacity: 0.92;
+}

@@ -40,6 +40,32 @@ interface ZoomAnchor {
   pageYRatio?: number;
 }
 
+/**
+ * Mounted only inside the sliding window. Clearing `src` on unmount asks the
+ * WebView to drop the decoded bitmap instead of keeping it until GC.
+ */
+function PageImage({ src, alt, style }: { src: string; alt: string; style?: CSSProperties }) {
+  const imgRef = useRef<HTMLImageElement>(null);
+  useEffect(() => {
+    const img = imgRef.current;
+    return () => {
+      if (!img) return;
+      img.removeAttribute('src');
+      img.src = '';
+    };
+  }, []);
+  return (
+    <img
+      ref={imgRef}
+      src={src}
+      alt={alt}
+      loading="eager"
+      decoding="async"
+      draggable={false}
+      style={style}
+    />
+  );
+}
 export function WebtoonReader({
   publication,
   currentPage,
@@ -78,6 +104,7 @@ export function WebtoonReader({
   const pinchFrameRef = useRef<number | null>(null);
   const pendingPinchScaleRef = useRef<number | null>(null);
   const lastTapRef = useRef<{ time: number; x: number; y: number } | null>(null);
+  const nextVolumeCardRef = useRef<HTMLElement | null>(null);
 
   const settleZoomNavigation = () => {
     zoomNavigationBlockRef.current = true;
@@ -270,6 +297,23 @@ export function WebtoonReader({
     onScaleChange(nextScale);
   };
 
+  // Hardware volume keys scroll a block when the WebView forwards them.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      const key = event.key;
+      const isUp = key === 'AudioVolumeUp' || event.keyCode === 24 || event.code === 'VolumeUp';
+      const isDown = key === 'AudioVolumeDown' || event.keyCode === 25 || event.code === 'VolumeDown';
+      if (!isUp && !isDown) return;
+      const container = containerRef.current;
+      if (!container) return;
+      event.preventDefault();
+      const delta = Math.max(1, Math.round(container.clientHeight * 0.45));
+      container.scrollBy({ top: (isUp ? -1 : 1) * delta, behavior: 'smooth' });
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
   // React delegates touch events passively. Native non-passive listeners are
   // necessary to prevent the browser from consuming a two-finger gesture.
   const handlersRef = useRef({ handleTouchStart, handleTouchMove, handleTouchEnd });
@@ -479,6 +523,66 @@ export function WebtoonReader({
     event.stopPropagation();
   };
 
+  // Binge: when the end-of-volume card stays in view, continue automatically.
+  const bingeTimerRef = useRef<number | null>(null);
+  const bingeCancelledRef = useRef(false);
+  const [bingePending, setBingePending] = useState(false);
+  const onNextVolumeRef = useRef(onNextVolume);
+  onNextVolumeRef.current = onNextVolume;
+  const nextVolumeTitleRef = useRef(nextVolumeTitle);
+  nextVolumeTitleRef.current = nextVolumeTitle;
+
+  const cancelBinge = () => {
+    bingeCancelledRef.current = true;
+    setBingePending(false);
+    if (bingeTimerRef.current !== null) {
+      window.clearTimeout(bingeTimerRef.current);
+      bingeTimerRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    const card = nextVolumeCardRef.current;
+    if (!card || !nextVolumeTitle || !onNextVolume) {
+      return undefined;
+    }
+    bingeCancelledRef.current = false;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry?.isIntersecting || entry.intersectionRatio < 0.35) {
+          if (bingeTimerRef.current !== null) {
+            window.clearTimeout(bingeTimerRef.current);
+            bingeTimerRef.current = null;
+            setBingePending(false);
+          }
+          return;
+        }
+        if (bingeCancelledRef.current || bingeTimerRef.current !== null) {
+          return;
+        }
+        setBingePending(true);
+        setIsAutoScrolling(false);
+        bingeTimerRef.current = window.setTimeout(() => {
+          bingeTimerRef.current = null;
+          if (!bingeCancelledRef.current && onNextVolumeRef.current) {
+            setBingePending(false);
+            onNextVolumeRef.current();
+          }
+        }, 1600);
+      },
+      { root: containerRef.current, threshold: [0, 0.35, 0.6] },
+    );
+    observer.observe(card);
+    return () => {
+      observer.disconnect();
+      if (bingeTimerRef.current !== null) {
+        window.clearTimeout(bingeTimerRef.current);
+        bingeTimerRef.current = null;
+      }
+      setBingePending(false);
+    };
+  }, [nextVolumeTitle, onNextVolume, publication.id]);
   const imageStyle: CSSProperties = {
     transform: rotation !== 0 ? `rotate(${rotation}deg)` : undefined,
     transformOrigin: 'center center',
@@ -546,25 +650,39 @@ export function WebtoonReader({
             style={{ aspectRatio: `${Math.max(1, page.width)} / ${Math.max(1, page.height)}`, flexShrink: 0 }}
             aria-label={t('reader.page', { page: page.index + 1 })}
           >
-            {page.index >= windowRange.first && page.index <= windowRange.last && (page.src ? <img
-              src={page.src}
-              alt={t('navigator.pageAlt', { name: page.name, page: page.index + 1 })}
-              loading="eager"
-              decoding="async"
-              draggable={false}
-              style={imageStyle}
-            /> : <span className="page-loading" role="status">{t('reader.preparingPage')}</span>)}
+            {page.index >= windowRange.first && page.index <= windowRange.last && (page.src ? (
+              <PageImage
+                src={page.src}
+                alt={t('navigator.pageAlt', { name: page.name, page: page.index + 1 })}
+                style={imageStyle}
+              />
+            ) : <span className="page-loading" role="status">{t('reader.preparingPage')}</span>)}
             <span className="webtoon-folio">{String(page.index + 1).padStart(2, '0')}</span>
           </article>
         ))}
 
         {nextVolumeTitle && onNextVolume && (
-          <section className="webtoon-next-volume" aria-label={t('reader.openNextVolume')}>
+          <section
+            className="webtoon-next-volume"
+            aria-label={t('reader.openNextVolume')}
+            ref={(el) => { nextVolumeCardRef.current = el; }}
+          >
             <p className="eyebrow">{t('reader.nextVolumeAvailable', { title: nextVolumeTitle })}</p>
+            {bingePending && (
+              <p className="webtoon-binge-hint" data-testid="webtoon-binge-hint">
+                {t('webtoon.bingeOpening')}
+                <button type="button" className="secondary-button" onClick={cancelBinge} data-reader-control>
+                  {t('webtoon.bingeCancel')}
+                </button>
+              </p>
+            )}
             <button
               type="button"
               className="primary-button"
-              onClick={onNextVolume}
+              onClick={() => {
+                cancelBinge();
+                onNextVolume();
+              }}
             >
               {t('reader.nextVolume', { title: nextVolumeTitle })} ↗
             </button>

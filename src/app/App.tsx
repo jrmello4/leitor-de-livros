@@ -32,7 +32,9 @@ import {
   chooseNativeCover,
   chooseNativeFolder,
   clearNativeCover,
+  ensureRuntimePlatformLoaded,
   importNativePaths,
+  isAndroidRuntime,
   isNativeRuntime,
   listenNativeImportProgress,
   listNativePublications,
@@ -404,14 +406,13 @@ export function App() {
   }, [nativeRuntime]);
 
   useEffect(() => {
-    const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
-    if (!isAndroid) {
+    if (!isAndroidRuntime()) {
       return undefined;
     }
     let disposed = false;
     let pluginListener: PluginListener | undefined;
     const handleAndroidBack = (event?: Event) => {
-      if (typeof navigator === 'undefined' || !/Android/i.test(navigator.userAgent)) {
+      if (!isAndroidRuntime()) {
         return;
       }
       if (showProfileRef.current) {

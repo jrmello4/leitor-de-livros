@@ -15,6 +15,7 @@ import type {
 } from '../domain/types';
 import { isPanelGraph, type PanelGraph } from '../domain/flow';
 import { t } from '../i18n/catalog';
+import { isAndroidRuntime, isNativeRuntime } from './platform';
 import {
   clearPublicationStorage,
   loadBookmarks,
@@ -24,6 +25,13 @@ import {
   saveFavorite,
   saveReaderState,
 } from './storage';
+
+export {
+  ensureRuntimePlatformLoaded,
+  getRuntimePlatform,
+  isAndroidRuntime,
+  isNativeRuntime,
+} from './platform';
 
 export const DEFAULT_NATIVE_CACHE_LIMIT = 2 * 1024 * 1024 * 1024;
 
@@ -75,10 +83,6 @@ interface NativeImportResultDto {
   diagnostics: string[];
 }
 
-export function isNativeRuntime(): boolean {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-}
-
 export async function chooseNativeFiles(): Promise<string[]> {
   if (!isNativeRuntime()) {
     return [];
@@ -112,9 +116,6 @@ export interface NativeImportProgress {
   currentName: string;
 }
 
-function isAndroidRuntime(): boolean {
-  return typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
-}
 
 async function pickAndroidImport(command: 'pick_files' | 'pick_folder'): Promise<string[]> {
   const result = await invoke<unknown>(`plugin:mobile-import|${command}`);
