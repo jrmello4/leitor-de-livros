@@ -290,3 +290,14 @@ aparecer no ADB sem fio; o dispositivo ficou offline após o teste anterior.
   próxima edição automaticamente, com botão Cancelar.
 - Escape do recap incluído nas dependências do efeito de teclado do leitor.
 - Pipeline desktop removido do produto; shell host segue só para testes.
+## Performance e visual do webtoon
+
+- Placeholders com `content-visibility: auto` + `contain: layout style paint`
+  (altura via `aspect-ratio`) para não pintar páginas fora da tela.
+- Removidos `transform: translateZ(0)` permanente e `scroll-behavior: smooth`
+  (camada extra por página / frames extras no pan).
+- `WebtoonPageItem` memoizado: rolagem só re-renderiza quem entra/sai da janela.
+- Imagem da página atual usa `fetchPriority=high` e `loading=eager`; vizinhas
+  ficam em `low`/`lazy`. Zoom acima de 1x aplica `is-zoomed` (qualidade alta).
+- Telas ≤720px: strip full-bleed, `contain: paint` por página, folio discreto,
+  letterbox preto/escuro nos fundos OLED/dark.

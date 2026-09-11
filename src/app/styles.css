@@ -1760,8 +1760,6 @@ img {
   height: auto;
   pointer-events: none;
   image-rendering: -webkit-optimize-contrast;
-  image-rendering: high-quality;
-  transform: translateZ(0);
   backface-visibility: hidden;
 }
 
@@ -3578,8 +3576,12 @@ html:fullscreen .reader-controls:focus-within {
   overflow-x: hidden;
   display: flex;
   justify-content: center;
-  scroll-behavior: smooth;
+  /* Smooth scrolling forces extra frames on every pan; keep it off on webtoon. */
+  scroll-behavior: auto;
+  overscroll-behavior: contain;
   outline: none;
+  /* Promote the scroller once so pans composite without thrashing. */
+  will-change: scroll-position;
 }
 
 .webtoon-strip {
@@ -3587,9 +3589,11 @@ html:fullscreen .reader-controls:focus-within {
   flex-direction: column;
   align-items: center;
   width: 100%;
-  max-width: 850px;
+  max-width: min(850px, 100%);
   margin: 0 auto;
   padding: 0;
+  /* Zero gap is intentional for manhwa continuity. */
+  gap: 0;
 }
 
 .webtoon-page-item {
@@ -3600,6 +3604,9 @@ html:fullscreen .reader-controls:focus-within {
   display: flex;
   flex-direction: column;
   align-items: center;
+  /* Skip layout/paint of off-screen placeholders; aspect-ratio keeps scroll height. */
+  content-visibility: auto;
+  contain: layout style paint;
 }
 
 .webtoon-page-item img {
@@ -3607,6 +3614,16 @@ html:fullscreen .reader-controls:focus-within {
   height: auto;
   display: block;
   user-select: none;
+  /* Do not force a composited layer per page — that burns GPU memory on Android. */
+  image-rendering: auto;
+  /* Preserve ink lines when the user pinches past 1x. */
+  image-rendering: -webkit-optimize-contrast;
+}
+
+.webtoon-page-item img.is-zoomed {
+  will-change: transform;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: high-quality;
 }
 
 .webtoon-folio {
@@ -5268,4 +5285,42 @@ html:fullscreen .reader-controls:focus-within {
   margin: 0.75rem 0 0;
   font-size: 0.9rem;
   opacity: 0.92;
+}
+
+/* Phone reading width: full-bleed strip, crisp edges, no extra chrome. */
+@media (max-width: 720px) {
+  .webtoon-reader-container {
+    max-height: 100%;
+    max-height: 100dvh;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .webtoon-strip {
+    max-width: 100%;
+  }
+
+  .webtoon-page-item {
+    /* Tiny radius keeps the zero-gap strip while avoiding subpixel seams. */
+    border-radius: 0;
+  }
+
+  .webtoon-page-item img {
+    /* Force a paint boundary per page so long strips do not dirty the whole layer. */
+    contain: paint;
+  }
+
+  .webtoon-folio {
+    opacity: 0.75;
+    font-size: 10px;
+    bottom: 6px;
+    right: 8px;
+  }
+}
+
+.webtoon-reader-container[data-background="oled"] .webtoon-page-item {
+  background: #000;
+}
+
+.webtoon-reader-container[data-background="dark"] .webtoon-page-item {
+  background: #121212;
 }

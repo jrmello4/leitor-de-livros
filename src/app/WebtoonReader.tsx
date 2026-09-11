@@ -1,4 +1,6 @@
 import {
+  memo,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -44,7 +46,19 @@ interface ZoomAnchor {
  * Mounted only inside the sliding window. Clearing `src` on unmount asks the
  * WebView to drop the decoded bitmap instead of keeping it until GC.
  */
-function PageImage({ src, alt, style }: { src: string; alt: string; style?: CSSProperties }) {
+function PageImage({
+  src,
+  alt,
+  style,
+  priority = 'low',
+  zoomed = false,
+}: {
+  src: string;
+  alt: string;
+  style?: CSSProperties;
+  priority?: 'high' | 'low';
+  zoomed?: boolean;
+}) {
   const imgRef = useRef<HTMLImageElement>(null);
   useEffect(() => {
     const img = imgRef.current;
@@ -59,13 +73,63 @@ function PageImage({ src, alt, style }: { src: string; alt: string; style?: CSSP
       ref={imgRef}
       src={src}
       alt={alt}
-      loading="eager"
+      loading={priority === 'high' ? 'eager' : 'lazy'}
       decoding="async"
+      fetchPriority={priority}
       draggable={false}
+      className={zoomed ? 'is-zoomed' : undefined}
       style={style}
     />
   );
 }
+
+type WebtoonPageProps = {
+  page: Publication['pages'][number];
+  mounted: boolean;
+  priority: 'high' | 'low';
+  zoomed: boolean;
+  imageStyle?: CSSProperties;
+  label: string;
+  alt: string;
+  onElement: (index: number, el: HTMLElement | null) => void;
+};
+
+/** Memoized so scrolling only re-renders pages entering/leaving the window. */
+const WebtoonPageItem = memo(function WebtoonPageItem({
+  page,
+  mounted,
+  priority,
+  zoomed,
+  imageStyle,
+  label,
+  alt,
+  onElement,
+}: WebtoonPageProps) {
+  const setRef = useCallback((el: HTMLElement | null) => {
+    onElement(page.index, el);
+  }, [onElement, page.index]);
+  return (
+    <article
+      ref={setRef}
+      className="webtoon-page-item webtoon-page"
+      data-page-index={page.index}
+      data-page-id={page.id}
+      style={{ aspectRatio: `${Math.max(1, page.width)} / ${Math.max(1, page.height)}`, flexShrink: 0 }}
+      aria-label={label}
+    >
+      {mounted && (page.src ? (
+        <PageImage
+          src={page.src}
+          alt={alt}
+          style={imageStyle}
+          priority={priority}
+          zoomed={zoomed}
+        />
+      ) : <span className="page-loading" role="status">{t('reader.preparingPage')}</span>)}
+      <span className="webtoon-folio">{String(page.index + 1).padStart(2, '0')}</span>
+    </article>
+  );
+});
 export function WebtoonReader({
   publication,
   currentPage,
@@ -393,6 +457,8 @@ export function WebtoonReader({
       },
       {
         root: container,
+        // Keep the window at visible±1, but notice exits/entries a bit early.
+        rootMargin: '20% 0px',
         threshold: [0, 0.01],
       },
     );
@@ -583,6 +649,14 @@ export function WebtoonReader({
       setBingePending(false);
     };
   }, [nextVolumeTitle, onNextVolume, publication.id]);
+  const onPageElement = useCallback((index: number, el: HTMLElement | null) => {
+    if (el) {
+      pageRefs.current.set(index, el);
+    } else {
+      pageRefs.current.delete(index);
+    }
+  }, []);
+
   const imageStyle: CSSProperties = {
     transform: rotation !== 0 ? `rotate(${rotation}deg)` : undefined,
     transformOrigin: 'center center',
@@ -634,32 +708,23 @@ export function WebtoonReader({
           maxWidth: scale === 1 ? '850px' : `${Math.round(850 * scale)}px`,
         }}
       >
-        {publication.pages.map((page) => (
-          <article
-            key={page.id}
-            ref={(el) => {
-              if (el) {
-                pageRefs.current.set(page.index, el);
-              } else {
-                pageRefs.current.delete(page.index);
-              }
-            }}
-            className="webtoon-page-item webtoon-page"
-            data-page-index={page.index}
-            data-page-id={page.id}
-            style={{ aspectRatio: `${Math.max(1, page.width)} / ${Math.max(1, page.height)}`, flexShrink: 0 }}
-            aria-label={t('reader.page', { page: page.index + 1 })}
-          >
-            {page.index >= windowRange.first && page.index <= windowRange.last && (page.src ? (
-              <PageImage
-                src={page.src}
-                alt={t('navigator.pageAlt', { name: page.name, page: page.index + 1 })}
-                style={imageStyle}
-              />
-            ) : <span className="page-loading" role="status">{t('reader.preparingPage')}</span>)}
-            <span className="webtoon-folio">{String(page.index + 1).padStart(2, '0')}</span>
-          </article>
-        ))}
+        {publication.pages.map((page) => {
+          const mounted = page.index >= windowRange.first && page.index <= windowRange.last;
+          const priority = page.index === currentPage ? 'high' : 'low';
+          return (
+            <WebtoonPageItem
+              key={page.id}
+              page={page}
+              mounted={mounted}
+              priority={priority}
+              zoomed={scale > 1.05}
+              imageStyle={imageStyle}
+              label={t('reader.page', { page: page.index + 1 })}
+              alt={t('navigator.pageAlt', { name: page.name, page: page.index + 1 })}
+              onElement={onPageElement}
+            />
+          );
+        })}
 
         {nextVolumeTitle && onNextVolume && (
           <section
