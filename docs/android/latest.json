@@ -1,0 +1,6 @@
+{
+  "version": "0.1.1",
+  "versionCode": 1,
+  "url": "https://github.com/jrmello4/leitor-de-livros/releases/download/v0.1.1/tactile-reader-0.1.1-arm64.apk",
+  "notes": "Android-only build. Same signing key as the installed APK is required to upgrade in place."
+}

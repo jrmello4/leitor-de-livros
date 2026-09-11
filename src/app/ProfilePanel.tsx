@@ -4,6 +4,9 @@ import { bindingLabel } from '../domain/input';
 import { actionLabel, availableLocales, getLocale, setLocale, t } from '../i18n/catalog';
 import type { NamedReadingProfile } from '../domain/profiles';
 import { CloseIcon } from './Icons';
+import { AppUpdater } from './AppUpdater';
+// Version baked by Vite at build time from package.json.
+const APP_VERSION = __APP_VERSION__;
 
 interface ProfilePanelProps {
   profile: ReadingProfile;
@@ -398,6 +401,8 @@ export function ProfilePanel({
             {t('profile.clearCache')}
           </button>
         </section>
+
+        <AppUpdater currentVersion={APP_VERSION} />
 
         <section className="settings-section">
           <span className="settings-label">{t('profile.keyboard')}</span>

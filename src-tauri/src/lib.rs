@@ -262,6 +262,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_mobile_import::init())
+        .plugin(tauri_plugin_app_updater::init())
         .setup(|app| {
             #[cfg(not(target_os = "android"))]
             let pdfium_resource = app.path().resolve("pdfium.dll", BaseDirectory::Resource)?;

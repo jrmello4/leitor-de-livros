@@ -5324,3 +5324,14 @@ html:fullscreen .reader-controls:focus-within {
 .webtoon-reader-container[data-background="dark"] .webtoon-page-item {
   background: #121212;
 }
+
+.app-updater-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.app-updater-available {
+  color: var(--accent, #0b6e4f);
+}

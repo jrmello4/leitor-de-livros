@@ -4011,6 +4011,7 @@ dependencies = [
  "sha2 0.10.9",
  "tauri",
  "tauri-build",
+ "tauri-plugin-app-updater",
  "tauri-plugin-dialog",
  "tauri-plugin-mobile-import",
  "unrar",
@@ -4203,6 +4204,14 @@ dependencies = [
  "serde_json",
  "tauri-utils",
  "walkdir",
+]
+
+[[package]]
+name = "tauri-plugin-app-updater"
+version = "0.1.0"
+dependencies = [
+ "tauri",
+ "tauri-plugin",
 ]
 
 [[package]]

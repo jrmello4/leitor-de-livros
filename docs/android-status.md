@@ -301,3 +301,11 @@ aparecer no ADB sem fio; o dispositivo ficou offline após o teste anterior.
   ficam em `low`/`lazy`. Zoom acima de 1x aplica `is-zoomed` (qualidade alta).
 - Telas ≤720px: strip full-bleed, `contain: paint` por página, folio discreto,
   letterbox preto/escuro nos fundos OLED/dark.
+## Atualização in-app (GitHub Releases)
+
+- Plugin `app-updater-plugin`: `check_update` lê `latest.json`; `download_and_install`
+  baixa o APK (HTTPS, máx. 200 MB) e abre o instalador do sistema via FileProvider.
+- Permissão `REQUEST_INSTALL_PACKAGES`; na 1ª vez o Android pede autorização.
+- UI em Configurações → Atualização do app.
+- Documentação: `docs/android-updater.md`. Modelo de feed: `docs/android/latest.json`.
+- Validação no aparelho e publicação da primeira release com `latest.json` ainda pendentes.

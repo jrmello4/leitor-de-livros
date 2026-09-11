@@ -3,5 +3,10 @@
   "identifier": "default",
   "description": "Default permissions for the Android comic reader core (desktop shell used only for local development).",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:default", "mobile-import:default"]
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "mobile-import:default",
+    "app-updater:default"
+  ]
 }
