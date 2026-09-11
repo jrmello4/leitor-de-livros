@@ -34,6 +34,7 @@ assert.ok(branches.includes('main'), 'Release workflow must run on pushes to mai
 assert.equal(releaseWorkflow?.permissions?.contents, 'write', 'Release workflow needs contents:write to publish the APK.');
 assert.match(releaseSource, /tauri -- android build --apk/, 'Release workflow must build Android APKs.');
 assert.match(releaseSource, /keystore\.properties/, 'Release workflow must configure the release keystore.');
+assert.match(releaseSource, /import java\.io\.FileInputStream/, 'Release signing patch must import FileInputStream (the Gradle Kotlin DSL shadows the java package).');
 assert.match(releaseSource, /ANDROID_KEY_BASE64/, 'Release workflow must read the keystore from secrets.');
 assert.match(releaseSource, /android-latest/, 'Release workflow must publish the rolling android-latest release.');
 assert.match(releaseSource, /latest\.json/, 'Release workflow must publish the update manifest.');
