@@ -15,7 +15,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["avif", "gif", "jpeg", "png", "webp"] }
 pdfium-render = { version = "=0.9.3", default-features = false, features = ["image_latest", "pdfium_7881", "thread_safe"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
