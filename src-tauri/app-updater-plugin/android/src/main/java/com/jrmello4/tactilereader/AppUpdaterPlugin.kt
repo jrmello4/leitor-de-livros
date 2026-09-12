@@ -8,6 +8,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import app.tauri.annotation.Command
+import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
@@ -33,6 +34,16 @@ class AppUpdaterPlugin(private val host: Activity) : Plugin(host) {
   }
 
   private val executor = Executors.newSingleThreadExecutor()
+
+  @InvokeArg
+  class CheckUpdateArgs {
+    var manifestUrl: String? = null
+  }
+
+  @InvokeArg
+  class DownloadArgs {
+    var apkUrl: String? = null
+  }
 
   @Command
   fun getInstalledVersion(invoke: Invoke) {
@@ -63,8 +74,11 @@ class AppUpdaterPlugin(private val host: Activity) : Plugin(host) {
 
   @Command
   fun checkUpdate(invoke: Invoke) {
-    val manifestUrl = invoke.getString("manifestUrl")
-      ?: "https://github.com/jrmello4/leitor-de-livros/releases/download/android-latest/latest.json"
+    val manifestUrl = try {
+      invoke.parseArgs(CheckUpdateArgs::class.java).manifestUrl
+    } catch (error: Exception) {
+      null
+    } ?: "https://github.com/jrmello4/leitor-de-livros/releases/download/android-latest/latest.json"
     executor.execute {
       try {
         val payload = fetchJson(manifestUrl)
@@ -82,7 +96,11 @@ class AppUpdaterPlugin(private val host: Activity) : Plugin(host) {
 
   @Command
   fun downloadAndInstall(invoke: Invoke) {
-    val apkUrl = invoke.getString("apkUrl")
+    val apkUrl = try {
+      invoke.parseArgs(DownloadArgs::class.java).apkUrl
+    } catch (error: Exception) {
+      null
+    }
     if (apkUrl.isNullOrBlank()) {
       invoke.reject("Missing apkUrl")
       return
