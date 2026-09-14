@@ -36,7 +36,7 @@ Detalhes e evidências: `docs/android-status.md`.
 
 ## P2 — higiene do repositório
 
-9. Extrair CSS mobile/webtoon de `styles.css` e reduzir `App.tsx`/`ReaderView.tsx`. (Feito o split: `base`, `library`, `reader`, `webtoon`, `modals`, `mobile` com cascata em `main.tsx`, byte-idêntico; `ReaderView` em lazy — bundle inicial 458→349KB. Resta fatiar `App.tsx` em hooks.)
+9. Extrair CSS mobile/webtoon de `styles.css` e reduzir `App.tsx`/`ReaderView.tsx`. (Feito o split: `base`, `library`, `reader`, `webtoon`, `modals`, `mobile` com cascata em `main.tsx`, byte-idêntico; `ReaderView` em lazy — bundle inicial 458→349KB; `App.tsx` 1718→1248 linhas com `useLibraryMetadata`, `useReadingProfiles` e `useNativeLibraryBoot`. Resta extrair navegação/import.)
 10. Remover promessas residuais de “sync em nuvem” da UI (transferência por JSON apenas). (Feito: "Backup local · sem nuvem".)
 11. `.gitignore` cobrir APKs e caches Gradle. (Feito.)
 

@@ -336,3 +336,10 @@ aparecer no ADB sem fio; o dispositivo ficou offline após o teste anterior.
 - Verificado no host: 322 vitest, 56 Rust (1 ignorado), `tsc+vite`,
   release-scripts, workflow e performance-contract verdes. Reteste físico
   (memória sustentada, gestos, backup, snapshot, assinatura) pendente.
+
+## Orçamento de bundle no CI — 14/09/2026 (host)
+
+- `scripts/performance/bundle-budget.mjs` trava: entry ≤380KB, JS total
+  ≤560KB, chunk lazy ≤130KB, CSS ≤100KB. Medido: 350KB / 498KB / 110KB / 85KB.
+- Etapa `Enforce bundle budget` no CI após o build; `verify-workflow.mjs`
+  exige a etapa. Derrubar uma trava exige decisão explícita.

@@ -17,6 +17,7 @@ const visualText = JSON.stringify(jobs.visual);
 const webText = JSON.stringify(jobs.web);
 assert.match(visualText, /npm run test:visual/, 'Visual job does not run the visual matrix.');
 assert.match(webText, /npm run test:performance-contract/, 'Normal PR CI does not run the performance contract.');
+assert.match(webText, /npm run test:bundle-budget/, 'Normal PR CI does not enforce the bundle budget.');
 assert.ok(!/installer-smoke|nsis|tauri:build/.test(ciSource), 'CI must not build a Windows installer.');
 assert.doesNotMatch(ciSource, /gh release|softprops\/action-gh-release|release-publish|create-release/i, 'CI workflow contains a release publishing action.');
 
