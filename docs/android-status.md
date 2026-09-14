@@ -390,8 +390,9 @@ aparecer no ADB sem fio; o dispositivo ficou offline após o teste anterior.
 - Forense no banco do app (`run-as` + pull binário): 1 publicação `demo-hq`
   (cbz), 2 páginas, cache sob demanda (0 entradas — igual ao Tauri).
 - Evidências: `artifacts/android-test/native-jni-proof.png` (tela da prova
-  JNI). Screenshot da grade pendente de desbloqueio do aparelho (tela de
-  bloqueio ativa; sem crash — `libtactile_core.so` carrega `ok` no logcat).
+  JNI) e `artifacts/android-test/native-library-grid.png` (estante Compose
+  com `demo-hq`, 2 páginas, no Moto G34 desbloqueado — o preto anterior era
+  a tela de bloqueio, não o app).
 - Próximo: capas lazy (ensure da capa + Coil com limite) e depois a
   superfície de leitura com tiling.
 - CI (`native-app`): JDK 21 + SDK/NDK + Rust targets, `assembleDebug` e
