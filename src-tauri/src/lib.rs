@@ -1,12 +1,8 @@
-mod adapters;
-mod db;
-mod error;
-mod importer;
-mod models;
-mod publication_names;
+mod pdf;
 
-use db::LibraryDb;
-use models::{
+use tactile_core::db::LibraryDb;
+use tactile_core::importer;
+use tactile_core::models::{
     CacheInfo, LibrarySnapshot, NativeBookmark, NativeImportResult, NativePublication,
     NativeReaderState,
 };
@@ -38,7 +34,7 @@ fn list_publications(database: State<'_, LibraryDb>) -> Result<Vec<NativePublica
 fn list_publication_pages(
     publication_id: String,
     database: State<'_, LibraryDb>,
-) -> Result<Vec<models::NativePage>, String> {
+) -> Result<Vec<tactile_core::models::NativePage>, String> {
     database
         .list_publication_pages(&publication_id)
         .map_err(|error| error.to_string())
@@ -191,7 +187,7 @@ fn ensure_page_cache(
     page_id: String,
     protected_page_ids: Option<Vec<String>>,
     database: State<'_, LibraryDb>,
-) -> Result<models::NativePage, String> {
+) -> Result<tactile_core::models::NativePage, String> {
     database
         .ensure_page_cache_with_protected(
             &publication_id,
@@ -277,7 +273,8 @@ pub fn run() {
             #[cfg(not(target_os = "android"))]
             let pdfium_resource = app.path().resolve("pdfium.dll", BaseDirectory::Resource)?;
             #[cfg(not(target_os = "android"))]
-            adapters::configure_pdfium_resource_path(pdfium_resource);
+            pdf::configure_pdfium_resource_path(pdfium_resource);
+            pdf::register_backend();
             let data_dir = app.path().app_data_dir()?;
             let database = LibraryDb::open(data_dir)?;
             app.manage(database);
@@ -320,12 +317,12 @@ mod tests {
 
     #[test]
     fn native_page_does_not_serialize_source_reference_into_ipc() {
-        let page = models::NativePage {
+        let page = tactile_core::models::NativePage {
             id: "page-1".to_owned(),
             index: 0,
             name: "page.png".to_owned(),
             cache_path: "C:\\cache\\page.png".to_owned(),
-            source_ref: Some(models::PageSourceRef::Image {
+            source_ref: Some(tactile_core::models::PageSourceRef::Image {
                 path: "C:\\original\\page.png".to_owned(),
             }),
             width: 1200,

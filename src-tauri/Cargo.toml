@@ -5,6 +5,11 @@ description = "A local-first Android comic reader"
 authors = ["Tactile Reader"]
 edition = "2021"
 
+# Shared workspace: the Tauri shell, the portable core and the local plugins
+# resolve one Cargo.lock, so host, device and CI builds agree on versions.
+[workspace]
+members = [".", "native-core", "mobile-import-plugin", "app-updater-plugin"]
+
 [lib]
 name = "tactile_reader_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -15,24 +20,17 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["avif", "gif", "jpeg", "png", "webp"] }
 pdfium-render = { version = "=0.9.3", default-features = false, features = ["image_latest", "pdfium_7881", "thread_safe"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
+tactile-core = { path = "native-core" }
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-mobile-import = { path = "mobile-import-plugin" }
 tauri-plugin-app-updater = { path = "app-updater-plugin" }
-zip = { version = "2", default-features = false, features = ["deflate"] }
-sevenz-rust = { version = "0.6.1", default-features = false }
 
-[target.'cfg(windows)'.dependencies]
-unrar = "0.5"
-
-[target.'cfg(target_os = "android")'.dependencies]
-# Pure Rust RAR4/RAR5 reader: avoids shipping an external executable or a C++
-# runtime in the APK. The Rust crypto backend also cross-compiles with the NDK.
-unrar-rs = { version = "0.10.3", default-features = false, features = ["crypto-rust"] }
+# Portable library core (SQLite, archive importers, page cache) lives in
+# native-core with no Tauri dependency, so the future native Android app can
+# reuse it through JNI. Only host PDF (pdfium) stays in this crate.
 
 # Host-side (non-Android) PDF import only. PDF is not available in the Android
 # APK; this crate is still compiled on the Windows/Linux dev host for cargo test.

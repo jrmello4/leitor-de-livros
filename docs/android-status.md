@@ -337,6 +337,29 @@ aparecer no ADB sem fio; o dispositivo ficou offline após o teste anterior.
   release-scripts, workflow e performance-contract verdes. Reteste físico
   (memória sustentada, gestos, backup, snapshot, assinatura) pendente.
 
+## Núcleo portátil `tactile-core` — 14/09/2026 (host, fase 1 do app nativo)
+
+- Auditoria: só `adapters.rs` acoplava algo (pdfium); `db`, `importer`,
+  `models`, `error` e `publication_names` já eram Rust portátil.
+- Novo crate `src-tauri/native-core` (`tactile-core`): SQLite, importadores
+  CBZ/CBR/7z, cache derivado, bookmarks, reader states, snapshot e nomes de
+  série — sem Tauri, sem pdfium. O crate Tauri virou cola fina (`lib.rs` +
+  `pdf.rs` com o backend pdfium).
+- PDF por injeção: `archive::set_pdf_backend`; sem backend, o core responde
+  "indisponível" e preserva originais (mesmo contrato do stub). O Tauri
+  registra o pdfium no `setup`; o futuro app nativo registra o dele (ou não).
+- Workspace Cargo único (`tactile-reader`, `tactile-core`, plugins) com um
+  `Cargo.lock`; CI testa e linta os dois pacotes (`-p tactile-reader
+  -p tactile-core`, `verify-workflow.mjs` exige).
+- Prova de portabilidade: `cargo check -p tactile-core --target
+  aarch64-linux-android` passa com o NDK 28 (unrar-rs, rusqlite bundled,
+  image/avif incluídos) — zero `cfg` novo.
+- 56 testes Rust preservados (52 core + 4 app, incluindo o fixture pdfium
+  real via backend injetado); `fmt`/`clippy -D warnings` verdes nos dois.
+- Próximas fases: módulo Android (JNI/UniFFI sobre o core) → tela da
+  biblioteca em Compose → superfície de leitura com tiling → import Updater;
+  o shell Tauri segue até a paridade.
+
 ## Orçamento de bundle no CI — 14/09/2026 (host)
 - `scripts/performance/bundle-budget.mjs` trava: entry ≤380KB, JS total
   ≤560KB, chunk lazy ≤130KB, CSS ≤100KB. Medido: 350KB / 498KB / 110KB / 85KB.

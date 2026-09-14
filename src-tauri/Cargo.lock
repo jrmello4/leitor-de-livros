@@ -3999,24 +3999,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "tactile-reader"
+name = "tactile-core"
 version = "0.1.1"
 dependencies = [
  "image",
- "pdfium-render",
  "rusqlite",
  "serde",
  "serde_json",
  "sevenz-rust",
  "sha2 0.10.9",
+ "unrar",
+ "unrar-rs",
+ "zip",
+]
+
+[[package]]
+name = "tactile-reader"
+version = "0.1.1"
+dependencies = [
+ "image",
+ "pdfium-render",
+ "serde",
+ "serde_json",
+ "tactile-core",
  "tauri",
  "tauri-build",
  "tauri-plugin-app-updater",
  "tauri-plugin-dialog",
  "tauri-plugin-mobile-import",
- "unrar",
- "unrar-rs",
- "zip",
 ]
 
 [[package]]

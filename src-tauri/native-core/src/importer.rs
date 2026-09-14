@@ -19,10 +19,10 @@ use crate::{
     },
 };
 
-pub(crate) const MAX_PAGE_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_PAGE_BYTES: u64 = 64 * 1024 * 1024;
 pub(crate) const MAX_ARCHIVE_BYTES: u64 = 1024 * 1024 * 1024;
-pub(crate) const MAX_TOTAL_UNCOMPRESSED_BYTES: u64 = 512 * 1024 * 1024;
-pub(crate) const MAX_PAGE_COUNT: usize = 1024;
+pub const MAX_TOTAL_UNCOMPRESSED_BYTES: u64 = 512 * 1024 * 1024;
+pub const MAX_PAGE_COUNT: usize = 1024;
 const MAX_COLLECTION_ITEMS: usize = 2048;
 const MAX_COLLECTION_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 pub(crate) const MAX_IMAGE_DIMENSION: u32 = 20_000;
@@ -60,7 +60,7 @@ fn detect_comic_archive_container(path: &Path) -> CoreResult<ComicArchiveContain
 
 // Used through the staged cache command API introduced in the next task.
 #[allow(dead_code)]
-pub(crate) struct RebuiltPage {
+pub struct RebuiltPage {
     pub extension: String,
     pub bytes: Vec<u8>,
     pub width: u32,
@@ -218,7 +218,7 @@ where
 
     for path in cbr_paths {
         let source_key = format!("cbr:{}", path.display());
-        match crate::adapters::import_cbr(db, &source_key, &path) {
+        match crate::archive::import_cbr(db, &source_key, &path) {
             Ok(publication) => {
                 publications.push(publication);
                 emit(&path, true);
@@ -232,7 +232,7 @@ where
 
     for path in pdf_paths {
         let source_key = format!("pdf:{}", path.display());
-        match crate::adapters::import_pdf(db, &source_key, &path) {
+        match crate::archive::import_pdf(db, &source_key, &path) {
             Ok(publication) => {
                 publications.push(publication);
                 emit(&path, true);
@@ -561,7 +561,7 @@ fn import_cbz(db: &LibraryDb, source_key: &str, path: &Path) -> CoreResult<Nativ
     persist_publication(db, &publication, &cache_dir)
 }
 
-pub(crate) fn persist_publication(
+pub fn persist_publication(
     db: &LibraryDb,
     publication: &NewPublication,
     cache_dir: &Path,
@@ -739,7 +739,7 @@ fn build_cbz_publication(
     )
 }
 
-pub(crate) fn new_publication(
+pub fn new_publication(
     id: String,
     title: String,
     source_label: String,
@@ -768,7 +768,7 @@ pub(crate) fn new_publication(
     })
 }
 
-pub(crate) fn validate_image(bytes: &[u8], label: &str) -> CoreResult<(u32, u32)> {
+pub fn validate_image(bytes: &[u8], label: &str) -> CoreResult<(u32, u32)> {
     if bytes.is_empty() {
         return Err(CoreError::from(format!("{label}: empty image")));
     }
@@ -787,7 +787,7 @@ pub(crate) fn validate_image(bytes: &[u8], label: &str) -> CoreResult<(u32, u32)
     Ok((width, height))
 }
 
-pub(crate) fn cache_page(
+pub fn cache_page(
     cache_dir: &Path,
     page_id: &str,
     extension: &str,
@@ -839,10 +839,10 @@ pub(crate) fn rebuild_page(format: &str, source_ref: &PageSourceRef) -> CoreResu
             rebuild_cbz_page(Path::new(path), member)
         }
         ("cbr", PageSourceRef::Archive { path, member }) => {
-            crate::adapters::rebuild_cbr_page(Path::new(path), member)
+            crate::archive::rebuild_cbr_page(Path::new(path), member)
         }
         ("pdf", PageSourceRef::Pdf { path, page_index }) => {
-            crate::adapters::rebuild_pdf_page(Path::new(path), *page_index)
+            crate::archive::rebuild_pdf_page(Path::new(path), *page_index)
         }
         _ => Err(CoreError::from(
             "page source reference does not match the publication format",
@@ -1003,7 +1003,7 @@ fn source_key(prefix: &str, values: &[String]) -> String {
     format!("{prefix}:{}", digest_id("source", joined.as_bytes()))
 }
 
-pub(crate) fn digest_id(prefix: &str, bytes: &[u8]) -> String {
+pub fn digest_id(prefix: &str, bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     format!("{prefix}-{}", hex_encode(&digest[..12]))
 }
