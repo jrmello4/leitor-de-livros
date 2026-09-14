@@ -372,10 +372,28 @@ aparecer no ADB sem fio; o dispositivo ficou offline após o teste anterior.
   `.scaffold` para coexistir com o APK publicado): `TactileCore.kt`,
   `MainActivity` de prova sem Compose, tasks Gradle `buildCoreSo*` que
   compilam o Rust com o NDK e copiam para `jniLibs/` antes do `preBuild`.
-- `assembleDebug` + `assembleDebugAndroidTest` verdes; APK (6,75MB) embute
+-   `assembleDebug` + `assembleDebugAndroidTest` verdes; APK (6,75MB) embute
   os dois `.so`. `TactileCoreInstrumentedTest` (semver + abrir/contar 0,
   idempotente) compilado e pronto — execução pendente de aparelho
   (`gradlew.bat connectedDebugAndroidTest` com o Moto G34 no `adb`).
+
+## Estante Compose lendo do core — 14/09/2026 (fase 3, validada no Moto G34)
+
+- JNI novo: `nativeListPublications` (`{"publications":[...]}` camelCase) e
+  `nativeImportPaths` (retorna o `NativeImportResult` do núcleo).
+- `LibraryViewModel` + `LibraryScreen` (Compose Material3, grade 2 colunas,
+  progresso por HQ, placeholders por cor até as capas lazy); primeira
+  abertura gera e importa sozinha a HQ demo (`TestComic`, 2 PNGs em código).
+- Instrumentado no aparelho: 3/3 verdes (`versionLooksLikeSemver`,
+  `openLibraryOpensAndReportsZeroPublications`,
+  `importGeneratedCbzAndListItBack` — CBZ real importado em 0,15s).
+- Forense no banco do app (`run-as` + pull binário): 1 publicação `demo-hq`
+  (cbz), 2 páginas, cache sob demanda (0 entradas — igual ao Tauri).
+- Evidências: `artifacts/android-test/native-jni-proof.png` (tela da prova
+  JNI). Screenshot da grade pendente de desbloqueio do aparelho (tela de
+  bloqueio ativa; sem crash — `libtactile_core.so` carrega `ok` no logcat).
+- Próximo: capas lazy (ensure da capa + Coil com limite) e depois a
+  superfície de leitura com tiling.
 
 ## Orçamento de bundle no CI — 14/09/2026 (host)
 - `scripts/performance/bundle-budget.mjs` trava: entry ≤380KB, JS total

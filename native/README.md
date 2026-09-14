@@ -5,13 +5,16 @@ O produto continua sendo o APK Tauri. Este módulo prova o núcleo portátil
 
 ## O que existe
 
-- `app/.../core/TactileCore.kt` — ponte fina: `nativeVersion()` e
-  `nativeOpenLibrary(dir)`, que casam 1:1 com `native-core/src/jni.rs`.
+- `app/.../core/TactileCore.kt` — ponte fina: versão, abrir banco, listar
+  publicações e importar caminhos, que casam 1:1 com `native-core/src/jni.rs`.
   Erros do Rust voltam como JSON `{"error": ...}`, nunca como exceção JNI.
-- `app/.../scaffold/MainActivity.kt` — tela de prova (sem Compose de
-  propósito): abre o banco do núcleo e mostra o resultado.
-- `TactileCoreInstrumentedTest` — fim-a-fim no aparelho: versão semver +
-  abrir banco e contar 0 publicações, duas vezes (idempotência).
+- `app/.../scaffold/MainActivity.kt` — hospeda a estante Compose da fase 3.
+- `app/.../library/` — `LibraryViewModel` (IO fora da thread principal,
+  auto-seed com HQ de demonstração gerada em código), `LibraryScreen`
+  (grade de cards com progresso) e `TestComic` (CBZ mínimo de 2 páginas,
+  só para desenvolvimento/teste).
+- `TactileCoreInstrumentedTest` — fim-a-fim no aparelho: versão, abrir
+  banco e roundtrip importar→listar CBZ gerado.
 - `buildCoreSo*` no `app/build.gradle.kts` — compila o `.so` release
   (arm64-v8a + x86_64) com o NDK e copia para `jniLibs/` antes do `preBuild`.
 

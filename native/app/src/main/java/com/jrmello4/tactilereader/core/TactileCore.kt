@@ -16,4 +16,10 @@ object TactileCore {
 
     @JvmStatic
     external fun nativeOpenLibrary(dir: String): String
+
+    @JvmStatic
+    external fun nativeListPublications(dir: String): String
+
+    @JvmStatic
+    external fun nativeImportPaths(dir: String, pathsJson: String): String
 }

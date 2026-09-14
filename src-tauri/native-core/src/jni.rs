@@ -73,3 +73,62 @@ pub extern "C" fn Java_com_jrmello4_tactilereader_core_TactileCore_nativeOpenLib
         Err(error) => return_string(&mut env, err_json(error)),
     }
 }
+
+/// `com.jrmello4.tactilereader.core.TactileCore.nativeListPublications(dbDir)`.
+///
+/// Returns `{"publications":[...]}` with the core `NativePublication` JSON
+/// (camelCase). Powers the native library shelf.
+#[no_mangle]
+pub extern "C" fn Java_com_jrmello4_tactilereader_core_TactileCore_nativeListPublications(
+    mut env: JNIEnv,
+    _class: JClass,
+    dir: JString,
+) -> jstring {
+    let result = (|| -> Result<String, String> {
+        let dir: String = env
+            .get_string(&dir)
+            .map_err(|error| error.to_string())?
+            .into();
+        let db = LibraryDb::open(PathBuf::from(dir)).map_err(|error| error.to_string())?;
+        let publications = db.list_publications().map_err(|error| error.to_string())?;
+        let array = serde_json::to_string(&publications).map_err(|error| error.to_string())?;
+        Ok(format!(r#"{{"publications":{array}}}"#))
+    })();
+    match result {
+        Ok(ok) => return_string(&mut env, ok),
+        Err(error) => return_string(&mut env, err_json(error)),
+    }
+}
+
+/// `com.jrmello4.tactilereader.core.TactileCore.nativeImportPaths(dbDir, pathsJson)`.
+///
+/// `pathsJson` is a JSON array of filesystem paths. Returns the core
+/// `NativeImportResult` JSON (`publications` + `diagnostics`).
+#[no_mangle]
+pub extern "C" fn Java_com_jrmello4_tactilereader_core_TactileCore_nativeImportPaths(
+    mut env: JNIEnv,
+    _class: JClass,
+    dir: JString,
+    paths: JString,
+) -> jstring {
+    let result = (|| -> Result<String, String> {
+        let dir: String = env
+            .get_string(&dir)
+            .map_err(|error| error.to_string())?
+            .into();
+        let paths_raw: String = env
+            .get_string(&paths)
+            .map_err(|error| error.to_string())?
+            .into();
+        let paths: Vec<String> =
+            serde_json::from_str(&paths_raw).map_err(|error| error.to_string())?;
+        let db = LibraryDb::open(PathBuf::from(dir)).map_err(|error| error.to_string())?;
+        let outcome =
+            crate::importer::import_paths(&db, &paths).map_err(|error| error.to_string())?;
+        serde_json::to_string(&outcome).map_err(|error| error.to_string())
+    })();
+    match result {
+        Ok(ok) => return_string(&mut env, ok),
+        Err(error) => return_string(&mut env, err_json(error)),
+    }
+}
