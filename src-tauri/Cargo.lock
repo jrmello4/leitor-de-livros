@@ -4003,6 +4003,7 @@ name = "tactile-core"
 version = "0.1.1"
 dependencies = [
  "image",
+ "jni",
  "rusqlite",
  "serde",
  "serde_json",

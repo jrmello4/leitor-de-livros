@@ -18,5 +18,9 @@ src-tauri/mobile-import-plugin/android/build/
 src-tauri/mobile-import-plugin/android/.tauri/
 src-tauri/app-updater-plugin/android/build/
 src-tauri/app-updater-plugin/android/.tauri/
+native/.gradle/
+native/**/build/
+native/app/src/main/jniLibs/
+native/local.properties
 .DS_Store
 Thumbs.db

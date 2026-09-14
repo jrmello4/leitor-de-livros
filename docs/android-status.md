@@ -360,6 +360,23 @@ aparecer no ADB sem fio; o dispositivo ficou offline após o teste anterior.
   biblioteca em Compose → superfície de leitura com tiling → import Updater;
   o shell Tauri segue até a paridade.
 
+## Scaffold nativo + JNI provado no host — 14/09/2026 (fase 2)
+
+- `native-core` exporta `cdylib` + `src/jni.rs`: `nativeVersion()` e
+  `nativeOpenLibrary(dir)` (abre o SQLite e conta publicações; erros voltam
+  como `{"error": ...}`, sem throw JNI). `jni` 0.21.
+- `.so` release compilados: arm64-v8a (2,76MB) e x86_64 (2,89MB); símbolos
+  `Java_com_jrmello4_tactilereader_core_TactileCore_*` confirmados via
+  `llvm-nm`.
+- Módulo `native/` (AGP 8.7.3, Kotlin 2.0.21, SDK 35, `applicationId`
+  `.scaffold` para coexistir com o APK publicado): `TactileCore.kt`,
+  `MainActivity` de prova sem Compose, tasks Gradle `buildCoreSo*` que
+  compilam o Rust com o NDK e copiam para `jniLibs/` antes do `preBuild`.
+- `assembleDebug` + `assembleDebugAndroidTest` verdes; APK (6,75MB) embute
+  os dois `.so`. `TactileCoreInstrumentedTest` (semver + abrir/contar 0,
+  idempotente) compilado e pronto — execução pendente de aparelho
+  (`gradlew.bat connectedDebugAndroidTest` com o Moto G34 no `adb`).
+
 ## Orçamento de bundle no CI — 14/09/2026 (host)
 - `scripts/performance/bundle-budget.mjs` trava: entry ≤380KB, JS total
   ≤560KB, chunk lazy ≤130KB, CSS ≤100KB. Medido: 350KB / 498KB / 110KB / 85KB.

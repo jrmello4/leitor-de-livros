@@ -10,6 +10,7 @@ pub mod archive;
 pub mod db;
 pub mod error;
 pub mod importer;
+pub mod jni;
 pub mod models;
 pub mod publication_names;
 
