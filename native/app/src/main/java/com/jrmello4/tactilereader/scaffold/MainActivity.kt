@@ -1,7 +1,9 @@
 package com.jrmello4.tactilereader.scaffold
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -47,6 +49,17 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val pickFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            lifecycleScope.launch {
+                val paths = withContext(Dispatchers.IO) { copyFolderFiles(uri) }
+                if (paths.isNotEmpty()) {
+                    viewModel.importFiles(paths)
+                }
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val factory = LibraryViewModelFactory(filesDir)
@@ -64,6 +77,7 @@ class MainActivity : ComponentActivity() {
                         viewModel,
                         onAddClick = { pickComic.launch(arrayOf("*/*")) },
                         onOpenClick = { openPubId = it.id },
+                        onAddFolderClick = { pickFolder.launch(null) },
                     )
                 } else {
                     val reader: com.jrmello4.tactilereader.reader.ReaderViewModel = viewModel(
@@ -81,6 +95,61 @@ class MainActivity : ComponentActivity() {
             val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
             if (cursor.moveToFirst() && index >= 0) cursor.getString(index) else null
         } ?: "hq-importada"
+        return copyStreamToImports(uri, displayName)
+    }
+
+    /**
+     * Copia os arquivos suportados do primeiro nível da pasta para o
+     * armazenamento do app, sem tocar nos originais. Sem recursão (v1):
+     * subpastas são ignoradas e o núcleo diagnostica o resto.
+     */
+    private fun copyFolderFiles(treeUri: Uri): List<String> {
+        val out = mutableListOf<String>()
+        try {
+            contentResolver.takePersistableUriPermission(
+                treeUri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        } catch (_: SecurityException) {
+            return out
+        }
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+            treeUri,
+            DocumentsContract.getTreeDocumentId(treeUri),
+        )
+        contentResolver.query(
+            childrenUri,
+            arrayOf(
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE,
+            ),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            while (cursor.moveToNext()) {
+                val docId = cursor.getString(0) ?: continue
+                val name = cursor.getString(1) ?: continue
+                if (cursor.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR) {
+                    continue
+                }
+                if (!isSupportedArchive(name)) {
+                    continue
+                }
+                val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+                copyStreamToImports(docUri, name)?.let { out.add(it.absolutePath) }
+            }
+        }
+        return out
+    }
+
+    private fun isSupportedArchive(name: String): Boolean {
+        val ext = name.substringAfterLast('.', "").lowercase()
+        return ext == "cbz" || ext == "cbr" || ext == "zip" || ext == "7z" || ext == "rar"
+    }
+
+    private fun copyStreamToImports(uri: Uri, displayName: String): File? {
         val safe = displayName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
         val target = File(File(filesDir, "imports").apply { mkdirs() }, "${System.currentTimeMillis()}-$safe")
         return try {

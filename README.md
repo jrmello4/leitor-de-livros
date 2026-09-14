@@ -43,9 +43,11 @@ O teste instrumentado exige aparelho autorizado no `adb`.
 
 ## Release
 
-Sem pipeline de release assinada no momento: o CI publica o APK de
-depuração do scaffold como artefato. A release assinada do app nativo
-é trabalho futuro (ver roadmap).
+O workflow `release-native.yml` publica o rolling `native-latest` com o
+APK assinado + `apksigner verify`. Exige 4 segredos (Settings → Secrets
+→ Actions): `TACTILE_KEY_BASE64`, `TACTILE_STORE_PASSWORD`,
+`TACTILE_KEY_ALIAS`, `TACTILE_KEY_PASSWORD`. Sem eles o workflow falha
+cedo; o CI comum segue publicando só o APK de depuração como artefato.
 
 ## Licença
 

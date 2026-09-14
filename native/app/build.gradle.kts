@@ -15,14 +15,37 @@ android {
         applicationId = "com.jrmello4.tactilereader.scaffold"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
+        versionCode = (System.getenv("TACTILE_VERSION_CODE")?.toIntOrNull() ?: 1)
         versionName = "0.1.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    // Assinatura de release via ambiente (CI). Sem as quatro variáveis, o
+    // assembleRelease sai sem assinatura e o workflow de release falha cedo
+    // com mensagem clara em vez de publicar APK inválido.
+    val storeFilePath = System.getenv("TACTILE_STORE_FILE")
+    val storePassword = System.getenv("TACTILE_STORE_PASSWORD")
+    val keyAlias = System.getenv("TACTILE_KEY_ALIAS")
+    val keyPassword = System.getenv("TACTILE_KEY_PASSWORD")
+    val hasSigning = !storeFilePath.isNullOrBlank() && !storePassword.isNullOrBlank() &&
+        !keyAlias.isNullOrBlank() && !keyPassword.isNullOrBlank()
+    if (hasSigning) {
+        signingConfigs {
+            create("release") {
+                storeFile = rootDir.resolve(storeFilePath)
+                this.storePassword = storePassword
+                this.keyAlias = keyAlias
+                this.keyPassword = keyPassword
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (hasSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     buildFeatures {

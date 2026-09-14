@@ -27,6 +27,8 @@ data class ReaderUiState(
     val pages: List<ReaderPage> = emptyList(),
     /** Página salva para retomar; nulo = começar da primeira. */
     val startPageId: String? = null,
+    /** Deslocamento salvo dentro da página (0..1). */
+    val startRatio: Double = 0.0,
     val error: String? = null,
 )
 
@@ -65,6 +67,7 @@ class ReaderViewModel(
                     title = title,
                     pages = pages,
                     startPageId = progress?.pageId,
+                    startRatio = progress?.scrollRatio ?: 0.0,
                 )
             } catch (error: Exception) {
                 _state.value.copy(loading = false, error = error.message ?: "falha desconhecida")

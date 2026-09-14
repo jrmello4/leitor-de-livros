@@ -2,11 +2,13 @@ package com.jrmello4.tactilereader.reader
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import com.jrmello4.tactilereader.core.ReaderPage
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -95,10 +97,23 @@ class ReaderContentTest {
             }
         }
         compose.onNodeWithText("demo-hq").assertIsDisplayed()
-        compose.onNodeWithText("pagina-p-page-0").performClick()
+        touchTap("pagina-p-page-0")
+        compose.mainClock.advanceTimeBy(1000)
         assertEquals(0, compose.onAllNodesWithText("demo-hq").fetchSemanticsNodes().size)
-        compose.onNodeWithText("pagina-p-page-0").performClick()
+        touchTap("pagina-p-page-0")
+        compose.mainClock.advanceTimeBy(1000)
         compose.onNodeWithText("demo-hq").assertIsDisplayed()
+    }
+
+    /** Toque real (down+up no centro do nó): o HUD ouve gestos, não semântica. */
+    private fun touchTap(text: String) {
+        val node = compose.onNodeWithText(text)
+        val size = node.fetchSemanticsNode().size
+        node.performTouchInput {
+            down(0, Offset(size.width / 2f, size.height / 2f))
+            move()
+            up(0)
+        }
     }
 
     @Test

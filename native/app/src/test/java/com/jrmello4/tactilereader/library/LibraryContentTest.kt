@@ -1,6 +1,7 @@
 package com.jrmello4.tactilereader.library
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -33,6 +34,49 @@ class LibraryContentTest {
         }
         compose.onNodeWithText("+ HQ").performClick()
         assertEquals(1, clicks)
+    }
+
+    @Test
+    fun folderButtonFiresHandler() {
+        var clicks = 0
+        compose.setContent {
+            MaterialTheme {
+                LibraryContent(
+                    LibraryUiState(loading = false),
+                    onAddClick = {},
+                    onAddFolderClick = { clicks++ },
+                )
+            }
+        }
+        compose.onNodeWithText("+ Pasta").performClick()
+        assertEquals(1, clicks)
+    }
+
+    @Test
+    fun seriesRootOpensDetailWithOrderedEditions() {
+        val pubs = listOf(
+            Pub("a", "Série X #10", "cbz", 20, 0.0, false),
+            Pub("b", "Série X #02", "cbz", 20, 0.0, false),
+        )
+        var opened: String? = null
+        compose.setContent {
+            MaterialTheme {
+                LibraryContent(
+                    LibraryUiState(loading = false, pubs = pubs),
+                    onAddClick = {},
+                    onOpenClick = { opened = it.id },
+                    coverImage = { pub, _, _ -> Text("capa-${pub.id}") },
+                )
+            }
+        }
+        // Raiz mostra a série uma vez; o detalhe ordena #02 antes de #10.
+        compose.onNodeWithText("Série X").assertIsDisplayed()
+        compose.onNodeWithText("2 edições").assertIsDisplayed()
+        compose.onNodeWithText("Série X").performClick()
+        compose.onNodeWithText("‹ All series").assertIsDisplayed()
+        compose.onNodeWithText("capa-b").assertIsDisplayed()
+        compose.onNodeWithText("capa-b").performClick()
+        assertEquals("b", opened)
     }
 
     @Test

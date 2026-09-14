@@ -458,3 +458,33 @@ aparecer no ADB sem fio; o dispositivo ficou offline após o teste anterior.
   G34 pendentes.
 - Fica para depois: pinça/duplo-toque com zoom, restauração com offset
   dentro da página, estante por séries, import de pasta, release assinada.
+
+## Leitor completo no host — 14/09/2026 (aparelho pendente)
+
+- Zoom por página (`ZoomablePage`): pinça até 5x com pan limitado às
+  bordas, duplo-toque alterna 1x/2x centrado no ponto, toque simples vai
+  ao HUD. Zoom morre com a página (não é progresso).
+- Restauração exata: `startRatio` no estado; após `scrollToItem`, o
+  deslocamento `(ratio × altura)` é aplicado quando o item assenta. O
+  save de progresso espera a restauração para não sobrescrever o ponto.
+- Estante por séries (`SeriesGroup.kt`, port das regras do shell):
+  chave insensível a maiúsculas/espaços, só `#NN` abre edição (`2000 AD`
+  intacto), ordem numérica, hint `possible duplicate` sem mesclar nada.
+  Raiz de séries + detalhe com `‹ All series`.
+- Import de pasta SAF (`OpenDocumentTree`, só framework): primeiro nível,
+  `.cbz/.cbr/.zip/.7z/.rar`, cópia para `imports/` sem tocar no original,
+  `importFiles` em lote com um reload. Botão `+ Pasta` na estante.
+- Release: `signingConfig` via 4 envs (`TACTILE_STORE_FILE`,
+  `TACTILE_STORE_PASSWORD`, `TACTILE_KEY_ALIAS`, `TACTILE_KEY_PASSWORD`);
+  sem elas o APK sai `-unsigned` e o workflow `release-native.yml`
+  falha cedo. Workflow publica o rolling `native-latest` assinado +
+  `apksigner verify`. Segredos ainda a cadastrar; `assembleRelease`
+  sem assinatura provado no host (21,8MB, ambas ABIs).
+- Verificado no host: 41 JVM (6 `SeriesGroupTest`, 2 testes novos de
+  pasta/séries, HUD por injeção de toque real), `assembleRelease` e
+  `assembleDebugAndroidTest` verdes.
+- Moto G34 fora do `adb` nesta sessão (`adb devices` vazio): teste
+  instrumentado do leitor, gestos no aparelho e ensaio longo de memória
+  continuam pendentes.
+- Resta: teclas de volume, binge, backup local/PT-BR/tela de update,
+  PDF, scanner em background, OPDS.

@@ -74,11 +74,19 @@ class LibraryViewModel(private val filesDir: File) : ViewModel() {
 
     /** Importa um arquivo já copiado para o armazenamento do app e recarrega. */
     fun importFile(path: String) {
+        importFiles(listOf(path))
+    }
+
+    /** Importa vários arquivos de uma vez (pasta SAF) e recarrega uma vez só. */
+    fun importFiles(paths: List<String>) {
+        if (paths.isEmpty()) {
+            return
+        }
         _state.value = _state.value.copy(loading = true, notice = null)
         viewModelScope.launch {
             _state.value = try {
                 val outcome = withContext(Dispatchers.IO) {
-                    TactileCore.nativeImportPaths(dbDir, pathsJson(listOf(path)))
+                    TactileCore.nativeImportPaths(dbDir, pathsJson(paths))
                 }
                 val diagnostics = org.json.JSONObject(outcome).optJSONArray("diagnostics")
                 val notice = if (diagnostics != null && diagnostics.length() > 0) {

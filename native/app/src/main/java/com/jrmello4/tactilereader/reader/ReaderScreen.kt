@@ -2,8 +2,8 @@ package com.jrmello4.tactilereader.reader
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,9 +33,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
@@ -75,25 +80,42 @@ fun ReaderContent(
     var hud by rememberSaveable { mutableStateOf(true) }
     val listState = rememberLazyListState()
     val pages = state.pages
+    val targetIndex = state.startPageId?.let { id -> pages.indexOfFirst { it.id == id } } ?: -1
+    val needsOffset = targetIndex > 0 && state.startRatio > 0.01
 
-    // Retoma onde parou: uma vez por abertura, rola até a página salva.
+    // Retoma onde parou: uma vez por abertura, rola até a página salva e,
+    // havendo proporção, aplica o deslocamento exato dentro dela.
     var didRestore by remember { mutableStateOf(false) }
+    var didRestoreOffset by remember { mutableStateOf(!needsOffset) }
     LaunchedEffect(pages, state.startPageId, didRestore) {
         if (!didRestore && pages.isNotEmpty()) {
-            val index = state.startPageId?.let { id -> pages.indexOfFirst { it.id == id } } ?: -1
-            if (index > 0) {
-                listState.scrollToItem(index)
+            if (targetIndex > 0) {
+                listState.scrollToItem(targetIndex)
             }
             didRestore = true
         }
     }
+    LaunchedEffect(listState, pages, needsOffset, didRestoreOffset) {
+        if (!needsOffset || didRestoreOffset) {
+            return@LaunchedEffect
+        }
+        snapshotFlow {
+            listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == targetIndex }
+        }.collect { info ->
+            if (info != null && info.size > 0) {
+                listState.scrollToItem(targetIndex, (state.startRatio * info.size).toInt())
+                didRestoreOffset = true
+            }
+        }
+    }
 
-    // Observa a primeira página visível e persiste {pageId, scrollRatio}.
-    LaunchedEffect(listState, pages) {
+    // Observa a primeira página visível e persiste {pageId, scrollRatio} —
+    // só depois da restauração, para não sobrescrever o ponto salvo.
+    LaunchedEffect(listState, pages, didRestore, didRestoreOffset) {
         snapshotFlow {
             val info = listState.layoutInfo.visibleItemsInfo.firstOrNull()
             val page = info?.let { pages.getOrNull(it.index) }
-            if (page == null) {
+            if (page == null || !didRestore || !didRestoreOffset) {
                 null
             } else {
                 val ratio = if (info.size > 0) (-info.offset.toDouble() / info.size).coerceIn(0.0, 1.0) else 0.0
@@ -132,12 +154,7 @@ fun ReaderContent(
                             onPageVisible(page)
                         }
                     }
-                    Box(
-                        Modifier.clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                        ) { hud = !hud },
-                    ) {
+                    ZoomablePage(onTap = { hud = !hud }) {
                         pageImage(page, file, Modifier)
                     }
                 }
@@ -181,6 +198,70 @@ fun ReaderContent(
                 }
             }
         }
+    }
+}
+
+/**
+ * Invólucro de zoom por página: pinça até 5x com pan limitado às bordas,
+ * duplo-toque alterna 1x/2x centrado no ponto tocado, toque simples sobe
+ * para o HUD. O estado morre com a página (remember sem saveable): zoom
+ * não é progresso e não deve sobreviver à saída da faixa.
+ */
+@Composable
+private fun ZoomablePage(
+    onTap: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    var scale by remember { mutableStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+    var viewport by remember { mutableStateOf(IntSize.Zero) }
+
+    fun clampOffset(next: Float, raw: Offset, size: IntSize): Offset {
+        if (next <= 1f || size == IntSize.Zero) {
+            return Offset.Zero
+        }
+        val maxX = size.width * (next - 1f) / 2f
+        val maxY = size.height * (next - 1f) / 2f
+        return Offset(raw.x.coerceIn(-maxX, maxX), raw.y.coerceIn(-maxY, maxY))
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .onSizeChanged { viewport = it }
+            .graphicsLayer(
+                scaleX = scale,
+                scaleY = scale,
+                translationX = offset.x,
+                translationY = offset.y,
+                clip = true,
+            )
+            .pointerInput(Unit) {
+                detectTransformGestures { _, pan, zoom, _ ->
+                    val next = (scale * zoom).coerceIn(1f, 5f)
+                    scale = next
+                    offset = clampOffset(next, offset + pan, viewport)
+                }
+            }
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { onTap() },
+                    onDoubleTap = { pos ->
+                        if (scale > 1f) {
+                            scale = 1f
+                            offset = Offset.Zero
+                        } else {
+                            val next = 2f
+                            val center = Offset(viewport.width / 2f, viewport.height / 2f)
+                            scale = next
+                            offset = clampOffset(next, (center - pos) * next, viewport)
+                        }
+                    },
+                )
+            },
+    ) {
+        content()
     }
 }
 
