@@ -1,12 +1,13 @@
-# App nativo — scaffold da fase 2 (experimental)
+# App nativo — o produto
 
-O produto continua sendo o APK Tauri. Este módulo prova o núcleo portátil
-(`tactile-core`, Rust) via JNI e cresce tela por tela até a paridade.
+O shell Tauri/WebView foi aposentado e removido (14/09/2026). Este módulo
+**é** o produto: app Android em Kotlin/Compose sobre o núcleo portátil
+(`tactile-core`, Rust) via JNI, crescendo tela por tela.
 
 ## O que existe
 
 - `app/.../core/TactileCore.kt` — ponte fina: versão, abrir banco, listar
-  publicações e importar caminhos, que casam 1:1 com `native-core/src/jni.rs`.
+  publicações e importar caminhos, que casam 1:1 com `core/src/jni.rs`.
   Erros do Rust voltam como JSON `{"error": ...}`, nunca como exceção JNI.
 - `app/.../scaffold/MainActivity.kt` — hospeda a estante Compose da fase 3.
 - `app/.../library/` — `LibraryViewModel` (IO fora da thread principal,

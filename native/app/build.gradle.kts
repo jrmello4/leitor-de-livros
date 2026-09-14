@@ -60,7 +60,7 @@ val copyCoreSoTasks = abiTargets.map { (abi, target) ->
     val buildTask = tasks.register<Exec>("cargoBuildCore${abi.replace("-", "_")}") {
         val ndkBin = android.ndkDirectory
             .resolve("toolchains/llvm/prebuilt/$hostTag/bin")
-        workingDir(rootDir.resolve("../src-tauri"))
+        workingDir(rootDir.resolve(".."))
         commandLine("cargo", "build", "--release", "-p", "tactile-core", "--target", target)
         environment("ANDROID_NDK_HOME", android.ndkDirectory.absolutePath)
         environment("CC_${envName}", ndkBin.resolve("${target}35-clang${clangExt}").absolutePath)
@@ -69,7 +69,7 @@ val copyCoreSoTasks = abiTargets.map { (abi, target) ->
     }
     tasks.register<Copy>("copyCoreSo${abi.replace("-", "_")}") {
         dependsOn(buildTask)
-        from(rootDir.resolve("../src-tauri/target/$target/release/libtactile_core.so"))
+        from(rootDir.resolve("../target/$target/release/libtactile_core.so"))
         into(layout.projectDirectory.dir("src/main/jniLibs/$abi"))
     }
 }

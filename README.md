@@ -1,79 +1,52 @@
-# Tactile Reader (Android)
+# Tactile Reader (Android nativo)
 
-> A local-first Android comic and manga reader built around continuous Webtoon reading and physical device validation.
+> Leitor local de HQs e mangás, Android-first: núcleo portátil em Rust
+> (`tactile-core`) + app nativo em Kotlin/Compose (`native/`).
 
-## Platform
+O shell Tauri/WebView foi aposentado em 14/09/2026 — o produto é o app
+nativo. Não há frontend web, installer desktop, nem pipeline de release
+do shell antigo neste repositório.
 
-**Android is the product.** The Windows desktop installer and desktop release pipeline are retired. Development and host-side tests still run on a Windows machine; the shipped artifact is the Android APK.
+## Estado
 
-## Status
+Estante Compose lendo do núcleo via JNI, validada no Moto G34 5G:
 
-Validated on a physical Motorola Moto G34 5G (ARM64, Android 15) via Wi‑Fi ADB:
+- grade de séries/publicações com capas lazy sob demanda (`nativeEnsureCover` + Coil, teto de 200 em memória)
+- importação SAF de HQ real, SQLite local, progresso `{pageId, scrollRatio}`
+- CBZ / CBR (RAR4/RAR5 via `unrar-rs`) / 7z / pastas de imagens, originais nunca alterados
 
-- Webtoon vertical reader with virtualized pages, pinch zoom (up to 5x), double-tap 1x/2x, autoscroll
-- Library with series folders, natural issue order, and possible-duplicate flags
-- SAF import of files and folders (`content://`), including mixed ZIP collections
-- CBZ / CBR (RAR4/RAR5 via `unrar-rs`) / 7z / image folders
-- SQLite progress as `{pageId, scrollRatio}` with migration and restore
-- CBR works without WinRAR or any external app; PDF is **not** available on Android yet
+Falta o principal: a superfície de leitura nativa com tiling. Ver
+[`docs/roadmap-melhorias.md`](docs/roadmap-melhorias.md) e
+[`docs/android-status.md`](docs/android-status.md).
 
-See [`docs/android-status.md`](docs/android-status.md) for the full validation log and [`docs/superpowers/specs/2026-09-08-mobile-android-comic-reader-design.md`](docs/superpowers/specs/2026-09-08-mobile-android-comic-reader-design.md) for the product spec.
+## Estrutura
 
-Test APKs live under `artifacts/android-test/` (local only; not published).
+- `core/` — `tactile-core`: SQLite, importadores, cache derivado, JNI. Sem UI, sem Tauri.
+- `native/` — app Android (AGP + Compose). Tasks `buildCoreSo*` compilam o `.so` com o NDK antes do `preBuild`.
+- `docs/` — estado, roadmap, spec do produto. `DESIGN.md` — direção visual Paper Atelier.
 
-## Download
+## Build e teste
 
-Every push to `main` publishes a signed APK to the rolling
-[`android-latest`](https://github.com/jrmello4/leitor-de-livros/releases/tag/android-latest)
-release. Download the `tactile-reader-*-arm64.apk`, allow “Install unknown
-apps” for Tactile Reader, and open it. Afterwards the app updates itself via
-Settings → App update whenever `main` moves (see
-[`docs/android-updater.md`](docs/android-updater.md)). Migrating from a
-manually installed debug APK requires one uninstall first (different signing
-key).
+```bat
+:: Núcleo (na raiz)
+cargo test -p tactile-core
+cargo fmt --all -- --check
+cargo clippy --locked -p tactile-core --all-targets --all-features -- -D warnings
 
-## Build
-
-```bash
-npm ci
-npm run build
-
-# One-time Android project setup (generates src-tauri/gen/android, gitignored)
-npm run tauri -- android init
-
-# Debug build / install on a connected device
-npm run android:dev
-
-# Release APK
-npm run android:build
+:: App (dentro de native/)
+gradlew.bat testDebugUnitTest assembleDebug
+gradlew.bat connectedDebugAndroidTest
 ```
 
-Requirements: Node 24, stable Rust with `aarch64-linux-android` target, Android SDK/NDK, JDK 21. On Windows hosts, set a short `TEMP`/`TMP` (for example `C:\tmp`) so Gradle can open its local socket.
+Requisitos: Rust estável, JDK 21, Android SDK com NDK 28.2.13676358.
+O teste instrumentado exige aparelho autorizado no `adb`.
 
-## Development on the host
+## Release
 
-The same React + Rust core still compiles as a desktop shell for local UI work and `cargo test`/`vitest`. That shell is a development aid only — it is not a product, not packaged, and not released.
+Sem pipeline de release assinada no momento: o CI publica o APK de
+depuração do scaffold como artefato. A release assinada do app nativo
+é trabalho futuro (ver roadmap).
 
-```bash
-npm test
-npm run tauri:dev
-cargo test --manifest-path src-tauri/Cargo.toml
-```
+## Licença
 
-## What makes it different
-
-- **Webtoon first:** sliding window keeps only visible pages mounted; zero-gap strip; position restored by page + scroll ratio.
-- **Local-first:** publications, progress, and profiles stay on the device; source files are never modified.
-- **Physical gestures:** central tap toggles HUD, double-tap zoom, pinch, Android Back always has an escape route.
-- **Series shelf:** Android opens on series folders; issues load only when a series is opened.
-- **Safe import:** SAF picker, signature-based container detection (a ZIP named `.cbr` is handled as CBZ), original names preserved.
-
-## Out of scope for now
-
-EPUB, accounts, cloud sync, online metadata, store, discovery, iOS, and desktop distribution.
-
-PDF import on Android, OPDS/Komga/Kavita, and automatic volume-to-volume binge transition are planned next — see `docs/android-status.md`.
-
-## License
-
-MIT — see [LICENSE](LICENSE).
+MIT — ver [LICENSE](LICENSE).

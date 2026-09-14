@@ -1,33 +1,12 @@
 version: 2
 
-# The Android reader ships from three dependency trees (npm, cargo, GitHub
-# Actions). Group the noisy ones so patch releases do not become a flood of PRs.
+# The native reader ships from two dependency trees (cargo, GitHub Actions).
 updates:
-  - package-ecosystem: npm
+  - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
-    groups:
-      dev-tooling:
-        patterns:
-          - '@playwright/*'
-          - '@types/*'
-          - '@vitejs/*'
-          - jsdom
-          - typescript
-          - vite
-          - vitest
-
-  - package-ecosystem: cargo
-    directory: /src-tauri
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    ignore:
-      # Host-side PDF import still pins this exact binding. PDF is not available
-      # on Android yet; do not bump it until an Android PDF path exists.
-      - dependency-name: pdfium-render
 
   - package-ecosystem: github-actions
     directory: /

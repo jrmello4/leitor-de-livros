@@ -1,6 +1,3 @@
-node_modules/
-dist/
-coverage/
 target/
 artifacts/
 test-results/
@@ -11,13 +8,6 @@ test-results/
 *.apk
 *.idsig
 .tmp-*/
-.gradle-sockets/
-src-tauri/icons/icon.ico
-src-tauri/gen/
-src-tauri/mobile-import-plugin/android/build/
-src-tauri/mobile-import-plugin/android/.tauri/
-src-tauri/app-updater-plugin/android/build/
-src-tauri/app-updater-plugin/android/.tauri/
 native/.gradle/
 native/**/build/
 native/app/src/main/jniLibs/

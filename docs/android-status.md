@@ -419,3 +419,22 @@ aparecer no ADB sem fio; o dispositivo ficou offline após o teste anterior.
 - Coordenador de seleção de página segue único, no App, compartilhado por
   sessão (navegação) e ações (remoção cancela a seleção em voo).
 - Verificado no host: `tsc+vite`, 322 vitest, budget (entry 352KB) verdes.
+
+## Aposentadoria do shell Tauri — 14/09/2026 (host)
+
+- Decisão de produto: o shell Tauri/WebView morreu; o app nativo
+  (`core/` + `native/`) é o único produto. Sem frontend web, sem
+  desktop, sem release `android-latest` do shell antigo.
+- Removidos do repositório: `src/`, glue e plugins Tauri em
+  `src-tauri/`, testes web/visuais, `scripts/`, CI web e o workflow de
+  release do APK Tauri. `tactile-core` virou crate top-level (`core/`)
+  com workspace e `Cargo.lock` na raiz; tasks Gradle do `native/`
+  apontam para o novo caminho.
+- Junto saiu o lote das capas lazy (commit `1fc3dac`): `nativeEnsureCover`
+  no JNI, listagem sem bytes derivados no import novo, Coil 512px com
+  teto de 200 capas em memória. 53 testes Rust + 15 JVM verdes no host.
+- CI agora: `core` (fmt/clippy/test com `--locked`) + `native-app`
+  (`testDebugUnitTest`, `assembleDebug`, `assembleDebugAndroidTest`) com
+  upload do APK de depuração como artefato. Release assinada do nativo
+  é trabalho futuro.
+- Próximo: superfície de leitura nativa com tiling (frente 3).
