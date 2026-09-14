@@ -77,7 +77,7 @@ pub(crate) fn import_pdf(
     _path: &Path,
 ) -> CoreResult<NativePublication> {
     Err(CoreError::AdapterUnavailable(
-        "PDF is not available on Android yet; use CBZ, ZIP, or image files.".to_owned(),
+        "PDF ainda não está disponível no Android; use CBZ, ZIP ou imagens. O arquivo original foi preservado.".to_owned(),
     ))
 }
 
@@ -673,7 +673,7 @@ pub(crate) fn rebuild_pdf_page(
     _page_index: usize,
 ) -> CoreResult<importer::RebuiltPage> {
     Err(CoreError::AdapterUnavailable(
-        "PDF is not available on Android yet; use CBZ, ZIP, or image files.".to_owned(),
+        "PDF ainda não está disponível no Android; use CBZ, ZIP ou imagens. O arquivo original foi preservado.".to_owned(),
     ))
 }
 

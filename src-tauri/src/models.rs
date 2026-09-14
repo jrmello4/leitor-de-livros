@@ -84,6 +84,15 @@ pub struct CacheInfo {
     pub entry_count: usize,
 }
 
+/// Uma chamada para hidratar bookmarks + viewport de toda a biblioteca.
+/// Substitui o N×2 `list_bookmarks` + `load_reader_state` do boot.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibrarySnapshot {
+    pub bookmarks: std::collections::HashMap<String, Vec<NativeBookmark>>,
+    pub reader_states: std::collections::HashMap<String, NativeReaderState>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeImportResult {

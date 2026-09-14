@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::{Component, Path, PathBuf},
     sync::Mutex,
 };
@@ -581,6 +581,67 @@ impl LibraryDb {
             )
             .optional()
             .map_err(Into::into)
+    }
+
+    /// Snapshot em lote: todos os bookmarks + reader states em 2 consultas.
+    /// O boot anterior fazia 2 IPCs por publicação (N×2); com 124+ volumes
+    /// isso virava centenas de idas ao SQLite sob um único Mutex.
+    pub fn library_snapshot(&self) -> CoreResult<crate::models::LibrarySnapshot> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| CoreError::from("database lock poisoned"))?;
+        let mut bookmarks: HashMap<String, Vec<NativeBookmark>> = HashMap::new();
+        {
+            let mut statement = connection.prepare(
+                "SELECT publication_id, page_id, label, created_at, updated_at
+                   FROM bookmarks
+                  ORDER BY publication_id ASC, created_at ASC, page_id ASC",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    NativeBookmark {
+                        page_id: row.get(1)?,
+                        label: row.get(2)?,
+                        created_at: row.get(3)?,
+                        updated_at: row.get(4)?,
+                    },
+                ))
+            })?;
+            for row in rows {
+                let (publication_id, bookmark) = row?;
+                bookmarks.entry(publication_id).or_default().push(bookmark);
+            }
+        }
+        let mut reader_states: HashMap<String, NativeReaderState> = HashMap::new();
+        {
+            let mut statement = connection.prepare(
+                "SELECT publication_id, zoom_mode, zoom_scale, pan_x, pan_y, page_id, scroll_ratio
+                   FROM reader_states",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    NativeReaderState {
+                        zoom_mode: row.get(1)?,
+                        zoom_scale: row.get(2)?,
+                        pan_x: row.get(3)?,
+                        pan_y: row.get(4)?,
+                        page_id: row.get(5)?,
+                        scroll_ratio: row.get(6)?,
+                    },
+                ))
+            })?;
+            for row in rows {
+                let (publication_id, state) = row?;
+                reader_states.insert(publication_id, state);
+            }
+        }
+        Ok(crate::models::LibrarySnapshot {
+            bookmarks,
+            reader_states,
+        })
     }
 
     pub fn cache_info(&self) -> CoreResult<CacheInfo> {
@@ -2914,6 +2975,47 @@ mod tests {
             database.load_reader_state("publication-1").expect("state"),
             None
         );
+
+        drop(database);
+        std::fs::remove_dir_all(root).expect("cleanup database");
+    }
+
+    #[test]
+    fn library_snapshot_returns_all_bookmarks_and_states_in_one_call() {
+        let root = temporary_root("library-snapshot");
+        let source_path = root.join("source.cbz");
+        std::fs::create_dir_all(&root).expect("root");
+        std::fs::write(&source_path, b"original source").expect("source");
+        let database = LibraryDb::open(root.clone()).expect("database");
+        insert_test_publication(&database, &source_path.to_string_lossy());
+
+        let bookmark = NativeBookmark {
+            page_id: "page-1".to_owned(),
+            label: "Snapshot marker".to_owned(),
+            created_at: "1".to_owned(),
+            updated_at: "1".to_owned(),
+        };
+        database
+            .upsert_bookmark("publication-1", &bookmark)
+            .expect("save bookmark");
+        let state = NativeReaderState {
+            zoom_mode: "manual".to_owned(),
+            zoom_scale: 2.0,
+            pan_x: 0.0,
+            pan_y: 0.0,
+            page_id: Some("page-1".to_owned()),
+            scroll_ratio: 0.25,
+        };
+        database
+            .save_reader_state("publication-1", &state)
+            .expect("save state");
+
+        let snapshot = database.library_snapshot().expect("snapshot");
+        assert_eq!(
+            snapshot.bookmarks.get("publication-1"),
+            Some(&vec![bookmark])
+        );
+        assert_eq!(snapshot.reader_states.get("publication-1"), Some(&state));
 
         drop(database);
         std::fs::remove_dir_all(root).expect("cleanup database");

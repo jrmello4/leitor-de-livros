@@ -6,7 +6,10 @@ mod models;
 mod publication_names;
 
 use db::LibraryDb;
-use models::{CacheInfo, NativeBookmark, NativeImportResult, NativePublication, NativeReaderState};
+use models::{
+    CacheInfo, LibrarySnapshot, NativeBookmark, NativeImportResult, NativePublication,
+    NativeReaderState,
+};
 #[cfg(not(target_os = "android"))]
 use tauri::path::BaseDirectory;
 use tauri::{Emitter, Manager, State};
@@ -82,6 +85,13 @@ fn list_bookmarks(
 ) -> Result<Vec<NativeBookmark>, String> {
     database
         .list_bookmarks(&publication_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn list_library_snapshot(database: State<'_, LibraryDb>) -> Result<LibrarySnapshot, String> {
+    database
+        .library_snapshot()
         .map_err(|error| error.to_string())
 }
 
@@ -283,6 +293,7 @@ pub fn run() {
             set_custom_cover,
             clear_custom_cover,
             list_bookmarks,
+            list_library_snapshot,
             upsert_bookmark,
             remove_bookmark,
             save_reader_state,

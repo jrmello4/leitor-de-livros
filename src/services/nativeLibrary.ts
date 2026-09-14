@@ -279,6 +279,51 @@ export async function listNativeBookmarks(publicationId: string): Promise<Bookma
   return normalizeBookmarks(value);
 }
 
+export interface NativeLibrarySnapshot {
+  bookmarks: Record<string, Bookmark[]>;
+  readerStates: Record<string, ReaderState>;
+}
+
+/**
+ * Snapshot em lote: 1 IPC para bookmarks + reader states de toda a
+ * biblioteca. Substitui o N×2 do boot (2 chamadas por publicação).
+ */
+export async function listNativeLibrarySnapshot(): Promise<NativeLibrarySnapshot | null> {
+  if (!isNativeRuntime()) {
+    return null;
+  }
+  try {
+    const value = await invoke<unknown>('list_library_snapshot');
+    if (!value || typeof value !== 'object') {
+      return null;
+    }
+    const snapshot = value as {
+      bookmarks?: unknown;
+      readerStates?: unknown;
+    };
+    const bookmarks: Record<string, Bookmark[]> = {};
+    if (snapshot.bookmarks && typeof snapshot.bookmarks === 'object') {
+      for (const [publicationId, entries] of Object.entries(snapshot.bookmarks as Record<string, unknown>)) {
+        bookmarks[publicationId] = normalizeBookmarks(entries);
+      }
+    }
+    const readerStates: Record<string, ReaderState> = {};
+    if (snapshot.readerStates && typeof snapshot.readerStates === 'object') {
+      for (const [publicationId, state] of Object.entries(snapshot.readerStates as Record<string, unknown>)) {
+        if (state === null || state === undefined) continue;
+        try {
+          readerStates[publicationId] = normalizeReaderState(state ?? defaultReaderState);
+        } catch {
+          // Linha corrompida não pode impedir a abertura da biblioteca.
+        }
+      }
+    }
+    return { bookmarks, readerStates };
+  } catch {
+    return null;
+  }
+}
+
 export async function saveNativeBookmark(publicationId: string, bookmark: Bookmark): Promise<void> {
   const normalized = normalizeBookmark(bookmark);
   if (!normalized) {

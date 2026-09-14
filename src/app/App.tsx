@@ -37,6 +37,7 @@ import {
   isAndroidRuntime,
   isNativeRuntime,
   listenNativeImportProgress,
+  listNativeLibrarySnapshot,
   listNativePublications,
   loadNativePublicationPages,
   loadNativeProfileStore,
@@ -211,10 +212,37 @@ export function App() {
     const generation = ++metadataGenerationRef.current;
     const publicationIds = new Set(publications.map((publication) => publication.id));
     try {
+      // Caminho rápido: 1 IPC para toda a biblioteca (snapshot em lote).
+      // Substitui o N×2 anterior e cai para o lote de 8 em caso de falha.
+      const snapshot = await listNativeLibrarySnapshot().catch(() => null);
+      if (snapshot && generation === metadataGenerationRef.current) {
+        const nextBookmarks: Record<string, Bookmark[]> = {};
+        const nextStates: Record<string, ReaderState> = {};
+        for (const publication of publications) {
+          if (snapshot.bookmarks[publication.id] !== undefined) {
+            nextBookmarks[publication.id] = snapshot.bookmarks[publication.id];
+          }
+          const state = snapshot.readerStates[publication.id];
+          if (state !== undefined) {
+            nextStates[publication.id] = state;
+          } else {
+            try {
+              const fallback = await loadReaderStateForPublication(publication.id);
+              if (fallback) nextStates[publication.id] = fallback;
+            } catch {
+              // Estado ausente não bloqueia a biblioteca.
+            }
+          }
+          if (generation !== metadataGenerationRef.current) {
+            return;
+          }
+        }
+        setBookmarks((current) => ({ ...current, ...Object.fromEntries(Object.entries(nextBookmarks).filter(([id]) => publicationIds.has(id))) }));
+        setReaderStates((current) => ({ ...current, ...Object.fromEntries(Object.entries(nextStates).filter(([id]) => publicationIds.has(id))) }));
+        return;
+      }
       const metadata: Array<{ id: string; bookmarks: Bookmark[]; readerState: ReaderState }> = [];
-      // Keep a large mobile library responsive while its per-publication
-      // bookmarks and viewport state are restored. Eight native calls at a
-      // time are enough to fill the UI without creating a 200+ request burst.
+      // Fallback: lote de 8 para não criar rajada de 200+ chamadas.
       for (let start = 0; start < publications.length; start += 8) {
         const batch = publications.slice(start, start + 8);
         const resolved = await Promise.all(batch.map(async (publication) => {
