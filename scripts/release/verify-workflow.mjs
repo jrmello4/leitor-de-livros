@@ -33,13 +33,17 @@ const branches = triggers?.push?.branches ?? [];
 assert.ok(branches.includes('main'), 'Release workflow must run on pushes to main.');
 assert.equal(releaseWorkflow?.permissions?.contents, 'write', 'Release workflow needs contents:write to publish the APK.');
 assert.match(releaseSource, /tauri -- android build --apk/, 'Release workflow must build Android APKs.');
-assert.match(releaseSource, /keystore\.properties/, 'Release workflow must configure the release keystore.');
-assert.match(releaseSource, /import java\.io\.FileInputStream/, 'Release signing patch must import FileInputStream (the Gradle Kotlin DSL shadows the java package).');
+assert.match(releaseSource, /configure-release-signing\.mjs/, 'Release workflow must use the versioned signing script.');
 assert.match(releaseSource, /ANDROID_KEY_BASE64/, 'Release workflow must read the keystore from secrets.');
 assert.match(releaseSource, /android-latest/, 'Release workflow must publish the rolling android-latest release.');
 assert.match(releaseSource, /latest\.json/, 'Release workflow must publish the update manifest.');
-assert.match(releaseSource, /versionCode/, 'Release workflow must bump the Android versionCode per build.');
+assert.match(releaseSource, /versionCode|version-code|ANDROID_VERSION_CODE/, 'Release workflow must bump the Android versionCode per build.');
 assert.match(releaseSource, /apksigner.*verify/, 'Release workflow must verify the APK signature.');
+
+const signingScript = await readFile(resolve(process.cwd(), 'scripts/android/configure-release-signing.mjs'), 'utf8');
+assert.match(signingScript, /android-release-signing/, 'Signing script must carry the Gradle marker.');
+assert.match(signingScript, /import java\.io\.FileInputStream/, 'Signing script must import FileInputStream (the Gradle Kotlin DSL shadows the java package).');
+assert.match(signingScript, /versionCode/, 'Signing script must manage versionCode.');
 
 const updaterSource = await readFile(resolve(process.cwd(), 'src/services/updater.ts'), 'utf8');
 assert.match(

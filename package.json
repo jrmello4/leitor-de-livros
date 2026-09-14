@@ -10,7 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:visual": "playwright test tests/visual --config playwright.config.ts",
-    "test:release-scripts": "node --test scripts/release/check-version.test.mjs scripts/android/make-latest-json.test.mjs",
+    "test:release-scripts": "node --test scripts/release/check-version.test.mjs scripts/android/make-latest-json.test.mjs scripts/android/configure-release-signing.test.mjs",
     "test:performance-contract": "node --test scripts/performance/performance-contract.test.mjs scripts/performance/performance-fixtures.test.mjs scripts/performance/performance-navigation.test.mjs",
     "performance:compare": "node scripts/performance/compare-performance.mjs",
     "test:workflow": "node scripts/release/verify-workflow.mjs",

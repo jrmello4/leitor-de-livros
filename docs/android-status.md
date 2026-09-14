@@ -309,3 +309,30 @@ aparecer no ADB sem fio; o dispositivo ficou offline após o teste anterior.
 - UI em Configurações → Atualização do app.
 - Documentação: `docs/android-updater.md`. Modelo de feed: `docs/android/latest.json`.
 - Validação no aparelho e publicação da primeira release com `latest.json` ainda pendentes.
+
+## Lote sem-IA + PT-BR + batch nativo — 14/09/2026 (não validado no aparelho)
+
+- IA e Recap removidos: `src/domain/recap.ts`, `RecapModal`, atalho R, botão do
+  leitor, card da biblioteca, chaves `recap.*`, `SparklesIcon` e CSS do recap.
+  Sem chamadas externas, sem chave em `localStorage`, sem promessa de spoiler.
+- Backup local honesto: `SyncModal` virou "Backup local · sem nuvem"
+  (`tactile-reader-backup-*.json`); `validateSyncBundle` rejeita data inválida
+  e mapas malformados; `mergeSyncBundle` defensivo contra o crash
+  `incoming.favorites is not iterable`.
+- PT-BR único: locale padrão `pt-BR`, sem seletor de idioma, rodapé
+  `EDIÇÃO LOCAL PARA ANDROID`, cache "neste aparelho".
+- Memória: preload `new Image()` de 4 páginas desligado no nativo (dimensões
+  já vêm do Rust); `PageImage` limpa `src` + `srcset` ao desmontar. Ensaio
+  longo com 100+ imagens continua pendente no Moto G34.
+- PDF: stubs Android em PT-BR explícito com "original preservado"; backend
+  real (MuPDF/NDK) continua pendente.
+- Bundle: `ReadingStatsModal`, `ReviewModal`, `SyncModal` e
+  `CollectorInfoModal` via `React.lazy` (chunks separados no build).
+- Boot em 1 IPC: novo comando `list_library_snapshot` (bookmarks + reader
+  states em 2 consultas); `hydrateMetadata` usa o snapshot com fallback ao
+  lote de 8. Teste Rust `library_snapshot_returns_all_bookmarks_and_states_in_one_call`.
+- Release: `scripts/android/configure-release-signing.mjs` (com teste)
+  substitui o python inline do workflow; CI com `cargo --locked`.
+- Verificado no host: 322 vitest, 56 Rust (1 ignorado), `tsc+vite`,
+  release-scripts, workflow e performance-contract verdes. Reteste físico
+  (memória sustentada, gestos, backup, snapshot, assinatura) pendente.

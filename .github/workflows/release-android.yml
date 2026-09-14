@@ -70,67 +70,13 @@ jobs:
           fi
           test -f src-tauri/gen/android/app/build.gradle.kts
 
-      - name: Configure release signing
+      - name: Configure release signing and versionCode
         env:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
-        run: |
-          if [ -z "$ANDROID_KEY_BASE64" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
-            echo "Missing one of ANDROID_KEY_BASE64, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD secrets."
-            echo "Follow docs/android-updater.md (Keystore) to create them, then re-run."
-            exit 1
-          fi
-          cd src-tauri/gen/android
-          {
-            echo "keyAlias=$ANDROID_KEY_ALIAS"
-            echo "password=$ANDROID_KEY_PASSWORD"
-            echo "$ANDROID_KEY_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
-            echo "storeFile=$RUNNER_TEMP/release.keystore"
-          } > keystore.properties
-          python3 - <<'EOF'
-          from pathlib import Path
-          gradle = Path("app/build.gradle.kts")
-          text = gradle.read_text()
-          # The Gradle Kotlin DSL has a `java` extension, so fully qualified
-          # java.util/java.io references do not resolve: use plain imports.
-          for import_line in ("import java.io.FileInputStream", "import java.util.Properties"):
-              if import_line not in text:
-                  text = import_line + "\n" + text
-          marker = "// android-release-signing"
-          if marker not in text:
-              signing = marker + "\nsigningConfigs {\n    create(\"release\") {\n        val keystorePropertiesFile = rootProject.file(\"keystore.properties\")\n        val keystoreProperties = Properties()\n        if (keystorePropertiesFile.exists()) {\n            keystoreProperties.load(FileInputStream(keystorePropertiesFile))\n        }\n        keyAlias = keystoreProperties[\"keyAlias\"] as String\n        keyPassword = keystoreProperties[\"password\"] as String\n        storeFile = file(keystoreProperties[\"storeFile\"] as String)\n        storePassword = keystoreProperties[\"password\"] as String\n    }\n}\n"
-              text = text.replace("buildTypes {", signing + "buildTypes {", 1)
-              text = text.replace(
-                  'getByName("release") {',
-                  'getByName("release") {\n        signingConfig = signingConfigs.getByName("release")',
-                  1,
-              )
-              gradle.write_text(text)
-              print("release signing config added")
-          else:
-              print("release signing config already present")
-          EOF
-
-      - name: Set Android versionCode
-        run: |
-          python3 - "$GITHUB_RUN_NUMBER" <<'EOF'
-          import re, sys
-          from pathlib import Path
-          run_number = sys.argv[1]
-          gradle = Path("src-tauri/gen/android/app/build.gradle.kts")
-          text = gradle.read_text()
-          updated, count = re.subn(r"versionCode\s*=\s*\d+", f"versionCode = {run_number}", text, count=1)
-          if count == 0:
-              updated = re.sub(
-                  r"(defaultConfig\s*\{)",
-                  rf"\1\n        versionCode = {run_number}",
-                  text,
-                  count=1,
-              )
-          gradle.write_text(updated)
-          print(f"versionCode set to {run_number}")
-          EOF
+          ANDROID_VERSION_CODE: ${{ github.run_number }}
+        run: node scripts/android/configure-release-signing.mjs --version-code "$ANDROID_VERSION_CODE"
 
       - name: Build signed release APK
         run: |
