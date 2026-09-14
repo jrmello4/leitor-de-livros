@@ -82,4 +82,35 @@ class TactileCoreInstrumentedTest {
         val relisted = parsePublications(TactileCore.nativeListPublications(dbDir))
         assertTrue("expected cover after ensure", relisted[0].coverSrc?.isNotBlank() == true)
     }
+
+    @Test
+    fun readerListsPagesEnsuresBytesAndRestoresProgress() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val root = File(context.cacheDir, "jni-reader-${UUID.randomUUID()}")
+        val dbDir = File(root, "lib").absolutePath
+
+        val comic = TestComic.generate(File(root, "seed"))
+        JSONObject(TactileCore.nativeImportPaths(dbDir, pathsJson(listOf(comic.absolutePath))))
+        val pub = parsePublications(TactileCore.nativeListPublications(dbDir)).single()
+
+        // Sem progresso salvo, o leitor começa da primeira página.
+        assertTrue(
+            "expected null state",
+            JSONObject(TactileCore.nativeLoadReaderState(dbDir, pub.id)).isNull("state"),
+        )
+
+        val pages = parseReaderPages(TactileCore.nativeListPages(dbDir, pub.id))
+        assertTrue("expected 2 pages, got ${pages.size}", pages.size == 2)
+
+        val ensured = JSONObject(TactileCore.nativeEnsurePage(dbDir, pub.id, pages[1].id))
+        assertFalse("ensure error: $ensured", ensured.has("error"))
+        assertTrue("expected page file", File(ensured.getString("pageSrc")).isFile)
+
+        val saved = JSONObject(TactileCore.nativeSaveReaderState(dbDir, pub.id, pages[1].id, 0.25))
+        assertFalse("save error: $saved", saved.has("error"))
+
+        val restored = parseReaderState(TactileCore.nativeLoadReaderState(dbDir, pub.id))
+        assertTrue("expected progress, got $restored", restored?.pageId == pages[1].id)
+        assertTrue("expected ratio 0.25", restored?.scrollRatio == 0.25)
+    }
 }

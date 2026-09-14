@@ -31,4 +31,40 @@ object TactileCore {
      */
     @JvmStatic
     external fun nativeEnsureCover(dir: String, publicationId: String, pageId: String): String
+
+    /**
+     * Lista as páginas de uma publicação em ordem natural:
+     * `{"pages":[{id,index,name,width,height,cachePath}]}` ou `{"error":...}`.
+     * Só metadados — os bytes de cada página visível vêm de
+     * `nativeEnsurePage`, nunca em lote na abertura.
+     */
+    @JvmStatic
+    external fun nativeListPages(dir: String, publicationId: String): String
+
+    /**
+     * Garante os bytes derivados de uma página da faixa de leitura.
+     * Retorna `{"pageSrc":"<caminho>","width":W,"height":H}` ou
+     * `{"error":...}`.
+     */
+    @JvmStatic
+    external fun nativeEnsurePage(dir: String, publicationId: String, pageId: String): String
+
+    /**
+     * Carrega o progresso `{pageId, scrollRatio}`:
+     * `{"state":null}` (nunca leu) ou `{"state":{...}}`.
+     */
+    @JvmStatic
+    external fun nativeLoadReaderState(dir: String, publicationId: String): String
+
+    /**
+     * Salva o progresso `{pageId, scrollRatio}` (proporção fixada em
+     * 0..1 no núcleo). Retorna `{"ok":true}` ou `{"error":...}`.
+     */
+    @JvmStatic
+    external fun nativeSaveReaderState(
+        dir: String,
+        publicationId: String,
+        pageId: String,
+        scrollRatio: Double,
+    ): String
 }

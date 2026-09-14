@@ -18,13 +18,16 @@ Detalhes e evidências: `docs/android-status.md`.
 
 ## P0 — virar um leitor utilizável
 
-1. **Superfície de leitura nativa com tiling** — viewer vertical que só
-   decodifica o visível; sem isso o nativo não substitui nada.
+1. **Superfície de leitura nativa com tiling** — faixa vertical funcional
+   no host em 14/09 (bytes sob demanda, HUD, folio, resume). Falta:
+   pinça/duplo-toque com zoom, restauração com offset e o ensaio longo.
 2. **Restauração de progresso** `{pageId, scrollRatio}` no leitor nativo.
-3. **Gestos**: tap central (HUD), duplo-toque 1x/2x, pinça até 5x, teclas
-   de volume, Back como escape universal.
+   (Feito no host em 14/09: salva ao rolar, retoma a página; offset
+   exato dentro da página é refinamento futuro.)
+3. **Gestos**: tap central (HUD) e Back prontos; duplo-toque 1x/2x, pinça
+   até 5x e teclas de volume pendentes.
 4. **Ensaio longo de memória** — capítulo com 100+ imagens longas; alvo
-   PSS ≤ 180 MB de forma sustentada.
+   PSS ≤ 180 MB de forma sustentada (pendente de aparelho).
 5. **Release assinada do app nativo** — pipeline nova (a do Tauri morreu
    com o shell); CI hoje só publica o APK de depuração como artefato.
 

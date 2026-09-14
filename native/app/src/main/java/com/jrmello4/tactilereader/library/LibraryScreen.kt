@@ -43,12 +43,18 @@ internal fun placeholderColor(id: String): Color {
 }
 
 @Composable
-fun LibraryScreen(viewModel: LibraryViewModel, onAddClick: () -> Unit, modifier: Modifier = Modifier) {
+fun LibraryScreen(
+    viewModel: LibraryViewModel,
+    onAddClick: () -> Unit,
+    onOpenClick: (Pub) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val state by viewModel.state.collectAsState()
     val covers by viewModel.covers.collectAsState()
     LibraryContent(
         state = state,
         onAddClick = onAddClick,
+        onOpenClick = onOpenClick,
         modifier = modifier,
         covers = covers,
         onCoverVisible = viewModel::requestCover,
@@ -61,6 +67,7 @@ fun LibraryContent(
     state: LibraryUiState,
     onAddClick: () -> Unit,
     modifier: Modifier = Modifier,
+    onOpenClick: (Pub) -> Unit = {},
     covers: Map<String, String> = emptyMap(),
     onCoverVisible: (Pub) -> Unit = {},
     coverImage: @Composable (Pub, File?, Modifier) -> Unit = { pub, file, mod ->
@@ -116,7 +123,7 @@ fun LibraryContent(
                             onCoverVisible(pub)
                         }
                     }
-                    PubCard(pub, coverFile, coverImage)
+                    PubCard(pub, coverFile, coverImage, onOpenClick)
                 }
             }
         }
@@ -164,8 +171,12 @@ private fun PubCard(
     pub: Pub,
     coverFile: File?,
     coverImage: @Composable (Pub, File?, Modifier) -> Unit,
+    onOpenClick: (Pub) -> Unit,
 ) {
-    Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF151B23))) {
+    Card(
+        onClick = { onOpenClick(pub) },
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF151B23)),
+    ) {
         Column {
             coverImage(pub, coverFile, Modifier)
             Column(Modifier.padding(10.dp)) {

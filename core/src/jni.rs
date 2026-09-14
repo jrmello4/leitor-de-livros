@@ -2,13 +2,14 @@
 //!
 //! Plain `jni`-crate functions, no codegen: the Kotlin side declares
 //! `external fun`s on `TactileCore` and this module answers the core version,
-//! library-open smoke test, listing, import and on-demand cover ensure.
-//! Failures never throw — they come back as `{"error": ...}` JSON.
+//! library-open smoke test, listing, import, on-demand cover/page ensure and
+//! reader-state (progress) load/save. Failures never throw — they come back
+//! as `{"error": ...}` JSON.
 
 use std::path::PathBuf;
 
 use jni::objects::{JClass, JString};
-use jni::sys::jstring;
+use jni::sys::{jdouble, jstring};
 use jni::JNIEnv;
 
 use crate::db::LibraryDb;
@@ -149,6 +150,160 @@ pub extern "C" fn Java_com_jrmello4_tactilereader_core_TactileCore_nativeEnsureC
     publication_id: JString,
     page_id: JString,
 ) -> jstring {
+    let result = ensure_page_json(&mut env, dir, publication_id, page_id, "coverSrc");
+    match result {
+        Ok(ok) => return_string(&mut env, ok),
+        Err(error) => return_string(&mut env, err_json(error)),
+    }
+}
+
+/// Shared page-cache ensure behind `nativeEnsureCover` and
+/// `nativeEnsurePage`: rebuilds the derived bytes of one page from the
+/// read-only original when needed and reports them under `path_key`.
+fn ensure_page_json(
+    env: &mut JNIEnv,
+    dir: JString,
+    publication_id: JString,
+    page_id: JString,
+    path_key: &str,
+) -> Result<String, String> {
+    let dir: String = env
+        .get_string(&dir)
+        .map_err(|error| error.to_string())?
+        .into();
+    let publication_id: String = env
+        .get_string(&publication_id)
+        .map_err(|error| error.to_string())?
+        .into();
+    let page_id: String = env
+        .get_string(&page_id)
+        .map_err(|error| error.to_string())?
+        .into();
+    if publication_id.is_empty() || page_id.is_empty() {
+        return Err("page does not belong to the publication".to_owned());
+    }
+    let db = LibraryDb::open(PathBuf::from(dir)).map_err(|error| error.to_string())?;
+    let page = db
+        .ensure_page_cache(&publication_id, &page_id)
+        .map_err(|error| error.to_string())?;
+    if page.cache_path.is_empty() {
+        return Err("derived page cache is missing".to_owned());
+    }
+    Ok(serde_json::json!({
+        path_key: page.cache_path,
+        "width": page.width,
+        "height": page.height,
+    })
+    .to_string())
+}
+
+/// `com.jrmello4.tactilereader.core.TactileCore.nativeListPages(dbDir, publicationId)`.
+///
+/// Returns `{"pages":[...]}` with the full core `NativePage` JSON
+/// (camelCase, natural order). Entries may carry an empty `cachePath` when
+/// no derived bytes exist yet — the reader ensures each visible page via
+/// `nativeEnsurePage` instead of rebuilding the whole chapter up front.
+#[no_mangle]
+pub extern "C" fn Java_com_jrmello4_tactilereader_core_TactileCore_nativeListPages(
+    mut env: JNIEnv,
+    _class: JClass,
+    dir: JString,
+    publication_id: JString,
+) -> jstring {
+    let result = (|| -> Result<String, String> {
+        let dir: String = env
+            .get_string(&dir)
+            .map_err(|error| error.to_string())?
+            .into();
+        let publication_id: String = env
+            .get_string(&publication_id)
+            .map_err(|error| error.to_string())?
+            .into();
+        if publication_id.is_empty() {
+            return Err("publication id is empty".to_owned());
+        }
+        let db = LibraryDb::open(PathBuf::from(dir)).map_err(|error| error.to_string())?;
+        let pages = db
+            .list_publication_pages(&publication_id)
+            .map_err(|error| error.to_string())?;
+        let array = serde_json::to_string(&pages).map_err(|error| error.to_string())?;
+        Ok(format!(r#"{{"pages":{array}}}"#))
+    })();
+    match result {
+        Ok(ok) => return_string(&mut env, ok),
+        Err(error) => return_string(&mut env, err_json(error)),
+    }
+}
+
+/// `com.jrmello4.tactilereader.core.TactileCore.nativeEnsurePage(dbDir, publicationId, pageId)`.
+///
+/// Same contract as `nativeEnsureCover` but reported under `pageSrc` for
+/// the reader strip: `{"pageSrc":"<abs path>","width":W,"height":H}`.
+#[no_mangle]
+pub extern "C" fn Java_com_jrmello4_tactilereader_core_TactileCore_nativeEnsurePage(
+    mut env: JNIEnv,
+    _class: JClass,
+    dir: JString,
+    publication_id: JString,
+    page_id: JString,
+) -> jstring {
+    let result = ensure_page_json(&mut env, dir, publication_id, page_id, "pageSrc");
+    match result {
+        Ok(ok) => return_string(&mut env, ok),
+        Err(error) => return_string(&mut env, err_json(error)),
+    }
+}
+
+/// `com.jrmello4.tactilereader.core.TactileCore.nativeLoadReaderState(dbDir, publicationId)`.
+///
+/// Returns `{"state":null}` or `{"state":{"pageId":...,"scrollRatio":...}}`
+/// so the reader restores exactly where it stopped.
+#[no_mangle]
+pub extern "C" fn Java_com_jrmello4_tactilereader_core_TactileCore_nativeLoadReaderState(
+    mut env: JNIEnv,
+    _class: JClass,
+    dir: JString,
+    publication_id: JString,
+) -> jstring {
+    let result = (|| -> Result<String, String> {
+        let dir: String = env
+            .get_string(&dir)
+            .map_err(|error| error.to_string())?
+            .into();
+        let publication_id: String = env
+            .get_string(&publication_id)
+            .map_err(|error| error.to_string())?
+            .into();
+        if publication_id.is_empty() {
+            return Err("publication id is empty".to_owned());
+        }
+        let db = LibraryDb::open(PathBuf::from(dir)).map_err(|error| error.to_string())?;
+        let state = db
+            .load_reader_state(&publication_id)
+            .map_err(|error| error.to_string())?;
+        let json = serde_json::to_string(&state).map_err(|error| error.to_string())?;
+        Ok(format!(r#"{{"state":{json}}}"#))
+    })();
+    match result {
+        Ok(ok) => return_string(&mut env, ok),
+        Err(error) => return_string(&mut env, err_json(error)),
+    }
+}
+
+/// `com.jrmello4.tactilereader.core.TactileCore.nativeSaveReaderState(dbDir, publicationId, pageId, scrollRatio)`.
+///
+/// Persists `{pageId, scrollRatio}` (ratio clamped to 0..=1; NaN becomes 0).
+/// Zoom stays at the reader default (`page`, 1x, no pan) — pinch zoom is a
+/// later slice. Returns `{"ok":true}`.
+#[no_mangle]
+pub extern "C" fn Java_com_jrmello4_tactilereader_core_TactileCore_nativeSaveReaderState(
+    mut env: JNIEnv,
+    _class: JClass,
+    dir: JString,
+    publication_id: JString,
+    page_id: JString,
+    scroll_ratio: jdouble,
+) -> jstring {
     let result = (|| -> Result<String, String> {
         let dir: String = env
             .get_string(&dir)
@@ -163,21 +318,24 @@ pub extern "C" fn Java_com_jrmello4_tactilereader_core_TactileCore_nativeEnsureC
             .map_err(|error| error.to_string())?
             .into();
         if publication_id.is_empty() || page_id.is_empty() {
-            return Err("cover page does not belong to the publication".to_owned());
+            return Err("publication id and page id must not be empty".to_owned());
         }
+        let ratio = (scroll_ratio as f64).clamp(0.0, 1.0);
+        let ratio = if ratio.is_nan() { 0.0 } else { ratio };
         let db = LibraryDb::open(PathBuf::from(dir)).map_err(|error| error.to_string())?;
-        let page = db
-            .ensure_page_cache(&publication_id, &page_id)
-            .map_err(|error| error.to_string())?;
-        if page.cache_path.is_empty() {
-            return Err("derived page cache is missing".to_owned());
-        }
-        Ok(serde_json::json!({
-            "coverSrc": page.cache_path,
-            "width": page.width,
-            "height": page.height,
-        })
-        .to_string())
+        db.save_reader_state(
+            &publication_id,
+            &crate::models::NativeReaderState {
+                zoom_mode: "page".to_owned(),
+                zoom_scale: 1.0,
+                pan_x: 0.0,
+                pan_y: 0.0,
+                page_id: Some(page_id),
+                scroll_ratio: ratio,
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(r#"{"ok":true}"#.to_owned())
     })();
     match result {
         Ok(ok) => return_string(&mut env, ok),

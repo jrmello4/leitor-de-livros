@@ -12,8 +12,12 @@ O shell Tauri/WebView foi aposentado e removido (14/09/2026). Este módulo
 - `app/.../scaffold/MainActivity.kt` — hospeda a estante Compose da fase 3.
 - `app/.../library/` — `LibraryViewModel` (IO fora da thread principal,
   auto-seed com HQ de demonstração gerada em código), `LibraryScreen`
-  (grade de cards com progresso) e `TestComic` (CBZ mínimo de 2 páginas,
-  só para desenvolvimento/teste).
+  (grade de cards com progresso, toque abre o leitor) e `TestComic` (CBZ
+  mínimo de 2 páginas, só para desenvolvimento/teste).
+- `app/.../reader/` — `ReaderViewModel` (páginas + progresso via JNI),
+  `ReaderScreen` (faixa vertical lazy, bytes sob demanda com Coil 1080px,
+  HUD no toque, folio, retoma `{pageId, scrollRatio}` e salva o progresso
+  ao rolar). `MainActivity` alterna estante/leitor por `openPubId`.
 - `TactileCoreInstrumentedTest` — fim-a-fim no aparelho: versão, abrir
   banco e roundtrip importar→listar CBZ gerado.
 - `buildCoreSo*` no `app/build.gradle.kts` — compila o `.so` release

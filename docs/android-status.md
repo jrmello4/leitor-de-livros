@@ -438,3 +438,23 @@ aparecer no ADB sem fio; o dispositivo ficou offline após o teste anterior.
   upload do APK de depuração como artefato. Release assinada do nativo
   é trabalho futuro.
 - Próximo: superfície de leitura nativa com tiling (frente 3).
+
+## Faixa de leitura nativa funcional — 14/09/2026 (host, aparelho pendente)
+
+- JNI novo: `nativeListPages` (só metadados em ordem natural),
+  `nativeEnsurePage` (`pageSrc` sob demanda, helper compartilhado com a
+  capa), `nativeLoadReaderState` / `nativeSaveReaderState`
+  (`{pageId, scrollRatio}`, proporção fixada em 0..1, zoom padrão `page`).
+- `ReaderScreen` (Compose): faixa vertical lazy com altura reservada pela
+  proporção dos metadados, bytes garantidos por página visível (Coil
+  1080px, teto de 400 em memória), toque alterna o HUD, folio
+  "página X de N", Back volta à estante, retoma a página salva e persiste
+  o progresso ao rolar. Estante abre o leitor no toque (`openPubId`).
+- Símbolos provados no `.so` ARM64 via `llvm-nm` (9 entradas `TactileCore`).
+- Verificado no host: 53 Rust, 33 JVM (12 `ReaderJsonTest` + 6
+  `ReaderContentTest` novos), `assembleDebug` + `assembleDebugAndroidTest`
+  verdes. Instrumentado
+  (`readerListsPagesEnsuresBytesAndRestoresProgress`) e reteste no Moto
+  G34 pendentes.
+- Fica para depois: pinça/duplo-toque com zoom, restauração com offset
+  dentro da página, estante por séries, import de pasta, release assinada.
