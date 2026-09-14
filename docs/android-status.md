@@ -394,6 +394,9 @@ aparecer no ADB sem fio; o dispositivo ficou offline após o teste anterior.
   bloqueio ativa; sem crash — `libtactile_core.so` carrega `ok` no logcat).
 - Próximo: capas lazy (ensure da capa + Coil com limite) e depois a
   superfície de leitura com tiling.
+- CI (`native-app`): JDK 21 + SDK/NDK + Rust targets, `assembleDebug` e
+  `assembleDebugAndroidTest` do scaffold a cada push/PR (`verify-workflow`
+  exige o job). Teste instrumentado segue só com aparelho.
 
 ## Orçamento de bundle no CI — 14/09/2026 (host)
 - `scripts/performance/bundle-budget.mjs` trava: entry ≤380KB, JS total

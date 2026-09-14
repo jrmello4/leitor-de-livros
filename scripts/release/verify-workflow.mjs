@@ -12,6 +12,12 @@ const requiredJobs = ['web', 'native', 'visual'];
 for (const jobName of requiredJobs) {
   assert.ok(jobs[jobName], 'Missing CI job: ' + jobName);
 }
+assert.ok(jobs['native-app'], 'Missing CI job: native-app (native scaffold assemble).');
+assert.match(
+  JSON.stringify(jobs['native-app']),
+  /assembleDebug/,
+  'Native-app CI job does not assemble the native scaffold.',
+);
 
 const visualText = JSON.stringify(jobs.visual);
 const webText = JSON.stringify(jobs.web);
