@@ -338,8 +338,18 @@ aparecer no ADB sem fio; o dispositivo ficou offline após o teste anterior.
   (memória sustentada, gestos, backup, snapshot, assinatura) pendente.
 
 ## Orçamento de bundle no CI — 14/09/2026 (host)
-
 - `scripts/performance/bundle-budget.mjs` trava: entry ≤380KB, JS total
   ≤560KB, chunk lazy ≤130KB, CSS ≤100KB. Medido: 350KB / 498KB / 110KB / 85KB.
 - Etapa `Enforce bundle budget` no CI após o build; `verify-workflow.mjs`
   exige a etapa. Derrubar uma trava exige decisão explícita.
+
+## Fatiamento do App.tsx — 14/09/2026 (host)
+
+- `App.tsx` 1718→539 linhas sem mudar comportamento: `useLibraryMetadata`
+  (bookmarks/readerStates/snapshot), `useReadingProfiles` (perfis + backup),
+  `useNativeLibraryBoot` (boot com retry + progresso), `usePublicationActions`
+  (biblioteca, capas, cache, remoção), `useReadingSession` (navegação,
+  persistência, abertura) e `useLibraryImport` (browser/SAF + retry).
+- Coordenador de seleção de página segue único, no App, compartilhado por
+  sessão (navegação) e ações (remoção cancela a seleção em voo).
+- Verificado no host: `tsc+vite`, 322 vitest, budget (entry 352KB) verdes.
