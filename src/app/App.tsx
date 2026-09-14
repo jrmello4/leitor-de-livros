@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { addPluginListener, type PluginListener } from '@tauri-apps/api/core';
 import { createDemoPublication } from '../data/demo';
 import { canRunActionWhileSettingsOpen, InputMap } from '../domain/input';
@@ -71,10 +71,13 @@ import {
 import { LibraryView, type ImportProgress } from './LibraryView';
 import { LiveAnnouncement } from './LiveAnnouncement';
 import { ProfilePanel } from './ProfilePanel';
-import { ReaderView } from './ReaderView';
 import { SmokeHarness } from './SmokeHarness';
 import { isSmokeMode } from '../release/testModes';
 import { resolveNativeImportRequest, type NativeImportRequest } from './nativeImportFlow';
+
+// O leitor (Webtoon + page-turn + renderers) só carrega ao abrir uma
+// publicação. A biblioteca — tela inicial no Android — não paga esse custo.
+const ReaderView = lazy(() => import('./ReaderView').then((module) => ({ default: module.ReaderView })));
 
 /**
  * Fills in the page list of one publication. A native listing reports counts
@@ -1573,6 +1576,7 @@ export function App() {
 
       <div className="app-content" inert={showProfile} aria-hidden={showProfile || undefined}>
         {activePublication ? (
+          <Suspense fallback={<p className="reader-loading" role="status">{t('reader.preparingPage')}</p>}>
           <ReaderView
             publication={activePublication}
             profile={profile}
@@ -1613,6 +1617,7 @@ export function App() {
             onNextVolume={nextPublication ? () => void openPublication(nextPublication) : undefined}
             nextVolumeTitle={nextPublication?.title}
           />
+          </Suspense>
         ) : (
           <LibraryView
             publications={library}

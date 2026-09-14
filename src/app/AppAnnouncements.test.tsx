@@ -61,6 +61,18 @@ describe('application live-region wiring', () => {
       await flushReact();
     });
 
+    // ReaderView chega em chunk lazy (Suspense): aguarda a fronteira
+    // assíncrona antes de exigir o leitor montado.
+    await act(async () => {
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        await flushReact();
+        if (host.querySelector('[data-testid="reader-back"]')) {
+          break;
+        }
+      }
+    });
+    expect(host.querySelector('[data-testid="reader-back"]')).not.toBeNull();
+
     const rendererStatus = host.querySelector('[data-testid="renderer-status-announcement"]');
     const rendererDiagnostic = host.querySelector('[data-testid="renderer-diagnostic"]');
     expect(rendererStatus?.getAttribute('role')).toBe('status');
