@@ -56,4 +56,52 @@ class LibraryContentTest {
         }
         compose.onNodeWithText("Lendo biblioteca…").assertIsDisplayed()
     }
+
+    @Test
+    fun missingCoverRequestsEnsureAndKeepsPlaceholder() {
+        val pub = Pub("p1", "nova-hq", "cbz", 2, 0.0, false, "p1-page-0", null, null)
+        var requested: String? = null
+        compose.setContent {
+            MaterialTheme {
+                LibraryContent(
+                    LibraryUiState(loading = false, pubs = listOf(pub)),
+                    onAddClick = {},
+                    covers = emptyMap(),
+                    onCoverVisible = { requested = it.id },
+                    coverImage = { _, file, _ ->
+                        // Slot fake: prova que sem arquivo o placeholder segue visível.
+                        androidx.compose.material3.Text(if (file == null) "sem-capa" else "com-capa")
+                    },
+                )
+            }
+        }
+        compose.onNodeWithText("sem-capa").assertIsDisplayed()
+        assertEquals("p1", requested)
+    }
+
+    @Test
+    fun presentCoverRendersImageSlotWithoutRequestingEnsure() {
+        val pub = Pub("p1", "demo-hq", "cbz", 2, 0.0, false, "p1-page-0", "/cache/cover.png", null)
+        var requested: String? = null
+        compose.setContent {
+            MaterialTheme {
+                LibraryContent(
+                    LibraryUiState(loading = false, pubs = listOf(pub)),
+                    onAddClick = {},
+                    covers = mapOf("p1" to "/cache/cover.png"),
+                    onCoverVisible = { requested = it.id },
+                    coverImage = { _, file, _ ->
+                        androidx.compose.material3.Text(if (file == null) "sem-capa" else "com-capa")
+                    },
+                )
+            }
+        }
+        compose.onNodeWithText("com-capa").assertIsDisplayed()
+        assertEquals(null, requested)
+    }
+
+    @Test
+    fun placeholderColorIsStable() {
+        assertEquals(placeholderColor("demo-hq"), placeholderColor("demo-hq"))
+    }
 }

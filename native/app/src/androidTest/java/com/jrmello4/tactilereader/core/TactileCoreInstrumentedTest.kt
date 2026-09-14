@@ -12,8 +12,8 @@ import java.util.UUID
 import org.json.JSONObject
 
 /**
- * Prova fim-a-fim da fase 2: o .so do `tactile-core` carrega no aparelho,
- * o SQLite abre e a contagem de publicações volta pelo JNI.
+ * Prova fim-a-fim do núcleo: o .so do `tactile-core` carrega no aparelho,
+ * o SQLite abre, importar→listar funciona e a capa é garantida sob demanda.
  */
 @RunWith(AndroidJUnit4::class)
 class TactileCoreInstrumentedTest {
@@ -56,5 +56,30 @@ class TactileCoreInstrumentedTest {
         assertTrue("expected one listed pub", listed.size == 1)
         assertTrue("title mismatch", listed[0].title.isNotBlank())
         assertTrue("expected 2 pages listed", listed[0].pageCount == 2)
+    }
+
+    @Test
+    fun ensureCoverRebuildsFirstPageOnDemand() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val root = File(context.cacheDir, "jni-cover-${UUID.randomUUID()}")
+        val dbDir = File(root, "lib").absolutePath
+
+        val comic = TestComic.generate(File(root, "seed"))
+        JSONObject(TactileCore.nativeImportPaths(dbDir, pathsJson(listOf(comic.absolutePath))))
+
+        // Import novo indexa sem bytes derivados: a listagem chega sem capa.
+        val listed = parsePublications(TactileCore.nativeListPublications(dbDir))
+        assertTrue("expected one pub", listed.size == 1)
+        val pub = listed[0]
+        assertTrue("expected cover page id", pub.coverPageId.isNotBlank())
+
+        val ensured = JSONObject(TactileCore.nativeEnsureCover(dbDir, pub.id, pub.coverPageId))
+        assertFalse("ensure error: $ensured", ensured.has("error"))
+        val coverSrc = ensured.getString("coverSrc")
+        assertTrue("expected cover file, got: $ensured", File(coverSrc).isFile)
+
+        // Após garantir, a listagem volta a cruzar a capa materializada.
+        val relisted = parsePublications(TactileCore.nativeListPublications(dbDir))
+        assertTrue("expected cover after ensure", relisted[0].coverSrc?.isNotBlank() == true)
     }
 }

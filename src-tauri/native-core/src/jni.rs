@@ -1,9 +1,9 @@
 //! Minimal JNI surface for the native Android app.
 //!
-//! Plain `jni`-crate functions, no codegen: the Kotlin side declares two
-//! `external fun`s on `TactileCore` and this module answers the core version
-//! plus a library-open smoke test (SQLite open + publication count). Failures
-//! never throw — they come back as `{"error": ...}` JSON.
+//! Plain `jni`-crate functions, no codegen: the Kotlin side declares
+//! `external fun`s on `TactileCore` and this module answers the core version,
+//! library-open smoke test, listing, import and on-demand cover ensure.
+//! Failures never throw — they come back as `{"error": ...}` JSON.
 
 use std::path::PathBuf;
 
@@ -126,6 +126,58 @@ pub extern "C" fn Java_com_jrmello4_tactilereader_core_TactileCore_nativeImportP
         let outcome =
             crate::importer::import_paths(&db, &paths).map_err(|error| error.to_string())?;
         serde_json::to_string(&outcome).map_err(|error| error.to_string())
+    })();
+    match result {
+        Ok(ok) => return_string(&mut env, ok),
+        Err(error) => return_string(&mut env, err_json(error)),
+    }
+}
+
+/// `com.jrmello4.tactilereader.core.TactileCore.nativeEnsureCover(dbDir, publicationId, pageId)`.
+///
+/// Ensures the derived bytes of one cover page exist (rebuilding from the
+/// read-only original when needed) and returns
+/// `{"coverSrc":"<abs path>","width":W,"height":H}`. The listing reports only
+/// identifiers and whatever cache path already exists; the shelf calls this
+/// lazily for visible cards so a 124-publication library does not rebuild
+/// every cover at boot. Failures come back as `{"error": ...}`.
+#[no_mangle]
+pub extern "C" fn Java_com_jrmello4_tactilereader_core_TactileCore_nativeEnsureCover(
+    mut env: JNIEnv,
+    _class: JClass,
+    dir: JString,
+    publication_id: JString,
+    page_id: JString,
+) -> jstring {
+    let result = (|| -> Result<String, String> {
+        let dir: String = env
+            .get_string(&dir)
+            .map_err(|error| error.to_string())?
+            .into();
+        let publication_id: String = env
+            .get_string(&publication_id)
+            .map_err(|error| error.to_string())?
+            .into();
+        let page_id: String = env
+            .get_string(&page_id)
+            .map_err(|error| error.to_string())?
+            .into();
+        if publication_id.is_empty() || page_id.is_empty() {
+            return Err("cover page does not belong to the publication".to_owned());
+        }
+        let db = LibraryDb::open(PathBuf::from(dir)).map_err(|error| error.to_string())?;
+        let page = db
+            .ensure_page_cache(&publication_id, &page_id)
+            .map_err(|error| error.to_string())?;
+        if page.cache_path.is_empty() {
+            return Err("derived page cache is missing".to_owned());
+        }
+        Ok(serde_json::json!({
+            "coverSrc": page.cache_path,
+            "width": page.width,
+            "height": page.height,
+        })
+        .to_string())
     })();
     match result {
         Ok(ok) => return_string(&mut env, ok),

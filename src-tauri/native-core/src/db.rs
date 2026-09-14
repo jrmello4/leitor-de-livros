@@ -1458,7 +1458,10 @@ impl LibraryDb {
                 None
             },
             page_count: pages.len(),
-            cover_src: pages.first().map(|page| page.cache_path.clone()),
+            cover_src: pages
+                .first()
+                .map(|page| page.cache_path.clone())
+                .filter(|path| !path.is_empty()),
             current_page_id: pages
                 .get(current_page.min(pages.len().saturating_sub(1)))
                 .map(|page| page.id.clone()),
@@ -1499,7 +1502,8 @@ impl LibraryDb {
                 [&row.id],
                 |page| page.get::<_, String>(0),
             )
-            .optional()?;
+            .optional()?
+            .filter(|path| !path.is_empty());
 
         let current_page_id = connection
             .query_row(
@@ -4179,6 +4183,67 @@ mod listing {
             vec!["page-0.png", "page-1.png", "page-2.png"]
         );
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fresh_cbz_listing_has_no_cover_until_ensured() {
+        use image::{DynamicImage, ImageFormat};
+        use std::io::{Cursor, Write};
+        use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
+
+        let root = temporary_root("listing-cover-lazy");
+        std::fs::create_dir_all(&root).expect("test directory");
+        let mut encoded = Cursor::new(Vec::new());
+        DynamicImage::new_rgb8(4, 6)
+            .write_to(&mut encoded, ImageFormat::Png)
+            .expect("png");
+        let image_bytes = encoded.into_inner();
+        let archive_path = root.join("cover.cbz");
+        {
+            let file = std::fs::File::create(&archive_path).expect("archive file");
+            let mut archive = ZipWriter::new(file);
+            let options =
+                SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+            archive.start_file("001.png", options).expect("cover entry");
+            archive.write_all(&image_bytes).expect("cover bytes");
+            archive.finish().expect("finish archive");
+        }
+
+        let database = LibraryDb::open(root.join("app")).expect("database");
+        let imported = crate::importer::import_paths(
+            &database,
+            &[archive_path.to_string_lossy().into_owned()],
+        )
+        .expect("import")
+        .publications;
+        assert_eq!(imported.len(), 1);
+
+        // Indexing validates the archive but keeps no derived bytes, so the
+        // listing must report no cover until the shelf ensures it on demand.
+        let listed = database.list_publications().expect("list");
+        assert_eq!(listed.len(), 1);
+        assert!(
+            listed[0].cover_src.is_none(),
+            "fresh CBZ listing must not claim a cover file"
+        );
+
+        let ensured = database
+            .ensure_page_cache(&listed[0].id, &listed[0].cover_page_id)
+            .expect("ensure cover");
+        assert!(
+            std::path::Path::new(&ensured.cache_path).is_file(),
+            "ensured cover must exist on disk"
+        );
+
+        let relisted = database.list_publications().expect("relist");
+        let cover = relisted[0]
+            .cover_src
+            .as_deref()
+            .expect("cover after ensure");
+        assert!(std::path::Path::new(cover).is_file());
+
+        drop(database);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

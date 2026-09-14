@@ -22,4 +22,13 @@ object TactileCore {
 
     @JvmStatic
     external fun nativeImportPaths(dir: String, pathsJson: String): String
+
+    /**
+     * Garante os bytes derivados de uma capa (reconstrói do original
+     * somente-leitura quando preciso). Retorna
+     * `{"coverSrc":"<caminho>","width":W,"height":H}` ou `{"error":...}`.
+     * Chamado sob demanda para os cards visíveis — nunca em lote no boot.
+     */
+    @JvmStatic
+    external fun nativeEnsureCover(dir: String, publicationId: String, pageId: String): String
 }
