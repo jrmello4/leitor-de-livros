@@ -98,7 +98,7 @@ describe('ProfilePanel focus management', () => {
     expect(host.textContent).toContain('Original files are never removed');
   });
 
-  it('explains when cache controls require the desktop app', () => {
+  it('explains when cache controls are unavailable on this device', () => {
     act(() => {
       root.render(
         <ProfilePanel
@@ -114,7 +114,7 @@ describe('ProfilePanel focus management', () => {
       );
     });
 
-    expect(host.textContent).toContain('Cache controls are available in the desktop app.');
+    expect(host.textContent).toContain('Cache controls are available on this device.');
     expect(host.querySelector<HTMLSelectElement>('#cache-limit')?.disabled).toBe(true);
     expect(host.querySelector<HTMLButtonElement>('[aria-label="Clear derived cache"]')?.disabled).toBe(true);
   });
@@ -154,7 +154,7 @@ describe('ProfilePanel focus management', () => {
     expect(host.textContent).toContain('Previewing unsaved changes');
   });
 
-  it('renders interface language selector and allows changing language', () => {
+  it('renders interface language as PT-BR only', () => {
     act(() => {
       root.render(
         <ProfilePanel
@@ -169,18 +169,7 @@ describe('ProfilePanel focus management', () => {
       );
     });
 
-    const langSelect = host.querySelector<HTMLSelectElement>('#interface-language');
-    expect(langSelect).not.toBeNull();
-    expect(langSelect?.textContent).toContain('English');
-    expect(langSelect?.textContent).toContain('Português (Brasil)');
-
-    act(() => {
-      if (langSelect) {
-        langSelect.value = 'pt-BR';
-        langSelect.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-    });
-
-    expect(langSelect?.value).toBe('pt-BR');
+    expect(host.querySelector('#interface-language')).toBeNull();
+    expect(host.textContent).toContain('Português (Brasil)');
   });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent, RefObject, WheelEvent } from 'react';
 import { addPluginListener, type PluginListener } from '@tauri-apps/api/core';
 import { t } from '../i18n/catalog';
@@ -14,7 +14,6 @@ import { PageTurnSurface } from '../rendering/pageTurn/PageTurnSurface';
 import { rendererStatusMessage } from '../rendering/telemetry';
 import { evaluateAchievements, isCurrentHourNight, type Achievement } from '../domain/achievements';
 import { loadAchievementsMap, logReadingSessionActivity, saveAchievementsMap } from '../services/storage';
-import { RecapModal } from './RecapModal';
 import { AchievementToast } from './AchievementToast';
 import { AdaptiveFlowOverlay } from './AdaptiveFlowOverlay';
 import { LiveAnnouncement } from './LiveAnnouncement';
@@ -22,8 +21,9 @@ import { PageNavigator } from './PageNavigator';
 import { usePageTurn } from './usePageTurn';
 import { WebtoonReader } from './WebtoonReader';
 import { ZoomControls } from './ZoomControls';
-import { CollectorInfoModal } from './CollectorInfoModal';
-import { BookOpenIcon, BookmarkFilledIcon, BookmarkIcon, CloseIcon, EyeIcon, EyeOffIcon, FullscreenIcon, InfoIcon, PinIcon, SettingsIcon, SlidersIcon, SparklesIcon } from './Icons';
+
+const CollectorInfoModal = lazy(() => import('./CollectorInfoModal').then((m) => ({ default: m.CollectorInfoModal })));
+import { BookOpenIcon, BookmarkFilledIcon, BookmarkIcon, CloseIcon, EyeIcon, EyeOffIcon, FullscreenIcon, InfoIcon, PinIcon, SettingsIcon, SlidersIcon } from './Icons';
 
 interface ReaderViewProps {
   publication: Publication;
@@ -181,7 +181,6 @@ export function ReaderView({
   const [chromeHidden, setChromeHidden] = useState(false);
   const [zoomMenuOpen, setZoomMenuOpen] = useState(false);
   const [collectorInfoOpen, setCollectorInfoOpen] = useState(false);
-  const [recapModalOpen, setRecapModalOpen] = useState(false);
   const [unlockedAchievementToast, setUnlockedAchievementToast] = useState<Achievement | null>(null);
   const [hudPinned, setHudPinned] = useState(false);
   // First entry must expose the reader controls; mobile can dismiss them after
@@ -209,7 +208,6 @@ export function ReaderView({
     chromeHidden,
     collectorInfoOpen,
     navigatorVisible,
-    recapModalOpen,
     settingsOpen,
     zoomMenuOpen,
     onBack,
@@ -219,7 +217,6 @@ export function ReaderView({
     chromeHidden,
     collectorInfoOpen,
     navigatorVisible,
-    recapModalOpen,
     settingsOpen,
     zoomMenuOpen,
     onBack,
@@ -251,28 +248,28 @@ export function ReaderView({
 
   const isZoomed = localReaderState.zoomMode === 'width'
     || (localReaderState.zoomMode === 'manual' && clampZoomScale(localReaderState.zoomScale) > 1.05);
-  const isHudShowing = !chromeHidden && (hudVisible || hudPinned || zoomMenuOpen || navigatorVisible || collectorInfoOpen || recapModalOpen || isZoomed);
+  const isHudShowing = !chromeHidden && (hudVisible || hudPinned || zoomMenuOpen || navigatorVisible || collectorInfoOpen || isZoomed);
 
   const showHudTemporarily = useCallback((durationMs = 3000) => {
     setHudVisible(true);
     if (hudTimeoutRef.current) {
       clearTimeout(hudTimeoutRef.current);
     }
-    if (!hudPinned && !zoomMenuOpen && !navigatorVisible && !collectorInfoOpen && !recapModalOpen) {
+    if (!hudPinned && !zoomMenuOpen && !navigatorVisible && !collectorInfoOpen) {
       hudTimeoutRef.current = setTimeout(() => {
         setHudVisible(false);
       }, durationMs);
     }
-  }, [hudPinned, zoomMenuOpen, navigatorVisible, collectorInfoOpen, recapModalOpen]);
+  }, [hudPinned, zoomMenuOpen, navigatorVisible, collectorInfoOpen]);
 
   useEffect(() => {
-    if (hudPinned || zoomMenuOpen || navigatorVisible || collectorInfoOpen || recapModalOpen) {
+    if (hudPinned || zoomMenuOpen || navigatorVisible || collectorInfoOpen) {
       setHudVisible(true);
       if (hudTimeoutRef.current) {
         clearTimeout(hudTimeoutRef.current);
       }
     }
-  }, [hudPinned, zoomMenuOpen, navigatorVisible, collectorInfoOpen, recapModalOpen]);
+  }, [hudPinned, zoomMenuOpen, navigatorVisible, collectorInfoOpen]);
 
   const handleImageDimensions = (pageId: string, width: number, height: number) => {
     setPageDimensions((current) => {
@@ -328,18 +325,26 @@ export function ReaderView({
   const currentBookmarked = Boolean(currentPage && bookmarks.some((bookmark) => bookmark.pageId === currentPage.id));
 
   useEffect(() => {
+    // No Android (WebView), o bitmap decodificado custa PSS. As dimensões já
+    // vêm do núcleo nativo; decodificar 4 páginas extras com `new Image()`
+    // aqui duplicava o pico de memória do Webtoon (janela visível±1).
+    if (nativeRuntime) {
+      return;
+    }
     preloadPages.forEach((page) => {
       if (!pageDimensions[page.id] && typeof Image !== 'undefined') {
         const img = new Image();
+        img.decoding = 'async';
         img.src = page.src;
         img.onload = () => {
           if (img.naturalWidth > 0 && img.naturalHeight > 0) {
             handleImageDimensions(page.id, img.naturalWidth, img.naturalHeight);
           }
+          img.removeAttribute('src');
         };
       }
     });
-  }, [preloadPages, pageDimensions]);
+  }, [preloadPages, pageDimensions, nativeRuntime]);
 
   const flushReaderStateSave = useCallback(() => {
     if (readerStateSaveTimerRef.current) {
@@ -486,9 +491,6 @@ export function ReaderView({
       if ((event.key === 'i' || event.key === 'I')) {
         setCollectorInfoOpen((current) => !current);
       }
-      if ((event.key === 'r' || event.key === 'R')) {
-        setRecapModalOpen((current) => !current);
-      }
       if ((event.key === 'v' || event.key === 'V')) {
         setZoomMenuOpen((current) => !current);
         setHudVisible(true);
@@ -499,8 +501,6 @@ export function ReaderView({
       if (event.key === 'Escape') {
         if (collectorInfoOpen) {
           setCollectorInfoOpen(false);
-        } else if (recapModalOpen) {
-          setRecapModalOpen(false);
         } else if (zoomMenuOpen) {
           setZoomMenuOpen(false);
         } else {
@@ -519,7 +519,7 @@ export function ReaderView({
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [collectorInfoOpen, recapModalOpen, zoomMenuOpen]);
+  }, [collectorInfoOpen, zoomMenuOpen]);
 
   // Android's system Back must always provide an escape route. The event is
   // emitted by some WebView shells instead of arriving as a keyboard Escape;
@@ -545,8 +545,6 @@ export function ReaderView({
         state.onCloseNavigator();
       } else if (state.collectorInfoOpen) {
         setCollectorInfoOpen(false);
-      } else if (state.recapModalOpen) {
-        setRecapModalOpen(false);
       } else if (state.zoomMenuOpen) {
         setZoomMenuOpen(false);
       } else if (state.chromeHidden) {
@@ -1173,18 +1171,6 @@ export function ReaderView({
             <span className="reader-tool-label">{t('reader.pages')}</span>
           </button>
           <button
-            className={`reader-tool reader-tool--mobile-optional ${recapModalOpen ? 'reader-tool--active' : ''}`}
-            type="button"
-            onClick={() => setRecapModalOpen((current) => !current)}
-            aria-pressed={recapModalOpen}
-            aria-label={t('recap.title')}
-            title={`${t('recap.title')} (R)`}
-            data-reader-control
-          >
-            <SparklesIcon />
-            <span className="reader-tool-label">Recap</span>
-          </button>
-          <button
             className={`reader-tool reader-tool--mobile-optional ${collectorInfoOpen ? 'reader-tool--active' : ''}`}
             type="button"
             onClick={() => setCollectorInfoOpen((current) => !current)}
@@ -1269,18 +1255,12 @@ export function ReaderView({
       )}
 
       {collectorInfoOpen && (
-        <CollectorInfoModal
-          publication={publication}
-          onClose={() => setCollectorInfoOpen(false)}
-        />
-      )}
-
-      {recapModalOpen && (
-        <RecapModal
-          publication={publication}
-          currentPageIndex={publication.currentPage}
-          onClose={() => setRecapModalOpen(false)}
-        />
+        <Suspense fallback={null}>
+          <CollectorInfoModal
+            publication={publication}
+            onClose={() => setCollectorInfoOpen(false)}
+          />
+        </Suspense>
       )}
 
       <AchievementToast

@@ -41,10 +41,25 @@ export function validateSyncBundle(value: unknown): value is SyncBundle {
   if (value.version !== 1) {
     return false;
   }
-  if (typeof value.exportedAt !== 'string') {
+  if (typeof value.exportedAt !== 'string' || Number.isNaN(Date.parse(value.exportedAt))) {
     return false;
   }
   if (!isRecord(value.stats)) {
+    return false;
+  }
+  if (value.favorites !== undefined && !Array.isArray(value.favorites)) {
+    return false;
+  }
+  if (value.bookmarks !== undefined && !isRecord(value.bookmarks)) {
+    return false;
+  }
+  if (value.progress !== undefined && !isRecord(value.progress)) {
+    return false;
+  }
+  if (value.reviews !== undefined && !isRecord(value.reviews)) {
+    return false;
+  }
+  if (value.achievements !== undefined && !isRecord(value.achievements)) {
     return false;
   }
   return true;
@@ -95,23 +110,31 @@ export function mergeSyncBundle(local: SyncBundle, incoming: SyncBundle): SyncBu
     }
   }
 
-  // Merge Favorites
-  const mergedFavorites = Array.from(new Set([...local.favorites, ...incoming.favorites]));
+  // Merge Favorites (defensive: ignore malformed arrays)
+  const localFavorites = Array.isArray(local.favorites) ? local.favorites : [];
+  const incomingFavorites = Array.isArray(incoming.favorites) ? incoming.favorites : [];
+  const mergedFavorites = Array.from(new Set([...localFavorites, ...incomingFavorites]));
 
-  // Merge Bookmarks
-  const mergedBookmarks: Record<string, Bookmark[]> = { ...local.bookmarks };
-  for (const [pubId, inMarks] of Object.entries(incoming.bookmarks || {})) {
+  // Merge Bookmarks (defensive: ignore malformed maps)
+  const localBookmarks = isRecord(local.bookmarks) ? (local.bookmarks as Record<string, Bookmark[]>) : {};
+  const incomingBookmarks = isRecord(incoming.bookmarks) ? (incoming.bookmarks as Record<string, Bookmark[]>) : {};
+  const mergedBookmarks: Record<string, Bookmark[]> = { ...localBookmarks };
+  for (const [pubId, inMarks] of Object.entries(incomingBookmarks)) {
+    if (!Array.isArray(inMarks)) continue;
     const existing = mergedBookmarks[pubId] || [];
-    const markMap = new Map(existing.map((b) => [b.pageId, b]));
+    const markMap = new Map((Array.isArray(existing) ? existing : []).map((b) => [b.pageId, b]));
     for (const b of inMarks) {
-      markMap.set(b.pageId, b);
+      if (b && typeof b.pageId === 'string') markMap.set(b.pageId, b);
     }
     mergedBookmarks[pubId] = Array.from(markMap.values());
   }
 
-  // Merge Progress (take max page index)
-  const mergedProgress: Record<string, number> = { ...local.progress };
-  for (const [pubId, inProg] of Object.entries(incoming.progress || {})) {
+  // Merge Progress (take max page index, defensive)
+  const localProgress = isRecord(local.progress) ? (local.progress as Record<string, number>) : {};
+  const incomingProgress = isRecord(incoming.progress) ? (incoming.progress as Record<string, number>) : {};
+  const mergedProgress: Record<string, number> = { ...localProgress };
+  for (const [pubId, inProg] of Object.entries(incomingProgress)) {
+    if (typeof inProg !== 'number' || !Number.isFinite(inProg)) continue;
     mergedProgress[pubId] = Math.max(mergedProgress[pubId] || 0, inProg);
   }
 

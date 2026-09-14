@@ -156,7 +156,7 @@ const ENGLISH_CATALOG: MessageCatalog = {
   'library.emptyTitle': 'No publication matches that search.',
   'library.emptyNative': 'Clear the search or use Import publication to choose a supported file.',
   'library.emptyBrowser': 'Clear the search or drop a supported image set/CBZ onto the shelf.',
-  'library.footerEdition': 'TACTILE READER / LOCAL-FIRST WINDOWS EDITION',
+  'library.footerEdition': 'TACTILE READER / LOCAL-FIRST ANDROID EDITION',
   'library.footerFeatures': '60 FPS TARGET · LTR / RTL · REDUCED MOTION',
   'library.localData': 'LOCAL READER DATA',
   'library.removeQuestion': ({ title }) => `Remove ${title}?`,
@@ -303,7 +303,7 @@ const ENGLISH_CATALOG: MessageCatalog = {
   'profile.bytesGiB': ({ value }) => `${value} GiB`,
   'profile.bytesMiB': ({ value }) => `${value} MiB`,
   'profile.derivedPages': ({ count }) => `${count} derived pages`,
-  'profile.cacheDesktop': 'Cache controls are available in the desktop app.',
+  'profile.cacheDesktop': 'Cache controls are available on this device.',
   'profile.cacheLimit': 'Cache limit',
   'profile.cacheHelp': 'Only derived pages are removed. Original files are never removed.',
   'profile.clearCache': 'Clear cache now',
@@ -426,28 +426,28 @@ const ENGLISH_CATALOG: MessageCatalog = {
   'review.placeholder': 'Write your personal notes or thoughts on this comic...',
   'review.save': 'Save Review',
   'review.delete': 'Delete',
-  'recap.button': 'Recap so far',
-  'recap.title': 'Story Recap (No Spoilers)',
-  'recap.premise': 'Premise & Context',
-  'recap.milestone': 'Current Moment',
-  'recap.characters': 'Key Characters',
-  'recap.aiRefresh': 'Generate AI Recap',
-  'sync.title': 'Device Synchronization',
-  'sync.export': 'Export Data',
-  'sync.import': 'Import Data',
-  'sync.copy': 'Copy Sync Code',
-  'sync.copied': 'Copied!',
+  'sync.title': 'Backup e restauração local',
+  'sync.export': 'Exportar backup',
+  'sync.import': 'Restaurar backup',
+  'sync.copy': 'Copiar backup',
+  'sync.copied': 'Copiado!',
 };
 
 const catalogues = new Map<Locale, MessageCatalog>([['en', ENGLISH_CATALOG]]);
-let activeLocale: Locale = 'en';
+let activeLocale: Locale = 'pt-BR';
 
 export function registerLocale(locale: Locale, catalogue: MessageCatalog): void {
   catalogues.set(locale, { ...catalogue });
 }
 
 export function setLocale(locale: Locale): void {
-  activeLocale = catalogues.has(locale) ? locale : 'en';
+  // Produto apenas em PT-BR: qualquer locale ativa PT-BR quando disponível,
+  // com fallback para o catálogo base.
+  if (catalogues.has(locale)) {
+    activeLocale = locale;
+    return;
+  }
+  activeLocale = catalogues.has('pt-BR') ? 'pt-BR' : 'en';
 }
 
 export function getLocale(): Locale {
@@ -473,7 +473,6 @@ export function actionLabel(action: string): string {
 
 export function availableLocales(): { code: Locale; label: string }[] {
   return [
-    { code: 'en', label: 'English' },
     { code: 'pt-BR', label: 'Português (Brasil)' },
   ];
 }

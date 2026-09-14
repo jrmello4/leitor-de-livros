@@ -66,7 +66,7 @@ export function SyncModal({ onClose, onSyncApplied }: SyncModalProps) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `tactile-reader-sync-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `tactile-reader-backup-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -77,12 +77,18 @@ export function SyncModal({ onClose, onSyncApplied }: SyncModalProps) {
     try {
       const parsed = JSON.parse(importText.trim());
       if (!validateSyncBundle(parsed)) {
-        setImportError('Código de sincronização inválido ou versão incompatível.');
+        setImportError('Arquivo de backup inválido ou versão incompatível.');
         return;
       }
 
       const current = getFullLocalBundle();
-      const merged = mergeSyncBundle(current, parsed);
+      let merged;
+      try {
+        merged = mergeSyncBundle(current, parsed);
+      } catch {
+        setImportError('Não foi possível mesclar este backup.');
+        return;
+      }
 
       // Save merged data
       saveReadingStats(merged.stats);
@@ -113,14 +119,14 @@ export function SyncModal({ onClose, onSyncApplied }: SyncModalProps) {
       >
         <header className="collector-modal-header">
           <div className="collector-modal-title-area">
-            <span className="collector-modal-eyebrow">Nuvem & Multi-Dispositivo</span>
+            <span className="collector-modal-eyebrow">Backup local · sem nuvem</span>
             <h2>{t('sync.title')}</h2>
           </div>
           <button
             type="button"
             className="collector-modal-close"
             onClick={onClose}
-            aria-label="Fechar sincronização"
+            aria-label="Fechar backup"
           >
             <CloseIcon />
           </button>
@@ -130,7 +136,7 @@ export function SyncModal({ onClose, onSyncApplied }: SyncModalProps) {
           <section className="sync-section">
             <h3>{t('sync.export')}</h3>
             <p className="sync-desc">
-              Exporte seus hábitos de leitura, histórico de dias seguidos (streaks), resenhas, favoritos e páginas marcadas para transferir para o seu celular, tablet ou outro computador.
+              Exporte hábitos de leitura, conquistas, avaliações e favoritos deste aparelho para um arquivo JSON. Nada sai do aparelho sozinho; originais nunca são alterados.
             </p>
             <div className="sync-export-buttons">
               <button
@@ -146,7 +152,7 @@ export function SyncModal({ onClose, onSyncApplied }: SyncModalProps) {
                 className="secondary-button"
                 onClick={handleDownloadFile}
               >
-                Baixar Arquivo .JSON
+                Baixar backup .JSON
               </button>
             </div>
           </section>
@@ -156,25 +162,25 @@ export function SyncModal({ onClose, onSyncApplied }: SyncModalProps) {
           <section className="sync-section">
             <h3>{t('sync.import')}</h3>
             <p className="sync-desc">
-              Cole o código de sincronização gerado no seu outro dispositivo para mesclar automaticamente seu progresso.
+              Cole o conteúdo de um backup gerado neste aparelho para mesclar os dados locais.
             </p>
             <textarea
               className="sync-textarea"
-              placeholder="Cole o código JSON de sincronização aqui..."
+              placeholder="Cole o conteúdo do backup JSON aqui..."
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
               rows={4}
             />
 
             {importError && (
-              <div className="recap-error-banner" role="alert">
+              <div className="sync-error-banner" role="alert">
                 ⚠️ {importError}
               </div>
             )}
 
             {importSuccess && (
               <div className="sync-success-banner" role="status">
-                ✓ Sincronização concluída com sucesso! Atualizando biblioteca...
+                ✓ Backup restaurado! Atualizando biblioteca...
               </div>
             )}
 
@@ -185,7 +191,7 @@ export function SyncModal({ onClose, onSyncApplied }: SyncModalProps) {
                 onClick={handleApplyImport}
                 disabled={!importText.trim()}
               >
-                Aplicar Sincronização
+                Aplicar backup
               </button>
             </div>
           </section>

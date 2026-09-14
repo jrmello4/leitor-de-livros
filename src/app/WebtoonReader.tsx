@@ -65,6 +65,7 @@ function PageImage({
     return () => {
       if (!img) return;
       img.removeAttribute('src');
+      img.removeAttribute('srcset');
       img.src = '';
     };
   }, []);

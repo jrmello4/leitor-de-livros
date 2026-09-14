@@ -2,6 +2,8 @@ import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Publication } from '../domain/types';
+import { t } from '../i18n/catalog';
+import '../i18n/register-locales';
 import { App } from './App';
 
 const native = vi.hoisted(() => ({
@@ -146,7 +148,7 @@ describe('App native import lifecycle', () => {
     await importFiles();
 
     expectLoadingClearedOnce();
-    expect(host.querySelector('[data-testid="native-diagnostic"]')?.textContent).toContain('The native import failed');
+    expect(host.querySelector('[data-testid="native-diagnostic"]')?.textContent).toContain(t('app.nativeImportError'));
   });
 
   it('clears loading once when the importer fails', async () => {
@@ -155,7 +157,7 @@ describe('App native import lifecycle', () => {
     await importFiles();
 
     expectLoadingClearedOnce();
-    expect(host.querySelector('[data-testid="native-diagnostic"]')?.textContent).toContain('The native import failed');
+    expect(host.querySelector('[data-testid="native-diagnostic"]')?.textContent).toContain(t('app.nativeImportError'));
   });
 
   it('clears loading once when importing finds no publications', async () => {
@@ -164,7 +166,7 @@ describe('App native import lifecycle', () => {
     await importFiles();
 
     expectLoadingClearedOnce();
-    expect(host.querySelector('[role="status"]')?.textContent).toContain('No supported native publication was found');
+    expect(host.querySelector('[role="status"]')?.textContent).toContain(t('app.nativeNoPublication'));
   });
 
   it('clears loading once when the picker is cancelled', async () => {
@@ -173,7 +175,7 @@ describe('App native import lifecycle', () => {
     await importFiles();
 
     expectLoadingClearedOnce();
-    expect(host.querySelector('[role="status"]')?.textContent).toContain('Import cancelled');
+    expect(host.querySelector('[role="status"]')?.textContent).toContain(t('app.importCancelled'));
   });
 
   it('clears loading once after importing a publication', async () => {
@@ -183,7 +185,7 @@ describe('App native import lifecycle', () => {
     await importFiles();
 
     expectLoadingClearedOnce();
-    expect(host.querySelector('[role="status"]')?.textContent).toContain('Native book imported into the native library');
+    expect(host.querySelector('[role="status"]')?.textContent).toContain(t('app.publicationImportedNative', { title: 'Native book' }));
   });
 
   it('imports a folder selection without falling back to the file picker', async () => {

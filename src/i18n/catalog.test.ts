@@ -3,9 +3,11 @@ import { availableLocales, getLocale, hasTranslation, registerLocale, setLocale,
 import { PT_BR_CATALOG } from './pt-BR';
 
 describe('interface message catalogue', () => {
-  afterEach(() => setLocale('en'));
+  afterEach(() => setLocale('pt-BR'));
 
   it('interpolates dynamic values and chooses singular/plural text', () => {
+    registerLocale('en', {});
+    setLocale('en');
     expect(t('library.pages', { count: 1 })).toBe('1 page');
     expect(t('library.pages', { count: 4 })).toBe('4 pages');
     expect(t('reader.pageOf', { page: 2, count: 8 })).toBe('Page 2 of 8.');
@@ -26,9 +28,9 @@ describe('interface message catalogue', () => {
     expect(t('library.pages', { count: 2 })).toBe('2 pages');
   });
 
-  it('provides available locales list including pt-BR', () => {
+  it('provides available locales list with PT-BR only', () => {
     const locales = availableLocales();
-    expect(locales.map((l) => l.code)).toEqual(['en', 'pt-BR']);
+    expect(locales.map((l) => l.code)).toEqual(['pt-BR']);
   });
 
   it('translates messages and formats plurals in Portuguese (pt-BR)', () => {

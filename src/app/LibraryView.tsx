@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
+import { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import { comparePublicationsBySeries, publicationSeries } from '../domain/seriesMatching';
 import { filterPublications, mostRecentPublication, safeSourceName, visiblePublications as getVisiblePublications, type FormatFilter, type LibrarySort, type ReadingStatusFilter } from '../domain/library';
 import { publicationCoverSrc } from '../domain/covers';
@@ -7,11 +7,11 @@ import { evaluateAchievements, isCurrentHourNight } from '../domain/achievements
 import { loadAchievementsMap, loadAllReviews, loadReadingStats, saveReview as saveReviewStorage, clearReview as clearReviewStorage } from '../services/storage';
 import type { PublicationReview } from '../domain/reviews';
 import { t } from '../i18n/catalog';
-import { CollectionIcon, FlameIcon, SearchIcon, SparklesIcon, StarFilledIcon, StarIcon, SyncIcon } from './Icons';
-import { ReadingStatsModal } from './ReadingStatsModal';
-import { ReviewModal } from './ReviewModal';
-import { RecapModal } from './RecapModal';
-import { SyncModal } from './SyncModal';
+import { CollectionIcon, FlameIcon, SearchIcon, StarFilledIcon, StarIcon, SyncIcon } from './Icons';
+
+const ReadingStatsModal = lazy(() => import('./ReadingStatsModal').then((m) => ({ default: m.ReadingStatsModal })));
+const ReviewModal = lazy(() => import('./ReviewModal').then((m) => ({ default: m.ReviewModal })));
+const SyncModal = lazy(() => import('./SyncModal').then((m) => ({ default: m.SyncModal })));
 
 interface LibraryViewProps {
   publications: Publication[];
@@ -182,7 +182,6 @@ export function LibraryView({
   const [statsModalOpen, setStatsModalOpen] = useState(false);
   const [syncModalOpen, setSyncModalOpen] = useState(false);
   const [reviewTarget, setReviewTarget] = useState<Publication | null>(null);
-  const [recapTarget, setRecapTarget] = useState<Publication | null>(null);
   const [ratingFilter, setRatingFilter] = useState<number>(0);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedPublicationIds, setSelectedPublicationIds] = useState<Set<string>>(() => new Set());
@@ -457,11 +456,11 @@ export function LibraryView({
             type="button"
             className="quiet-button library-sync-btn"
             onClick={() => setSyncModalOpen(true)}
-            aria-label="Sincronizar entre dispositivos"
-            title="Sincronização Nuvem & Dispositivos"
+            aria-label="Backup local em JSON"
+            title="Backup e restauração local"
           >
             <SyncIcon />
-            <span>Sync</span>
+            <span>Backup</span>
           </button>
           <span className="privacy-chip"><span className="status-dot" /> {t('library.deviceOnly')}</span>
           <button ref={settingsTriggerRef} className="quiet-button" onClick={onOpenSettings}>{t('library.settings')}</button>
@@ -837,16 +836,6 @@ export function LibraryView({
                     </span>
                   )}
                 </button>
-                <button
-                  type="button"
-                  className="card-recap-btn"
-                  onClick={() => setRecapTarget(publication)}
-                  aria-label={t('recap.button')}
-                  title={t('recap.title')}
-                >
-                  <SparklesIcon />
-                  <span>Recap</span>
-                </button>
               </div>
 
               <div className="cover-actions">
@@ -955,42 +944,40 @@ export function LibraryView({
       </div>
 
       {statsModalOpen && (
-        <ReadingStatsModal
-          stats={readingStats}
-          achievements={achievements}
-          onClose={() => setStatsModalOpen(false)}
-        />
+        <Suspense fallback={null}>
+          <ReadingStatsModal
+            stats={readingStats}
+            achievements={achievements}
+            onClose={() => setStatsModalOpen(false)}
+          />
+        </Suspense>
       )}
 
       {syncModalOpen && (
-        <SyncModal
-          onClose={() => setSyncModalOpen(false)}
-          onSyncApplied={refreshUserData}
-        />
+        <Suspense fallback={null}>
+          <SyncModal
+            onClose={() => setSyncModalOpen(false)}
+            onSyncApplied={refreshUserData}
+          />
+        </Suspense>
       )}
 
       {reviewTarget && (
-        <ReviewModal
-          publication={reviewTarget}
-          initialReview={reviewsMap[reviewTarget.id]}
-          onSave={(review) => {
-            saveReviewStorage(review);
-            refreshUserData();
-          }}
-          onDelete={(id) => {
-            clearReviewStorage(id);
-            refreshUserData();
-          }}
-          onClose={() => setReviewTarget(null)}
-        />
-      )}
-
-      {recapTarget && (
-        <RecapModal
-          publication={recapTarget}
-          currentPageIndex={recapTarget.currentPage}
-          onClose={() => setRecapTarget(null)}
-        />
+        <Suspense fallback={null}>
+          <ReviewModal
+            publication={reviewTarget}
+            initialReview={reviewsMap[reviewTarget.id]}
+            onSave={(review) => {
+              saveReviewStorage(review);
+              refreshUserData();
+            }}
+            onDelete={(id) => {
+              clearReviewStorage(id);
+              refreshUserData();
+            }}
+            onClose={() => setReviewTarget(null)}
+          />
+        </Suspense>
       )}
 
       {pendingDelete && (
