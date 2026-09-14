@@ -1,7 +1,12 @@
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import '../app/styles.css';
+import '../app/styles/base.css';
+import '../app/styles/library.css';
+import '../app/styles/reader.css';
+import '../app/styles/webtoon.css';
+import '../app/styles/modals.css';
+import '../app/styles/mobile.css';
 import type { RenderFrame } from './contracts';
 import { ReaderSurface } from './ReaderSurface';
 
