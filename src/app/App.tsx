@@ -5,26 +5,10 @@ import { canRunActionWhileSettingsOpen, InputMap } from '../domain/input';
 import { createPageSelectionCoordinator, preparePageSelection, selectLatestPage, warmWorkingSet, type PageSelectionRequest } from '../domain/pageSelection';
 import { activeWorkingSetPageIds, calculateProgress, movePage, clamp } from '../domain/reader';
 import { nextBookmark, type FormatFilter, type LibrarySort, type ReadingStatusFilter } from '../domain/library';
-import {
-  createDefaultProfile,
-  createProfile,
-  deleteProfile,
-  duplicateProfile,
-  getActiveProfile,
-  mergeProfileStore,
-  parseProfileTransfer,
-  renameProfile,
-  serializeProfileTransfer,
-  selectProfile,
-  updateProfile as updateNamedProfile,
-  type ProfileMutation,
-  type ProfileStore,
-  type NamedReadingProfile,
-} from '../domain/profiles';
-import { defaultReaderState, nextRotation, normalizeReaderState } from '../domain/readerState';
+import { defaultReaderState, nextRotation } from '../domain/readerState';
 import { findNextPublication } from '../domain/seriesMatching';
 import type { ActionName, Bookmark, CacheInfo, PageDescriptor, Publication, ReaderState, ReadingProfile } from '../domain/types';
-import { actionLabel, getLocale, t } from '../i18n/catalog';
+import { actionLabel, t } from '../i18n/catalog';
 import '../i18n/register-locales';
 import { importFiles, revokePublicationBlobUrls } from '../services/importers';
 import {
@@ -36,12 +20,8 @@ import {
   importNativePaths,
   isAndroidRuntime,
   isNativeRuntime,
-  listenNativeImportProgress,
-  listNativeLibrarySnapshot,
   listNativePublications,
   loadNativePublicationPages,
-  loadNativeProfileStore,
-  saveNativeProfileStore,
   saveNativeProgress,
   clearNativeCache,
   deleteNativePublication,
@@ -51,9 +31,10 @@ import {
   setNativeCacheLimit,
   setNativeCover,
 } from '../services/nativeLibrary';
+import { useLibraryMetadata } from './hooks/useLibraryMetadata';
+import { useReadingProfiles } from './hooks/useReadingProfiles';
+import { useNativeLibraryBoot } from './hooks/useNativeLibraryBoot';
 import {
-  listBookmarksForPublication,
-  loadReaderStateForPublication,
   removeBookmarkForPublication,
   saveBookmarkForPublication,
   saveReaderStateForPublication,
@@ -63,9 +44,7 @@ import { clearCustomCover, readBrowserCover, saveCustomCover } from '../services
 import {
   loadFavorites,
   loadCustomCover,
-  loadProfileStore,
   loadProgress,
-  saveProfileStore,
   saveProgress,
 } from '../services/storage';
 import { LibraryView, type ImportProgress } from './LibraryView';
@@ -138,14 +117,53 @@ function restoreBookmark(bookmarks: Bookmark[], pageId: string, previous: Bookma
 
 export function App() {
   const nativeRuntime = isNativeRuntime();
-  const [profileStore, setProfileStore] = useState<ProfileStore>(() => loadProfileStore());
-  const [profilePreview, setProfilePreview] = useState<NamedReadingProfile | null>(null);
-  const profile = useMemo(() => {
-    const saved = getActiveProfile(profileStore);
-    return profilePreview?.id === saved.id ? profilePreview : saved;
-  }, [profilePreview, profileStore]);
-  const [library, setLibrary] = useState<Publication[]>(() => initialLibrary(profile.direction));
+  const [diagnostic, setDiagnostic] = useState<string | undefined>();
+  const [announcement, setAnnouncement] = useState(() => t('app.libraryReady'));
+  const {
+    bookmarks,
+    readerStates,
+    setBookmarks,
+    setReaderStates,
+    bookmarksRef,
+    hydrateMetadata,
+    invalidateMetadata,
+    enqueueBookmarkWrite,
+  } = useLibraryMetadata(setDiagnostic);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const activeIdRef = useRef<string | null>(activeId);
+  activeIdRef.current = activeId;
+  const getActivePublicationId = useCallback(() => activeIdRef.current, []);
+  const {
+    profileStore,
+    profile,
+    profilePreview,
+    getProfileStore,
+    replaceProfileStore,
+    updateProfile,
+    previewProfile,
+    saveProfilePreview,
+    undoProfilePreview,
+    importProfiles,
+    exportProfiles,
+    exportData,
+    importData,
+    selectReadingProfile,
+    createReadingProfile,
+    duplicateReadingProfile,
+    renameReadingProfile,
+    deleteReadingProfile,
+    handleProfileReset,
+  } = useReadingProfiles({
+    nativeRuntime,
+    getActivePublicationId,
+    setBookmarks,
+    setReaderStates,
+    bookmarks,
+    readerStates,
+    onError: setDiagnostic,
+    onAnnounce: setAnnouncement,
+  });
+  const [library, setLibrary] = useState<Publication[]>(() => initialLibrary(profile.direction));
   const [navigatorVisible, setNavigatorVisible] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [capturingAction, setCapturingAction] = useState<ActionName | null>(null);
@@ -154,54 +172,28 @@ export function App() {
   const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [formatFilter, setFormatFilter] = useState<FormatFilter>('all');
   const [statusFilter, setStatusFilter] = useState<ReadingStatusFilter>('all');
-  const [bookmarks, setBookmarks] = useState<Record<string, Bookmark[]>>({});
-  const [readerStates, setReaderStates] = useState<Record<string, ReaderState>>({});
   const [cacheInfo, setCacheInfo] = useState<CacheInfo>(DEFAULT_CACHE_INFO);
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
   const [retryableNativePaths, setRetryableNativePaths] = useState<string[] | null>(null);
   const [smokeImportSequence, setSmokeImportSequence] = useState(0);
-  const [nativeLibraryReady, setNativeLibraryReady] = useState(!nativeRuntime);
-  const [diagnostic, setDiagnostic] = useState<string | undefined>();
-  const [announcement, setAnnouncement] = useState(() => t('app.libraryReady'));
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
   const navigatorTriggerRef = useRef<HTMLButtonElement>(null);
   const readerTurnRequestRef = useRef<((delta: number) => void) | null>(null);
-  const metadataGenerationRef = useRef(0);
   const favoriteInFlightRef = useRef(new Set<string>());
-  const bookmarkWriteQueuesRef = useRef(new Map<string, Promise<void>>());
   const pageSelectionCoordinatorRef = useRef(createPageSelectionCoordinator());
   const boundaryAnnouncementRef = useRef(false);
-  const profileStoreRef = useRef(profileStore);
-  profileStoreRef.current = profileStore;
 
   const activePublication = library.find((publication) => publication.id === activeId);
   const activePublicationIdRef = useRef<string | null>(activePublication?.id ?? null);
   activePublicationIdRef.current = activePublication?.id ?? null;
-  const activeIdRef = useRef<string | null>(activeId);
-  activeIdRef.current = activeId;
   const showProfileRef = useRef(showProfile);
   showProfileRef.current = showProfile;
   const navigatorVisibleRef = useRef(navigatorVisible);
   navigatorVisibleRef.current = navigatorVisible;
   const libraryRef = useRef(library);
   libraryRef.current = library;
-  const bookmarksRef = useRef(bookmarks);
-  bookmarksRef.current = bookmarks;
   const inputMap = useMemo(() => new InputMap(profile.bindings), [profile.bindings]);
-
-  const enqueueBookmarkWrite = useCallback((key: string, write: () => Promise<void>) => {
-    const previous = bookmarkWriteQueuesRef.current.get(key) ?? Promise.resolve();
-    const next = previous.catch(() => undefined).then(write);
-    bookmarkWriteQueuesRef.current.set(key, next);
-    const cleanup = () => {
-      if (bookmarkWriteQueuesRef.current.get(key) === next) {
-        bookmarkWriteQueuesRef.current.delete(key);
-      }
-    };
-    void next.then(cleanup, cleanup);
-    return next;
-  }, []);
 
   const refreshCacheInfo = useCallback(async () => {
     try {
@@ -211,63 +203,17 @@ export function App() {
     }
   }, []);
 
-  const hydrateMetadata = useCallback(async (publications: Publication[]) => {
-    const generation = ++metadataGenerationRef.current;
-    const publicationIds = new Set(publications.map((publication) => publication.id));
-    try {
-      // Caminho rápido: 1 IPC para toda a biblioteca (snapshot em lote).
-      // Substitui o N×2 anterior e cai para o lote de 8 em caso de falha.
-      const snapshot = await listNativeLibrarySnapshot().catch(() => null);
-      if (snapshot && generation === metadataGenerationRef.current) {
-        const nextBookmarks: Record<string, Bookmark[]> = {};
-        const nextStates: Record<string, ReaderState> = {};
-        for (const publication of publications) {
-          if (snapshot.bookmarks[publication.id] !== undefined) {
-            nextBookmarks[publication.id] = snapshot.bookmarks[publication.id];
-          }
-          const state = snapshot.readerStates[publication.id];
-          if (state !== undefined) {
-            nextStates[publication.id] = state;
-          } else {
-            try {
-              const fallback = await loadReaderStateForPublication(publication.id);
-              if (fallback) nextStates[publication.id] = fallback;
-            } catch {
-              // Estado ausente não bloqueia a biblioteca.
-            }
-          }
-          if (generation !== metadataGenerationRef.current) {
-            return;
-          }
-        }
-        setBookmarks((current) => ({ ...current, ...Object.fromEntries(Object.entries(nextBookmarks).filter(([id]) => publicationIds.has(id))) }));
-        setReaderStates((current) => ({ ...current, ...Object.fromEntries(Object.entries(nextStates).filter(([id]) => publicationIds.has(id))) }));
-        return;
-      }
-      const metadata: Array<{ id: string; bookmarks: Bookmark[]; readerState: ReaderState }> = [];
-      // Fallback: lote de 8 para não criar rajada de 200+ chamadas.
-      for (let start = 0; start < publications.length; start += 8) {
-        const batch = publications.slice(start, start + 8);
-        const resolved = await Promise.all(batch.map(async (publication) => {
-          const [publicationBookmarks, readerState] = await Promise.all([
-            listBookmarksForPublication(publication.id),
-            loadReaderStateForPublication(publication.id),
-          ]);
-          return { id: publication.id, bookmarks: publicationBookmarks, readerState };
-        }));
-        metadata.push(...resolved);
-      }
-      if (generation !== metadataGenerationRef.current) {
-        return;
-      }
-      setBookmarks(Object.fromEntries(metadata.filter((entry) => publicationIds.has(entry.id)).map((entry) => [entry.id, entry.bookmarks])));
-      setReaderStates(Object.fromEntries(metadata.filter((entry) => publicationIds.has(entry.id)).map((entry) => [entry.id, entry.readerState])));
-    } catch {
-      if (generation === metadataGenerationRef.current) {
-        setDiagnostic(t('app.metadataError'));
-      }
-    }
-  }, []);
+  const { nativeLibraryReady } = useNativeLibraryBoot(nativeRuntime, {
+    getProfileStore,
+    replaceProfileStore,
+    setLibrary,
+    hydrateMetadata,
+    refreshCacheInfo,
+    invalidateMetadata,
+    setImportProgress,
+    onError: setDiagnostic,
+    onAnnounce: setAnnouncement,
+  });
 
   const reloadNativeLibraryWithEssentials = useCallback(async (direction: ReadingProfile['direction']) => {
     const initial = await listNativePublications(direction);
@@ -346,97 +292,6 @@ export function App() {
   }, [activePublication, profile]);
 
   useEffect(() => {
-    if (!nativeRuntime) {
-      return;
-    }
-
-    let cancelled = false;
-    const bootNativeLibrary = async () => {
-      setNativeLibraryReady(false);
-      try {
-        // Android can finish opening/migrating the SQLite store just after the
-        // WebView starts. Retry the complete boot transaction so a transient
-        // "state not managed"/database-open error does not strand the reader
-        // on the demo library until the next manual reload.
-        let mobileProfileStore: ProfileStore | undefined;
-        let nativeLibrary: Publication[] | undefined;
-        let lastBootError: unknown;
-        for (let attempt = 0; attempt < 3 && !nativeLibrary; attempt += 1) {
-          if (cancelled) {
-            return;
-          }
-          try {
-            const nativeProfileStore = await loadNativeProfileStore();
-            const nextProfileStore = nativeProfileStore ?? profileStoreRef.current;
-            // This build is a personal mobile reader: keep the continuous vertical
-            // layout as the single reading mode, including for profiles saved by
-            // an earlier desktop-oriented version.
-            const normalizedProfileStore: ProfileStore = {
-              ...nextProfileStore,
-              profiles: nextProfileStore.profiles.map((candidate) => ({ ...candidate, mode: 'webtoon' as const })),
-            };
-            const nextProfile = getActiveProfile(normalizedProfileStore);
-            // Saving the normalized store also upgrades a legacy flat native row
-            // after it has been migrated in memory.
-            await saveNativeProfileStore(normalizedProfileStore);
-            nativeLibrary = await listNativePublications(nextProfile.direction);
-            mobileProfileStore = normalizedProfileStore;
-          } catch (error) {
-            lastBootError = error;
-            if (attempt < 2) {
-              await new Promise<void>((resolve) => window.setTimeout(resolve, 250 * (attempt + 1)));
-            }
-          }
-        }
-        if (!mobileProfileStore || !nativeLibrary) {
-          throw lastBootError ?? new Error('native-library-boot-failed');
-        }
-        if (cancelled) {
-          return;
-        }
-        setProfileStore(mobileProfileStore);
-        profileStoreRef.current = mobileProfileStore;
-        setLibrary(nativeLibrary);
-        setNativeLibraryReady(true);
-        void hydrateMetadata(nativeLibrary);
-        void refreshCacheInfo();
-        setAnnouncement(nativeLibrary.length > 0 ? t('app.nativeLibraryReady') : t('app.nativeLibraryEmpty'));
-      } catch {
-        if (!cancelled) {
-          setNativeLibraryReady(true);
-          setDiagnostic(t('app.nativeOpenError'));
-          setAnnouncement(t('app.nativeUnavailable'));
-        }
-      }
-    };
-
-    void bootNativeLibrary();
-    return () => {
-      cancelled = true;
-      metadataGenerationRef.current += 1;
-    };
-  }, [hydrateMetadata, nativeRuntime, refreshCacheInfo]);
-
-  useEffect(() => {
-    if (!nativeRuntime) {
-      return undefined;
-    }
-    let unlisten: (() => void) | undefined;
-    void listenNativeImportProgress((progress) => {
-      setImportProgress({
-        phase: progress.processed >= progress.total && progress.total > 0 ? 'finishing' : 'processing',
-        total: progress.total,
-        completed: progress.processed,
-        currentName: progress.currentName,
-        failed: progress.failed,
-      });
-    }).then((dispose) => {
-      unlisten = dispose;
-    }).catch(() => undefined);
-    return () => unlisten?.();
-  }, [nativeRuntime]);
-
-  useEffect(() => {
     if (!isAndroidRuntime()) {
       return undefined;
     }
@@ -486,239 +341,6 @@ export function App() {
     void hydrateMetadata(library);
     void refreshCacheInfo();
   }, [hydrateMetadata, library, nativeRuntime, refreshCacheInfo]);
-
-  const persistProfileStore = useCallback((store: ProfileStore) => {
-    if (!saveProfileStore(store)) {
-      setDiagnostic(t('app.profileSaveError'));
-    }
-    if (nativeRuntime) {
-      void saveNativeProfileStore(store).catch(() => {
-        setDiagnostic(t('app.nativeProfileSaveError'));
-      });
-    }
-  }, [nativeRuntime]);
-
-  const applyProfileZoom = useCallback((nextProfile: ReadingProfile) => {
-    const currentId = activeIdRef.current;
-    if (!currentId) {
-      return;
-    }
-    setReaderStates((current) => ({
-      ...current,
-      [currentId]: {
-        ...(current[currentId] ?? defaultReaderState),
-        zoomMode: nextProfile.zoomMode,
-        zoomScale: nextProfile.zoomScale,
-        panX: 0,
-        panY: 0,
-      },
-    }));
-  }, []);
-
-  const commitProfileMutation = useCallback((mutation: ProfileMutation, message: string): string | undefined => {
-    if (!mutation.ok) {
-      const errorMessage = t(mutation.error);
-      setDiagnostic(errorMessage);
-      return errorMessage;
-    }
-    setProfileStore(mutation.store);
-    setProfilePreview(null);
-    profileStoreRef.current = mutation.store;
-    persistProfileStore(mutation.store);
-    applyProfileZoom(getActiveProfile(mutation.store));
-    setCapturingAction(null);
-    setAnnouncement(message);
-    return undefined;
-  }, [applyProfileZoom, persistProfileStore]);
-
-  const updateProfile = useCallback((patch: Partial<ReadingProfile>) => {
-    const mutation = updateNamedProfile(
-      profileStoreRef.current,
-      profileStoreRef.current.activeProfileId,
-      patch,
-    );
-    commitProfileMutation(mutation, t('app.profileUpdated'));
-  }, [commitProfileMutation]);
-
-  const previewProfile = useCallback((patch: Partial<ReadingProfile>) => {
-    const savedStore = profileStoreRef.current;
-    const activeId = savedStore.activeProfileId;
-    const baseStore: ProfileStore = profilePreview?.id === activeId
-      ? {
-          ...savedStore,
-          profiles: savedStore.profiles.map((candidate) => candidate.id === activeId ? profilePreview : candidate),
-        }
-      : savedStore;
-    const mutation = updateNamedProfile(baseStore, activeId, patch);
-    if (!mutation.ok) {
-      const errorMessage = t(mutation.error);
-      setDiagnostic(errorMessage);
-      return errorMessage;
-    }
-    const nextPreview = getActiveProfile(mutation.store);
-    setProfilePreview(nextPreview);
-    applyProfileZoom(nextPreview);
-    setDiagnostic(undefined);
-    return undefined;
-  }, [applyProfileZoom, profilePreview]);
-
-  const saveProfilePreview = useCallback(() => {
-    if (!profilePreview || profilePreview.id !== profileStoreRef.current.activeProfileId) {
-      return;
-    }
-    commitProfileMutation(
-      updateNamedProfile(profileStoreRef.current, profilePreview.id, profilePreview),
-      t('app.profilePreviewSaved'),
-    );
-  }, [commitProfileMutation, profilePreview]);
-
-  const undoProfilePreview = useCallback(() => {
-    if (!profilePreview) {
-      return;
-    }
-    setProfilePreview(null);
-    applyProfileZoom(getActiveProfile(profileStoreRef.current));
-    setAnnouncement(t('app.profilePreviewUndone'));
-  }, [applyProfileZoom, profilePreview]);
-
-  const importProfiles = useCallback((text: string) => {
-    const parsed = parseProfileTransfer(text);
-    if (!parsed.ok) {
-      const errorMessage = t(parsed.error);
-      setDiagnostic(errorMessage);
-      return errorMessage;
-    }
-    return commitProfileMutation(
-      mergeProfileStore(profileStoreRef.current, parsed.value),
-      t('app.profileImported'),
-    );
-  }, [commitProfileMutation]);
-
-  const exportProfiles = useCallback(() => {
-    try {
-      const blob = new Blob([serializeProfileTransfer(profileStoreRef.current)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = 'tactile-reading-profiles.json';
-      link.click();
-      URL.revokeObjectURL(url);
-      setAnnouncement(t('app.profileExported'));
-    } catch {
-      setDiagnostic(t('app.profileTransferError'));
-    }
-  }, []);
-
-  const exportData = useCallback(() => {
-    try {
-      const backupDoc = {
-        kind: 'tactile-library-backup',
-        version: 1,
-        exportedAt: new Date().toISOString(),
-        favorites: loadFavorites(),
-        bookmarks,
-        readerStates,
-        profileStore: profileStoreRef.current,
-      };
-      const blob = new Blob([JSON.stringify(backupDoc, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = 'tactile-library-backup.json';
-      link.click();
-      URL.revokeObjectURL(url);
-      setAnnouncement(t('profile.dataExported'));
-    } catch {
-      setDiagnostic(t('profile.dataTransferError'));
-    }
-  }, [bookmarks, readerStates]);
-
-  const importData = useCallback(async (text: string): Promise<string | undefined> => {
-    try {
-      const parsed = JSON.parse(text) as Record<string, unknown>;
-      if (!parsed || parsed.kind !== 'tactile-library-backup' || parsed.version !== 1) {
-        return t('profile.dataTransferError');
-      }
-
-      if (Array.isArray(parsed.favorites)) {
-        for (const favId of parsed.favorites) {
-          if (typeof favId === 'string') {
-            await toggleFavoriteForPublication(favId, true);
-          }
-        }
-      }
-
-      if (parsed.bookmarks && typeof parsed.bookmarks === 'object') {
-        const importedBookmarks = parsed.bookmarks as Record<string, Bookmark[]>;
-        setBookmarks((current) => ({ ...current, ...importedBookmarks }));
-        for (const [pubId, bList] of Object.entries(importedBookmarks)) {
-          if (Array.isArray(bList)) {
-            for (const b of bList) {
-              await saveBookmarkForPublication(pubId, b);
-            }
-          }
-        }
-      }
-
-      if (parsed.readerStates && typeof parsed.readerStates === 'object') {
-        const importedReaderStates = parsed.readerStates as Record<string, ReaderState>;
-        setReaderStates((current) => ({ ...current, ...importedReaderStates }));
-        for (const [pubId, rState] of Object.entries(importedReaderStates)) {
-          await saveReaderStateForPublication(pubId, normalizeReaderState(rState));
-        }
-      }
-
-      if (parsed.profileStore) {
-        const validated = parseProfileTransfer({ kind: 'tactile-reading-profiles', ...parsed.profileStore });
-        if (validated.ok) {
-          commitProfileMutation(
-            mergeProfileStore(profileStoreRef.current, validated.value),
-            t('profile.dataImported'),
-          );
-        }
-      }
-
-      setAnnouncement(t('profile.dataImported'));
-      return undefined;
-    } catch {
-      return t('profile.dataTransferError');
-    }
-  }, [commitProfileMutation]);
-
-  const selectReadingProfile = useCallback((profileId: string) => (
-    commitProfileMutation(
-      selectProfile(profileStoreRef.current, profileId),
-      t('app.profileSelected'),
-    )
-  ), [commitProfileMutation]);
-
-  const createReadingProfile = useCallback((name: string) => (
-    commitProfileMutation(
-      createProfile(profileStoreRef.current, name),
-      t('app.profileCreated'),
-    )
-  ), [commitProfileMutation]);
-
-  const duplicateReadingProfile = useCallback(() => (
-    commitProfileMutation(
-      duplicateProfile(profileStoreRef.current, profileStoreRef.current.activeProfileId),
-      t('app.profileDuplicated'),
-    )
-  ), [commitProfileMutation]);
-
-  const renameReadingProfile = useCallback((name: string) => (
-    commitProfileMutation(
-      renameProfile(profileStoreRef.current, profileStoreRef.current.activeProfileId, name),
-      t('app.profileRenamed'),
-    )
-  ), [commitProfileMutation]);
-
-  const deleteReadingProfile = useCallback(() => (
-    commitProfileMutation(
-      deleteProfile(profileStoreRef.current, profileStoreRef.current.activeProfileId),
-      t('app.profileDeleted'),
-    )
-  ), [commitProfileMutation]);
 
   const updatePublication = useCallback((id: string, updater: (publication: Publication) => Publication) => {
     setLibrary((current) => current.map((publication) => (publication.id === id ? updater(publication) : publication)));
@@ -838,7 +460,7 @@ export function App() {
   }, [nativeRuntime, updatePublication]);
 
   const removePublication = useCallback(async (publication: Publication) => {
-    metadataGenerationRef.current += 1;
+    invalidateMetadata();
     if (activeIdRef.current === publication.id) {
       pageSelectionCoordinatorRef.current.cancel();
     }
@@ -865,7 +487,7 @@ export function App() {
       setDiagnostic(t('app.publicationRemoveError'));
       throw new Error('delete-publication-failed');
     }
-  }, [activeId, refreshCacheInfo]);
+  }, [activeId, invalidateMetadata, refreshCacheInfo]);
 
   const updateCacheLimit = useCallback(async (maxBytes: number) => {
     if (!nativeRuntime) {
@@ -890,7 +512,7 @@ export function App() {
       }
     } catch {
       if (limitApplied) {
-        metadataGenerationRef.current += 1;
+        invalidateMetadata();
         setActiveId(null);
         setLibrary([]);
         setBookmarks({});
@@ -900,7 +522,7 @@ export function App() {
         setDiagnostic(t('app.cacheLimitError'));
       }
     }
-  }, [hydrateMetadata, nativeRuntime, profile.direction, profile.mode, refreshCacheInfo, reloadNativeLibraryWithEssentials]);
+  }, [hydrateMetadata, invalidateMetadata, nativeRuntime, profile.direction, profile.mode, refreshCacheInfo, reloadNativeLibraryWithEssentials]);
 
   const clearCache = useCallback(async () => {
     if (!nativeRuntime) {
@@ -938,7 +560,7 @@ export function App() {
       }
     } catch {
       if (cacheCleared) {
-        metadataGenerationRef.current += 1;
+        invalidateMetadata();
         setActiveId(null);
         setLibrary([]);
         setBookmarks({});
@@ -948,7 +570,7 @@ export function App() {
         setDiagnostic(t('app.cacheClearError'));
       }
     }
-  }, [hydrateMetadata, nativeRuntime, profile.direction, profile.mode, refreshCacheInfo, reloadNativeLibraryWithEssentials]);
+  }, [hydrateMetadata, invalidateMetadata, nativeRuntime, profile.direction, profile.mode, refreshCacheInfo, reloadNativeLibraryWithEssentials]);
 
   const persistProgress = useCallback(async (publicationId: string, pageIndex: number): Promise<void> => {
     saveProgress(publicationId, pageIndex);
@@ -1528,26 +1150,6 @@ export function App() {
     }
   };
 
-  const handleProfileReset = () => {
-    const current = profileStoreRef.current;
-    const defaults = createDefaultProfile();
-    commitProfileMutation(
-      updateNamedProfile(current, current.activeProfileId, {
-        mode: defaults.mode,
-        direction: defaults.direction,
-        contrast: defaults.contrast,
-        reducedMotion: defaults.reducedMotion,
-        pageTurnDuration: defaults.pageTurnDuration,
-        layoutZone: defaults.layoutZone,
-        zoomMode: defaults.zoomMode,
-        zoomScale: defaults.zoomScale,
-        bindings: defaults.bindings,
-      }),
-      t('app.profileReset'),
-    );
-    setCapturingAction(null);
-  };
-
   const handleRebuildPublicationCache = async (publication: Publication) => {
     if (!nativeRuntime) {
       return;
@@ -1690,7 +1292,10 @@ export function App() {
             onRenameProfile={renameReadingProfile}
             onDeleteProfile={deleteReadingProfile}
             onStartCapture={setCapturingAction}
-            onReset={handleProfileReset}
+            onReset={() => {
+              handleProfileReset();
+              setCapturingAction(null);
+            }}
             cacheInfo={cacheInfo}
             onSetCacheLimit={updateCacheLimit}
             onClearCache={clearCache}
