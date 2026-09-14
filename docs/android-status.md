@@ -389,6 +389,10 @@ aparecer no ADB sem fio; o dispositivo ficou offline após o teste anterior.
   `importGeneratedCbzAndListItBack` — CBZ real importado em 0,15s).
 - Forense no banco do app (`run-as` + pull binário): 1 publicação `demo-hq`
   (cbz), 2 páginas, cache sob demanda (0 entradas — igual ao Tauri).
+- Botão "+ HQ" com seletor SAF (`OpenDocument` + cópia para `imports/`, sem
+  tocar no original) e diagnósticos na tela; fiação provada na JVM
+  (`LibraryContentTest`, Robolectric, 3/3 — corre no CI em
+  `testDebugUnitTest`). Fluxo com CBR real validado a seguir no aparelho.
 - Evidências: `artifacts/android-test/native-jni-proof.png` (tela da prova
   JNI) e `artifacts/android-test/native-library-grid.png` (estante Compose
   com `demo-hq`, 2 páginas, no Moto G34 desbloqueado — o preto anterior era

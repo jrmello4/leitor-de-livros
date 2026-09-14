@@ -136,7 +136,7 @@ jobs:
           export CC_x86_64_linux_android="$PREBUILT/x86_64-linux-android35-clang.cmd"
           export AR_x86_64_linux_android="$PREBUILT/llvm-ar.exe"
           export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$PREBUILT/x86_64-linux-android35-clang.cmd"
-          cd native && ./gradlew assembleDebug assembleDebugAndroidTest --no-daemon
+          cd native && ./gradlew testDebugUnitTest assembleDebug assembleDebugAndroidTest --no-daemon
 
   visual:
     name: Reader visual matrix evidence

@@ -18,6 +18,11 @@ assert.match(
   /assembleDebug/,
   'Native-app CI job does not assemble the native scaffold.',
 );
+assert.match(
+  JSON.stringify(jobs['native-app']),
+  /testDebugUnitTest/,
+  'Native-app CI job does not run the native unit tests.',
+);
 
 const visualText = JSON.stringify(jobs.visual);
 const webText = JSON.stringify(jobs.web);

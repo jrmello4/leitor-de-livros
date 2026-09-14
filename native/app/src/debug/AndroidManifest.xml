@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Declara a Activity vazia do createComposeRule() para os testes de UI
+     na JVM (Robolectric). Só existe no source set de debug/teste. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity
+            android:name="androidx.activity.ComponentActivity"
+            android:exported="false" />
+    </application>
+</manifest>

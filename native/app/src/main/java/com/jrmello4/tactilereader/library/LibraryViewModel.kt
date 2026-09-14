@@ -19,6 +19,7 @@ data class LibraryUiState(
     val loading: Boolean = true,
     val pubs: List<Pub> = emptyList(),
     val error: String? = null,
+    val notice: String? = null,
 )
 
 /**
@@ -55,6 +56,28 @@ class LibraryViewModel(private val filesDir: File) : ViewModel() {
             pubs = parsePublications(TactileCore.nativeListPublications(dbDir))
         }
         return pubs
+    }
+
+    /** Importa um arquivo já copiado para o armazenamento do app e recarrega. */
+    fun importFile(path: String) {
+        _state.value = _state.value.copy(loading = true, notice = null)
+        viewModelScope.launch {
+            _state.value = try {
+                val outcome = withContext(Dispatchers.IO) {
+                    TactileCore.nativeImportPaths(dbDir, pathsJson(listOf(path)))
+                }
+                val diagnostics = org.json.JSONObject(outcome).optJSONArray("diagnostics")
+                val notice = if (diagnostics != null && diagnostics.length() > 0) {
+                    (0 until diagnostics.length()).joinToString(" ") { diagnostics.getString(it) }
+                } else null
+                val pubs = withContext(Dispatchers.IO) {
+                    parsePublications(TactileCore.nativeListPublications(dbDir))
+                }
+                LibraryUiState(loading = false, pubs = pubs, notice = notice)
+            } catch (error: Exception) {
+                _state.value.copy(loading = false, error = error.message ?: "falha desconhecida")
+            }
+        }
     }
 }
 

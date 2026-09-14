@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
@@ -34,21 +36,43 @@ private fun placeholderColor(id: String): Color {
 }
 
 @Composable
-fun LibraryScreen(viewModel: LibraryViewModel, modifier: Modifier = Modifier) {
+fun LibraryScreen(viewModel: LibraryViewModel, onAddClick: () -> Unit, modifier: Modifier = Modifier) {
     val state by viewModel.state.collectAsState()
+    LibraryContent(state, onAddClick, modifier)
+}
+
+/** Conteúdo puro por estado — testável na JVM sem JNI nem ViewModel. */
+@Composable
+fun LibraryContent(state: LibraryUiState, onAddClick: () -> Unit, modifier: Modifier = Modifier) {
     Column(modifier = modifier.fillMaxSize().background(Color(0xFF0D1117))) {
-        Text(
-            text = "Tactile Reader",
-            style = MaterialTheme.typography.titleLarge,
-            color = Color(0xFFF7F2E8),
-            modifier = Modifier.padding(18.dp, 18.dp, 18.dp, 4.dp),
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(18.dp, 18.dp, 18.dp, 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Tactile Reader",
+                style = MaterialTheme.typography.titleLarge,
+                color = Color(0xFFF7F2E8),
+            )
+            Button(onClick = onAddClick) {
+                Text("+ HQ", color = Color.White)
+            }
+        }
         Text(
             text = "estante local · núcleo nativo",
             style = MaterialTheme.typography.labelMedium,
             color = Color(0xFFC8C0B3),
-            modifier = Modifier.padding(18.dp, 0.dp, 18.dp, 12.dp),
+            modifier = Modifier.padding(18.dp, 0.dp, 18.dp, 4.dp),
         )
+        if (state.notice != null) {
+            Text(
+                text = state.notice!!,
+                style = MaterialTheme.typography.labelSmall,
+                color = Color(0xFFF2A900),
+                modifier = Modifier.padding(18.dp, 0.dp, 18.dp, 8.dp),
+            )
+        }
         when {
             state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("Lendo biblioteca…", color = Color(0xFFC8C0B3))
