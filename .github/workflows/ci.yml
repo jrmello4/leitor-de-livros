@@ -38,11 +38,12 @@ jobs:
           packages: ''
 
       - name: Install platform and build tools
-        # `yes` e `/dev/null` não existem no pwsh: força Git Bash.
+        # `yes` e `/dev/null` não existem no pwsh (força Git Bash) e o
+        # `sdkmanager` do Windows só resolve no bash como `sdkmanager.bat`.
         shell: bash
         run: |
-          yes | sdkmanager --licenses > /dev/null
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          yes | sdkmanager.bat --licenses > /dev/null
+          sdkmanager.bat "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       # O núcleo é Kotlin puro: sem Rust, sem NDK, sem .so por ABI.
       - name: Unit tests and APKs
