@@ -668,3 +668,17 @@ no Moto G34 para o usuário testar.
 - Verificado no host: 50 JVM verdes (testes de conteúdo ajustados aos
   rótulos novos: "All series", "Biblioteca"), `assembleDebug` e
   `assembleDebugAndroidTest` verdes. Reteste no aparelho pendente.
+
+## CI de volta ao verde — 15/09/2026
+
+- O `setup-android@v3` quebrava antes de compilar: tentava instalar o
+  pacote legado `tools`, removido pelo Google (`sdkmanager` exit 1).
+  Virou v4 com `packages: ''` (platform-tools/platforms/build-tools
+  continuam no passo manual).
+- O passo manual assumia shell Unix no runner Windows: ganhou
+  `shell: bash`, chama `sdkmanager.bat` (nome simples não resolve no
+  bash) e perdeu o `yes | --licenses` (morria com SIGPIPE/exit 141 sob
+  pipefail e era redundante com o aceite da action).
+- CI verde no `main`; release manual `v0.3.0` (debug) publicada. A
+  rolling assinada `native-latest` segue bloqueada nos segredos
+  `TACTILE_*`.
