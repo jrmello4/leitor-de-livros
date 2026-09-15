@@ -31,9 +31,8 @@ Detalhes e evidências: `docs/android-status.md`.
    em 91,6 MB. Alvo de 180 MB cumprido com folga; falta a leitura contínua
    dentro do Compose/Coil.
 5. **Release assinada do app nativo** — workflow `release-native.yml`
-   pronto (rolling `native-latest`); falta cadastrar os 4 segredos
-   (`TACTILE_KEY_BASE64`, `TACTILE_STORE_PASSWORD`, `TACTILE_KEY_ALIAS`,
-   `TACTILE_KEY_PASSWORD`).
+   pronto (rolling `native-latest`); reutiliza os segredos `ANDROID_*`
+   da era Tauri (a senha da chave vale como senha do keystore).
 
 ## P1 — conforto (feito no host em 15/09, aparelho pendente)
 

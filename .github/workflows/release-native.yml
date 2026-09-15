@@ -43,40 +43,39 @@ jobs:
         shell: bash
         run: sdkmanager.bat "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      # Segredos esperados (Settings → Secrets → Actions):
-      #   TACTILE_KEY_BASE64      keystore .jks em base64
-      #   TACTILE_STORE_PASSWORD  senha do keystore
-      #   TACTILE_KEY_ALIAS       alias da chave
-      #   TACTILE_KEY_PASSWORD    senha da chave
+      # Segredos reutilizados da era Tauri (Settings → Secrets → Actions):
+      #   ANDROID_KEY_BASE64      keystore .jks em base64
+      #   ANDROID_KEY_ALIAS       alias da chave
+      #   ANDROID_KEY_PASSWORD    senha da chave (vale também como senha do
+      #                           keystore — era assim no workflow antigo)
       - name: Require signing secrets
         shell: bash
         run: |
-          for v in TACTILE_KEY_BASE64 TACTILE_STORE_PASSWORD TACTILE_KEY_ALIAS TACTILE_KEY_PASSWORD; do
+          for v in ANDROID_KEY_BASE64 ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
             if [ -z "${!v}" ]; then
               echo "Missing secret $v — configure it in Settings → Secrets → Actions."
               exit 1
             fi
           done
         env:
-          TACTILE_KEY_BASE64: ${{ secrets.TACTILE_KEY_BASE64 }}
-          TACTILE_STORE_PASSWORD: ${{ secrets.TACTILE_STORE_PASSWORD }}
-          TACTILE_KEY_ALIAS: ${{ secrets.TACTILE_KEY_ALIAS }}
-          TACTILE_KEY_PASSWORD: ${{ secrets.TACTILE_KEY_PASSWORD }}
+          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
       - name: Decode keystore
         shell: bash
         working-directory: native
-        run: echo "$TACTILE_KEY_BASE64" | base64 --decode > release.keystore
+        run: echo "$ANDROID_KEY_BASE64" | base64 --decode > release.keystore
         env:
-          TACTILE_KEY_BASE64: ${{ secrets.TACTILE_KEY_BASE64 }}
+          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
 
       - name: Build signed release APK
         shell: bash
         run: |
           export TACTILE_STORE_FILE="release.keystore"
-          export TACTILE_STORE_PASSWORD="${{ secrets.TACTILE_STORE_PASSWORD }}"
-          export TACTILE_KEY_ALIAS="${{ secrets.TACTILE_KEY_ALIAS }}"
-          export TACTILE_KEY_PASSWORD="${{ secrets.TACTILE_KEY_PASSWORD }}"
+          export TACTILE_STORE_PASSWORD="${{ secrets.ANDROID_KEY_PASSWORD }}"
+          export TACTILE_KEY_ALIAS="${{ secrets.ANDROID_KEY_ALIAS }}"
+          export TACTILE_KEY_PASSWORD="${{ secrets.ANDROID_KEY_PASSWORD }}"
           cd native && ./gradlew assembleRelease --no-daemon
 
       - name: Verify signature and collect APK
