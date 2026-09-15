@@ -30,8 +30,12 @@ jobs:
           java-version: 21
           cache: gradle
 
+      # Igual ao CI: sem `packages: ''` a action tenta instalar o pacote
+      # legado `tools` (removido pelo Google) e o job morre no sdkmanager.
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: ''
 
       - name: Install platform and build tools
         run: |

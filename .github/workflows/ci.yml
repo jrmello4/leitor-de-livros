@@ -29,8 +29,13 @@ jobs:
           java-version: 21
           cache: gradle
 
+      # O pacote legado `tools` foi removido do repositório do Google: sem
+      # `packages: ''` a action tenta `sdkmanager tools` e falha com exit 1.
+      # platform-tools/platforms/build-tools vêm do passo manual abaixo.
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: ''
 
       - name: Install platform and build tools
         run: |
