@@ -45,13 +45,13 @@ jobs:
 
       # Segredos reutilizados da era Tauri (Settings → Secrets → Actions):
       #   ANDROID_KEY_BASE64      keystore .jks em base64
+      #   ANDROID_STORE_PASSWORD  senha do keystore
       #   ANDROID_KEY_ALIAS       alias da chave
-      #   ANDROID_KEY_PASSWORD    senha da chave (vale também como senha do
-      #                           keystore — era assim no workflow antigo)
+      #   ANDROID_KEY_PASSWORD    senha da chave
       - name: Require signing secrets
         shell: bash
         run: |
-          for v in ANDROID_KEY_BASE64 ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+          for v in ANDROID_KEY_BASE64 ANDROID_STORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
             if [ -z "${!v}" ]; then
               echo "Missing secret $v — configure it in Settings → Secrets → Actions."
               exit 1
@@ -59,6 +59,7 @@ jobs:
           done
         env:
           ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
@@ -73,7 +74,7 @@ jobs:
         shell: bash
         run: |
           export TACTILE_STORE_FILE="release.keystore"
-          export TACTILE_STORE_PASSWORD="${{ secrets.ANDROID_KEY_PASSWORD }}"
+          export TACTILE_STORE_PASSWORD="${{ secrets.ANDROID_STORE_PASSWORD }}"
           export TACTILE_KEY_ALIAS="${{ secrets.ANDROID_KEY_ALIAS }}"
           export TACTILE_KEY_PASSWORD="${{ secrets.ANDROID_KEY_PASSWORD }}"
           cd native && ./gradlew assembleRelease --no-daemon
