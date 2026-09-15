@@ -1,5 +1,0 @@
-# Workspace: the portable core only. The Tauri shell is retired; the product
-# is the native Android app in native/, which consumes tactile-core via JNI.
-[workspace]
-members = ["core"]
-resolver = "2"

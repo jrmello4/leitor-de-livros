@@ -1,4 +1,3 @@
-target/
 artifacts/
 test-results/
 .impeccable/
@@ -10,7 +9,6 @@ test-results/
 .tmp-*/
 native/.gradle/
 native/**/build/
-native/app/src/main/jniLibs/
 native/local.properties
 .DS_Store
 Thumbs.db

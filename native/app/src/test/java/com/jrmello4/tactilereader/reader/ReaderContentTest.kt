@@ -1,16 +1,24 @@
 package com.jrmello4.tactilereader.reader
 
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.doubleClick
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
+import androidx.compose.ui.unit.dp
 import com.jrmello4.tactilereader.core.ReaderPage
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -97,20 +105,25 @@ class ReaderContentTest {
             }
         }
         compose.onNodeWithText("demo-hq").assertIsDisplayed()
-        touchTap("pagina-p-page-0")
+        touchTapPageCenter("pagina-p-page-0")
         compose.mainClock.advanceTimeBy(1000)
         assertEquals(0, compose.onAllNodesWithText("demo-hq").fetchSemanticsNodes().size)
-        touchTap("pagina-p-page-0")
+        touchTapPageCenter("pagina-p-page-0")
         compose.mainClock.advanceTimeBy(1000)
         compose.onNodeWithText("demo-hq").assertIsDisplayed()
     }
 
-    /** Toque real (down+up no centro do nó): o HUD ouve gestos, não semântica. */
-    private fun touchTap(text: String) {
+    /**
+     * Toque real no centro horizontal da página: a faixa separa a zona
+     * central (HUD) das laterais (página), então o teste mira o meio da
+     * página e não o canto onde o texto é desenhado.
+     */
+    private fun touchTapPageCenter(text: String) {
         val node = compose.onNodeWithText(text)
-        val size = node.fetchSemanticsNode().size
+        val pageWidth = compose.onRoot().fetchSemanticsNode().size.width.toFloat()
+        val textHeight = node.fetchSemanticsNode().size.height.toFloat()
         node.performTouchInput {
-            down(0, Offset(size.width / 2f, size.height / 2f))
+            down(0, Offset(pageWidth / 2f, textHeight / 2f))
             move()
             up(0)
         }
@@ -144,5 +157,70 @@ class ReaderContentTest {
         }
         compose.onNodeWithText("‹ Biblioteca").performClick()
         assertEquals(1, backs)
+    }
+
+    /**
+     * Regressão do bug real: o detector de pinça consumia o arrasto de um
+     * dedo com zoom 1x e a faixa não rolava. O arrasto precisa chegar ao
+     * LazyColumn e mudar a página visível.
+     */
+    @Test
+    fun swipeUpScrollsTheStripToTheNextPage() {
+        val tallPages = (1..4).map {
+            ReaderPage("pg-$it", it - 1, "%03d.png".format(it), 800, 1200, null)
+        }
+        compose.setContent {
+            MaterialTheme {
+                ReaderContent(
+                    ReaderUiState(loading = false, title = "demo", pages = tallPages),
+                    onBack = {},
+                    pageImage = { page, _, mod ->
+                        androidx.compose.foundation.layout.Box(
+                            mod.fillMaxWidth().height(300.dp),
+                        ) { Text("pagina-${page.id}") }
+                    },
+                )
+            }
+        }
+        compose.onNodeWithText("página 1 de 4").assertIsDisplayed()
+        compose.onRoot().performTouchInput { swipeUp() }
+        compose.waitForIdle()
+        assertTrue(
+            "a faixa não rolou com o arrasto",
+            compose.onAllNodesWithText("página 1 de 4").fetchSemanticsNodes().isEmpty(),
+        )
+    }
+
+    /**
+     * Regressão do relato: com zoom ativo ainda é preciso rolar — o zoom é
+     * global (uma escala na faixa inteira), não um cadeado por página.
+     */
+    @Test
+    fun scrollingStillWorksWhileZoomed() {
+        val tallPages = (1..4).map {
+            ReaderPage("pg-$it", it - 1, "%03d.png".format(it), 800, 1200, null)
+        }
+        compose.setContent {
+            MaterialTheme {
+                ReaderContent(
+                    ReaderUiState(loading = false, title = "demo", pages = tallPages),
+                    onBack = {},
+                    pageImage = { page, _, mod ->
+                        androidx.compose.foundation.layout.Box(
+                            mod.fillMaxWidth().height(300.dp),
+                        ) { Text("pagina-${page.id}") }
+                    },
+                )
+            }
+        }
+        // Duplo-toque amplia (zoom global).
+        compose.onRoot().performTouchInput { doubleClick() }
+        compose.waitForIdle()
+        compose.onRoot().performTouchInput { swipeUp() }
+        compose.waitForIdle()
+        assertTrue(
+            "não dá para rolar com o zoom ativo",
+            compose.onAllNodesWithText("página 1 de 4").fetchSemanticsNodes().isEmpty(),
+        )
     }
 }

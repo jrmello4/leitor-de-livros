@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.jrmello4.tactilereader.core.Pub
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -70,11 +71,12 @@ class LibraryContentTest {
             }
         }
         // Raiz mostra a série uma vez; o detalhe ordena #02 antes de #10.
-        compose.onNodeWithText("Série X").assertIsDisplayed()
-        compose.onNodeWithText("2 edições").assertIsDisplayed()
-        compose.onNodeWithText("Série X").performClick()
+        // A tela de teste é pequena: rola até o card antes de conferir.
+        compose.onNodeWithText("Série X").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("2 edições").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Série X").performScrollTo().performClick()
         compose.onNodeWithText("‹ All series").assertIsDisplayed()
-        compose.onNodeWithText("capa-b").assertIsDisplayed()
+        compose.onNodeWithText("capa-b").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("capa-b").performClick()
         assertEquals("b", opened)
     }

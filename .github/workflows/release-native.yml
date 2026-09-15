@@ -12,9 +12,6 @@ concurrency:
   group: native-release
   cancel-in-progress: false
 
-env:
-  NDK_VERSION: 28.2.13676358
-
 jobs:
   build-and-publish:
     name: Build signed APK and update native-latest
@@ -36,21 +33,10 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install platform, build tools and NDK
+      - name: Install platform and build tools
         run: |
           yes | sdkmanager --licenses > /dev/null
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;${NDK_VERSION}"
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          targets: aarch64-linux-android,x86_64-linux-android
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: .
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       # Segredos esperados (Settings → Secrets → Actions):
       #   TACTILE_KEY_BASE64      keystore .jks em base64
@@ -82,14 +68,6 @@ jobs:
       - name: Build signed release APK
         shell: bash
         run: |
-          PREBUILT="$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/windows-x86_64/bin"
-          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
-          export CC_aarch64_linux_android="$PREBUILT/aarch64-linux-android35-clang.cmd"
-          export AR_aarch64_linux_android="$PREBUILT/llvm-ar.exe"
-          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$PREBUILT/aarch64-linux-android35-clang.cmd"
-          export CC_x86_64_linux_android="$PREBUILT/x86_64-linux-android35-clang.cmd"
-          export AR_x86_64_linux_android="$PREBUILT/llvm-ar.exe"
-          export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$PREBUILT/x86_64-linux-android35-clang.cmd"
           export TACTILE_STORE_FILE="release.keystore"
           export TACTILE_STORE_PASSWORD="${{ secrets.TACTILE_STORE_PASSWORD }}"
           export TACTILE_KEY_ALIAS="${{ secrets.TACTILE_KEY_ALIAS }}"
@@ -107,14 +85,14 @@ jobs:
           fi
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK"
           mkdir -p release-artifacts
-          cp "$APK" "release-artifacts/tactile-native-0.1.1.apk"
-          echo "apk_name=tactile-native-0.1.1.apk" >> "$GITHUB_OUTPUT"
+          cp "$APK" "release-artifacts/tactile-native-0.3.0.apk"
+          echo "apk_name=tactile-native-0.3.0.apk" >> "$GITHUB_OUTPUT"
 
       - name: Publish native-latest release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: native-latest
-          name: "Native rolling (0.1.1+${{ github.run_number }})"
+          name: "Native rolling (0.3.0+${{ github.run_number }})"
           body: |
             Rolling build from `main` — app Android nativo.
 

@@ -3,13 +3,10 @@ package com.jrmello4.tactilereader.reader
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.jrmello4.tactilereader.core.LibraryDb
+import com.jrmello4.tactilereader.scaffold.AppSources
 import com.jrmello4.tactilereader.core.ReaderPage
 import com.jrmello4.tactilereader.core.ReaderProgress
-import com.jrmello4.tactilereader.core.TactileCore
-import com.jrmello4.tactilereader.core.parseEnsurePage
-import com.jrmello4.tactilereader.core.parseReaderPages
-import com.jrmello4.tactilereader.core.parseReaderState
-import com.jrmello4.tactilereader.core.resolveImmediatePage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,11 +30,12 @@ data class ReaderUiState(
 )
 
 /**
- * Faixa de leitura lendo do núcleo via JNI, sempre fora da thread principal.
+ * Faixa de leitura lendo do núcleo Kotlin puro, sempre fora da thread
+ * principal.
  *
  * Páginas são preguiçosas: a abertura lista só metadados (+ caminho já
  * materializado); `requestPage` garante os bytes da página visível via
- * `nativeEnsurePage` e guarda o arquivo em [paths] (máx. 400 entradas).
+ * `ensurePage` e guarda o arquivo em [paths] (máx. 400 entradas).
  * `saveProgress` persiste `{pageId, scrollRatio}` sem bloquear a rolagem.
  */
 class ReaderViewModel(
@@ -45,11 +43,16 @@ class ReaderViewModel(
     val publicationId: String,
     title: String,
 ) : ViewModel() {
-    private val dbDir: String = File(filesDir, "lib").absolutePath
+    // Preguiçoso de propósito: abrir SQLite nunca na main thread.
+    private val db: LibraryDb by lazy {
+        LibraryDb.open(File(filesDir, "lib"), File(filesDir, "imports"), AppSources.opener)
+    }
     private val _state = MutableStateFlow(ReaderUiState(title = title))
     val state: StateFlow<ReaderUiState> = _state
     private val _paths = MutableStateFlow<Map<String, String>>(emptyMap())
     val paths: StateFlow<Map<String, String>> = _paths
+    private val _bookmarks = MutableStateFlow<Set<String>>(emptySet())
+    val bookmarks: StateFlow<Set<String>> = _bookmarks
     private val inFlight = Collections.synchronizedSet(mutableSetOf<String>())
 
     init {
@@ -76,20 +79,47 @@ class ReaderViewModel(
     }
 
     private fun loadPagesAndState(): Pair<List<ReaderPage>, ReaderProgress?> {
-        val pages = parseReaderPages(TactileCore.nativeListPages(dbDir, publicationId))
+        val pages = db.listPages(publicationId)
         val progress = try {
-            parseReaderState(TactileCore.nativeLoadReaderState(dbDir, publicationId))
+            db.loadReaderState(publicationId)
         } catch (_: Exception) {
             null
+        }
+        try {
+            _bookmarks.value = db.listBookmarks(publicationId).map { it.pageId }.toSet()
+        } catch (_: Exception) {
+            // Marcadores são melhor-esforço.
         }
         val known = pages.map { it.id }.toSet()
         val start = progress?.takeIf { known.contains(it.pageId) }
         return pages to start
     }
 
+    /** Alterna marcador na página atual; otimista com rollback. */
+    fun toggleBookmark(pageId: String, label: String = "") {
+        if (pageId.isBlank()) return
+        val had = _bookmarks.value.contains(pageId)
+        _bookmarks.value = if (had) _bookmarks.value - pageId else _bookmarks.value + pageId
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    if (had) {
+                        db.removeBookmark(publicationId, pageId)
+                    } else {
+                        db.upsertBookmark(publicationId, pageId, label)
+                    }
+                }
+            } catch (_: Exception) {
+                _bookmarks.value = if (had) _bookmarks.value + pageId else _bookmarks.value - pageId
+            }
+        }
+    }
+
+    fun isBookmarked(pageId: String): Boolean = _bookmarks.value.contains(pageId)
+
     /**
-     * Garante a página visível. `cachePath` já em disco resolve sem JNI;
-     * página nova reconstrói só aqueles bytes do original somente-leitura.
+     * Garante a página visível. `cachePath` já em disco resolve sem tocar no
+     * original; página nova reconstrói só aqueles bytes do original.
      */
     fun requestPage(page: ReaderPage) {
         if (_paths.value.containsKey(page.id) || !inFlight.add(page.id)) {
@@ -103,7 +133,7 @@ class ReaderViewModel(
                     return@launch
                 }
                 val ensured = withContext(Dispatchers.IO) {
-                    parseEnsurePage(TactileCore.nativeEnsurePage(dbDir, publicationId, page.id))
+                    db.ensurePage(publicationId, page.id).cachePath
                 }
                 if (ensured != null && withContext(Dispatchers.IO) { File(ensured).isFile }) {
                     cachePath(page.id, ensured)
@@ -124,7 +154,7 @@ class ReaderViewModel(
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    TactileCore.nativeSaveReaderState(dbDir, publicationId, pageId, scrollRatio)
+                    db.saveReaderState(publicationId, pageId, scrollRatio)
                 }
             } catch (_: Exception) {
                 // Progresso é melhor-esforço; a próxima parada tenta de novo.
@@ -153,6 +183,21 @@ class ReaderViewModel(
         }
         _paths.value = current
     }
+}
+
+/**
+ * Página já disponível sem reconstruir: o `cachePath` listado resolve quando
+ * o arquivo existe em disco. Pura e testável na JVM.
+ */
+internal fun resolveImmediatePage(
+    page: ReaderPage,
+    exists: (String) -> Boolean = { File(it).isFile },
+): String? {
+    val path = page.cachePath
+    if (!path.isNullOrBlank() && exists(path)) {
+        return path
+    }
+    return null
 }
 
 class ReaderViewModelFactory(

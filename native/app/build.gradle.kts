@@ -9,14 +9,13 @@ android {
     // O app nativo final reassume o identificador do produto.
     namespace = "com.jrmello4.tactilereader.scaffold"
     compileSdk = 35
-    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         applicationId = "com.jrmello4.tactilereader.scaffold"
         minSdk = 26
         targetSdk = 35
         versionCode = (System.getenv("TACTILE_VERSION_CODE")?.toIntOrNull() ?: 1)
-        versionName = "0.1.1"
+        versionName = "0.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -63,43 +62,9 @@ android {
     }
 }
 
-// Compila o núcleo Rust para cada ABI e copia o .so para jniLibs.
-// Requer Rust + targets Android instalados e o NDK acima.
-val abiTargets = mapOf(
-    "arm64-v8a" to "aarch64-linux-android",
-    "x86_64" to "x86_64-linux-android",
-)
-
-val hostOs = System.getProperty("os.name").lowercase()
-val hostTag = when {
-    hostOs.contains("win") -> "windows-x86_64"
-    hostOs.contains("mac") -> "darwin-x86_64"
-    else -> "linux-x86_64"
-}
-val clangExt = if (hostOs.contains("win")) ".cmd" else ""
-
-val copyCoreSoTasks = abiTargets.map { (abi, target) ->
-    val envName = target.uppercase().replace("-", "_")
-    val buildTask = tasks.register<Exec>("cargoBuildCore${abi.replace("-", "_")}") {
-        val ndkBin = android.ndkDirectory
-            .resolve("toolchains/llvm/prebuilt/$hostTag/bin")
-        workingDir(rootDir.resolve(".."))
-        commandLine("cargo", "build", "--release", "-p", "tactile-core", "--target", target)
-        environment("ANDROID_NDK_HOME", android.ndkDirectory.absolutePath)
-        environment("CC_${envName}", ndkBin.resolve("${target}35-clang${clangExt}").absolutePath)
-        environment("AR_${envName}", ndkBin.resolve("llvm-ar${if (hostOs.contains("win")) ".exe" else ""}").absolutePath)
-        environment("CARGO_TARGET_${envName}_LINKER", ndkBin.resolve("${target}35-clang${clangExt}").absolutePath)
-    }
-    tasks.register<Copy>("copyCoreSo${abi.replace("-", "_")}") {
-        dependsOn(buildTask)
-        from(rootDir.resolve("../target/$target/release/libtactile_core.so"))
-        into(layout.projectDirectory.dir("src/main/jniLibs/$abi"))
-    }
-}
-
-tasks.named("preBuild") {
-    dependsOn(copyCoreSoTasks)
-}
+// O núcleo agora é Kotlin puro: sem NDK, sem cargo, sem .so por ABI.
+// Bibliotecas de arquivo: junrar (RAR4/RAR5, licença UnRAR — só extração),
+// commons-compress + xz (7z) e slf4j-nop para silenciar o binding do junrar.
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
@@ -115,6 +80,12 @@ dependencies {
     // Capas lazy da estante: carrega o arquivo garantido pelo núcleo com
     // limite de memória/tamanho; placeholder de cor permanece no erro.
     implementation("io.coil-kt.coil3:coil-compose:3.0.4")
+    // CBR/RAR4/RAR5 em Java puro (junrar 8.x; o 7.x não lia RAR5).
+    implementation("com.github.junrar:junrar:8.1.1")
+    // 7z em Java puro (Apache Commons Compress + XZ para LZMA/LZMA2).
+    implementation("org.apache.commons:commons-compress:1.28.0")
+    implementation("org.tukaani:xz:1.10")
+    runtimeOnly("org.slf4j:slf4j-nop:2.0.17")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.14.1")
     testImplementation("androidx.compose.ui:ui-test-junit4")

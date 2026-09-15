@@ -14,40 +14,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  core:
-    name: Rust core verification
-    runs-on: windows-latest
-    timeout-minutes: 45
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          components: rustfmt, clippy
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: .
-
-      - name: Check Rust formatting
-        run: cargo fmt --all -- --check
-
-      - name: Run Rust lint (portable core)
-        run: cargo clippy --locked -p tactile-core --all-targets --all-features -- -D warnings
-
-      - name: Run Rust tests (portable core)
-        run: cargo test --locked -p tactile-core
-
   native-app:
     name: Native app assemble and unit tests
     runs-on: windows-latest
     timeout-minutes: 45
-    env:
-      NDK_VERSION: 28.2.13676358
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -62,34 +32,15 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install platform, build tools and NDK
+      - name: Install platform and build tools
         run: |
           yes | sdkmanager --licenses > /dev/null
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;${NDK_VERSION}"
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          targets: aarch64-linux-android,x86_64-linux-android
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: .
-
-      - name: Unit tests and scaffold assemble (builds core .so via NDK)
+      # O núcleo é Kotlin puro: sem Rust, sem NDK, sem .so por ABI.
+      - name: Unit tests and APKs
         shell: bash
-        run: |
-          PREBUILT="$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/windows-x86_64/bin"
-          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
-          export CC_aarch64_linux_android="$PREBUILT/aarch64-linux-android35-clang.cmd"
-          export AR_aarch64_linux_android="$PREBUILT/llvm-ar.exe"
-          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$PREBUILT/aarch64-linux-android35-clang.cmd"
-          export CC_x86_64_linux_android="$PREBUILT/x86_64-linux-android35-clang.cmd"
-          export AR_x86_64_linux_android="$PREBUILT/llvm-ar.exe"
-          export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$PREBUILT/x86_64-linux-android35-clang.cmd"
-          cd native && ./gradlew testDebugUnitTest assembleDebug assembleDebugAndroidTest --no-daemon
+        run: cd native && ./gradlew testDebugUnitTest assembleDebug assembleDebugAndroidTest --no-daemon
 
       - name: Upload scaffold debug APK
         uses: actions/upload-artifact@v7

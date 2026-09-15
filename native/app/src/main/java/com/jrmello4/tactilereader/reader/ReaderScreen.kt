@@ -2,8 +2,11 @@ package com.jrmello4.tactilereader.reader
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,13 +49,23 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.jrmello4.tactilereader.core.ReaderPage
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 import java.io.File
 
 @Composable
-fun ReaderScreen(viewModel: ReaderViewModel, onBack: () -> Unit, modifier: Modifier = Modifier) {
+fun ReaderScreen(
+    viewModel: ReaderViewModel,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    nextTitle: String? = null,
+    onBingeOpenNext: () -> Unit = {},
+) {
     val state by viewModel.state.collectAsState()
     val paths by viewModel.paths.collectAsState()
+    val bookmarks by viewModel.bookmarks.collectAsState()
     BackHandler(onBack = onBack)
     ReaderContent(
         state = state,
@@ -61,10 +74,15 @@ fun ReaderScreen(viewModel: ReaderViewModel, onBack: () -> Unit, modifier: Modif
         paths = paths,
         onPageVisible = viewModel::requestPage,
         onProgress = viewModel::saveProgress,
+        bookmarks = bookmarks,
+        onToggleBookmark = viewModel::toggleBookmark,
+        nextTitle = nextTitle,
+        onBingeOpenNext = onBingeOpenNext,
     )
 }
 
 /** Faixa de leitura pura por estado — testável na JVM sem JNI nem ViewModel. */
+@OptIn(FlowPreview::class)
 @Composable
 fun ReaderContent(
     state: ReaderUiState,
@@ -76,9 +94,21 @@ fun ReaderContent(
     pageImage: @Composable (ReaderPage, File?, Modifier) -> Unit = { page, file, mod ->
         DefaultPageImage(page, file, mod)
     },
+    bookmarks: Set<String> = emptySet(),
+    onToggleBookmark: (String) -> Unit = {},
+    nextTitle: String? = null,
+    onBingeOpenNext: () -> Unit = {},
 ) {
     var hud by rememberSaveable { mutableStateOf(true) }
     val listState = rememberLazyListState()
+
+    // Ler não deve apagar a tela no meio de uma página.
+    val view = androidx.compose.ui.platform.LocalView.current
+    androidx.compose.runtime.DisposableEffect(view) {
+        view.keepScreenOn = true
+        onDispose { view.keepScreenOn = false }
+    }
+
     val pages = state.pages
     val targetIndex = state.startPageId?.let { id -> pages.indexOfFirst { it.id == id } } ?: -1
     val needsOffset = targetIndex > 0 && state.startRatio > 0.01
@@ -110,7 +140,8 @@ fun ReaderContent(
     }
 
     // Observa a primeira página visível e persiste {pageId, scrollRatio} —
-    // só depois da restauração, para não sobrescrever o ponto salvo.
+    // só depois da restauração, para não sobrescrever o ponto salvo. Com
+    // debounce: rolar não vira dezenas de escritas por segundo no SQLite.
     LaunchedEffect(listState, pages, didRestore, didRestoreOffset) {
         snapshotFlow {
             val info = listState.layoutInfo.visibleItemsInfo.firstOrNull()
@@ -121,14 +152,64 @@ fun ReaderContent(
                 val ratio = if (info.size > 0) (-info.offset.toDouble() / info.size).coerceIn(0.0, 1.0) else 0.0
                 page.id to ratio
             }
-        }.distinctUntilChanged().collect { current ->
+        }.distinctUntilChanged().debounce(500).collect { current ->
             if (current != null) {
                 onProgress(current.first, current.second)
             }
         }
     }
 
+    // Teclas físicas de volume: avançam/voltam uma página sem tocar na tela.
+    LaunchedEffect(listState, pages.size) {
+        VolumeScrollBus.events.collect { direction ->
+            val target = (listState.firstVisibleItemIndex + direction)
+                .coerceIn(0, (pages.size - 1).coerceAtLeast(0))
+            listState.animateScrollToItem(target)
+        }
+    }
+
     val firstVisible by remember { derivedStateOf { listState.firstVisibleItemIndex } }
+    val currentPage = pages.getOrNull(firstVisible)
+    val isLastStretch = pages.isNotEmpty() && firstVisible >= (pages.size - 2).coerceAtLeast(0)
+    var bingeVisible by remember(pages, nextTitle) { mutableStateOf(true) }
+    var bingeCountdown by remember(pages, nextTitle) { mutableStateOf<Int?>(null) }
+    // Binge: no fim da edição, conta 6s e abre a próxima; Cancelar aborta
+    // (bingeVisible é chave do efeito, então cancelar interrompe a contagem).
+    LaunchedEffect(isLastStretch, nextTitle, didRestore, bingeVisible) {
+        if (!isLastStretch || nextTitle == null || !didRestore || !bingeVisible) {
+            bingeCountdown = null
+            return@LaunchedEffect
+        }
+        for (left in 6 downTo 1) {
+            bingeCountdown = left
+            kotlinx.coroutines.delay(1000)
+        }
+        bingeCountdown = null
+        onBingeOpenNext()
+    }
+
+    // Zoom GLOBAL do leitor (não por página): um único estado de escala e
+    // deslocamento horizontal aplicado à faixa inteira. Rolar na vertical
+    // continua sempre livre — ampliado ou não; arrasto horizontal vira pan
+    // só quando ampliado.
+    var zoom by remember(pages) { mutableStateOf(1f) }
+    var panX by remember(pages) { mutableStateOf(0f) }
+    var viewport by remember { mutableStateOf(IntSize.Zero) }
+
+    fun clampPan(value: Float): Float {
+        val width = viewport.width.toFloat()
+        if (width <= 0f || zoom <= 1f) return 0f
+        val max = width * (zoom - 1f) / 2f
+        return value.coerceIn(-max, max)
+    }
+
+    // Toque por zona: centro alterna o HUD; lateral superior/inferior avança
+    // ou volta uma página (mesma semântica das teclas de volume).
+    suspend fun scrollBlock(direction: Int) {
+        val target = (firstVisible + direction).coerceIn(0, (pages.size - 1).coerceAtLeast(0))
+        listState.animateScrollToItem(target)
+    }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
         when {
@@ -141,21 +222,103 @@ fun ReaderContent(
                     TextButton(onClick = onBack) { Text("‹ Biblioteca") }
                 }
             }
-            else -> LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(0.dp),
-                verticalArrangement = Arrangement.spacedBy(0.dp),
-            ) {
-                items(pages, key = { it.id }) { page ->
-                    val file = paths[page.id]?.let { File(it) }
-                    LaunchedEffect(page.id, paths[page.id]) {
-                        if (file == null) {
-                            onPageVisible(page)
+            else -> Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .onSizeChanged { viewport = it }
+                    .graphicsLayer(
+                        scaleX = zoom,
+                        scaleY = zoom,
+                        translationX = panX,
+                        clip = true,
+                    )
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false)
+                            do {
+                                val event = awaitPointerEvent()
+                                val pressed = event.changes.count { it.pressed }
+                                val zoomChange = event.calculateZoom()
+                                val pan = event.calculatePan()
+                                if (pressed > 1) {
+                                    // Pinça: escala global.
+                                    zoom = (zoom * zoomChange).coerceIn(1f, 5f)
+                                    panX = clampPan(panX)
+                                    event.changes.forEach { it.consume() }
+                                } else if (zoom > 1f &&
+                                    kotlin.math.abs(pan.x) > kotlin.math.abs(pan.y)
+                                ) {
+                                    // Ampliado e arrasto horizontal: pan lateral.
+                                    panX = clampPan(panX + pan.x)
+                                    event.changes.forEach { it.consume() }
+                                }
+                                // Arrasto vertical nunca é consumido: é a rolagem.
+                            } while (event.changes.any { it.pressed })
                         }
                     }
-                    ZoomablePage(onTap = { hud = !hud }) {
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = { pos ->
+                                // pos chega no espaço da camada; converte para a tela.
+                                val width = viewport.width.toFloat()
+                                val height = viewport.height.toFloat()
+                                val screenX = if (width > 0) {
+                                    (pos.x - width / 2f) * zoom + width / 2f + panX
+                                } else {
+                                    pos.x
+                                }
+                                val screenY = if (height > 0) {
+                                    (pos.y - height / 2f) * zoom + height / 2f
+                                } else {
+                                    pos.y
+                                }
+                                val xFrac = if (width > 0) screenX / width else 0.5f
+                                val yFrac = if (height > 0) screenY / height else 0.5f
+                                if (xFrac in 0.35f..0.65f) {
+                                    hud = !hud
+                                } else {
+                                    scope.launch { scrollBlock(if (yFrac < 0.5f) -1 else 1) }
+                                }
+                            },
+                            onDoubleTap = {
+                                if (zoom > 1f) {
+                                    zoom = 1f
+                                } else {
+                                    zoom = 2f
+                                }
+                                panX = 0f
+                            },
+                        )
+                    },
+            ) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(0.dp),
+                    verticalArrangement = Arrangement.spacedBy(0.dp),
+                ) {
+                    items(pages, key = { it.id }) { page ->
+                        val file = paths[page.id]?.let { File(it) }
+                        LaunchedEffect(page.id, paths[page.id]) {
+                            if (file == null) {
+                                onPageVisible(page)
+                            }
+                        }
                         pageImage(page, file, Modifier)
+                    }
+                    // Binge: card de transição no fim da edição.
+                    if (nextTitle != null && pages.isNotEmpty()) {
+                        item(key = "binge") {
+                            BingeCard(
+                                nextTitle = nextTitle,
+                                countdown = bingeCountdown,
+                                onOpenNow = onBingeOpenNext,
+                                onCancel = {
+                                    bingeVisible = false
+                                    bingeCountdown = null
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -178,6 +341,13 @@ fun ReaderContent(
                         maxLines = 1,
                         modifier = Modifier.weight(1f).padding(start = 4.dp),
                     )
+                    val marked = currentPage?.let { bookmarks.contains(it.id) } == true
+                    TextButton(
+                        onClick = { currentPage?.let { onToggleBookmark(it.id) } },
+                        enabled = currentPage != null,
+                    ) {
+                        Text(if (marked) "★" else "☆", color = Color(0xFFF2A900))
+                    }
                 }
                 Box(Modifier.weight(1f))
                 if (pages.isNotEmpty()) {
@@ -201,67 +371,44 @@ fun ReaderContent(
     }
 }
 
-/**
- * Invólucro de zoom por página: pinça até 5x com pan limitado às bordas,
- * duplo-toque alterna 1x/2x centrado no ponto tocado, toque simples sobe
- * para o HUD. O estado morre com a página (remember sem saveable): zoom
- * não é progresso e não deve sobreviver à saída da faixa.
- */
 @Composable
-private fun ZoomablePage(
-    onTap: () -> Unit,
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit,
+private fun BingeCard(
+    nextTitle: String,
+    countdown: Int?,
+    onOpenNow: () -> Unit,
+    onCancel: () -> Unit,
 ) {
-    var scale by remember { mutableStateOf(1f) }
-    var offset by remember { mutableStateOf(Offset.Zero) }
-    var viewport by remember { mutableStateOf(IntSize.Zero) }
-
-    fun clampOffset(next: Float, raw: Offset, size: IntSize): Offset {
-        if (next <= 1f || size == IntSize.Zero) {
-            return Offset.Zero
-        }
-        val maxX = size.width * (next - 1f) / 2f
-        val maxY = size.height * (next - 1f) / 2f
-        return Offset(raw.x.coerceIn(-maxX, maxX), raw.y.coerceIn(-maxY, maxY))
-    }
-
-    Box(
-        modifier = modifier
+    Column(
+        modifier = Modifier
             .fillMaxWidth()
-            .onSizeChanged { viewport = it }
-            .graphicsLayer(
-                scaleX = scale,
-                scaleY = scale,
-                translationX = offset.x,
-                translationY = offset.y,
-                clip = true,
-            )
-            .pointerInput(Unit) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    val next = (scale * zoom).coerceIn(1f, 5f)
-                    scale = next
-                    offset = clampOffset(next, offset + pan, viewport)
-                }
-            }
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onTap = { onTap() },
-                    onDoubleTap = { pos ->
-                        if (scale > 1f) {
-                            scale = 1f
-                            offset = Offset.Zero
-                        } else {
-                            val next = 2f
-                            val center = Offset(viewport.width / 2f, viewport.height / 2f)
-                            scale = next
-                            offset = clampOffset(next, (center - pos) * next, viewport)
-                        }
-                    },
-                )
-            },
+            .background(Color(0xFF151B23))
+            .padding(18.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        content()
+        Text(
+            text = "Fim da edição",
+            style = MaterialTheme.typography.labelMedium,
+            color = Color(0xFFC8C0B3),
+        )
+        Text(
+            text = nextTitle,
+            style = MaterialTheme.typography.titleSmall,
+            color = Color(0xFFF7F2E8),
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        Text(
+            text = if (countdown != null) "Abrindo em ${countdown}s…" else "Próxima edição pronta",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFFF2A900),
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(top = 8.dp),
+        ) {
+            TextButton(onClick = onOpenNow) { Text("Abrir agora", color = Color.White) }
+            TextButton(onClick = onCancel) { Text("Cancelar", color = Color(0xFFC8C0B3)) }
+        }
     }
 }
 
