@@ -486,5 +486,166 @@ aparecer no ADB sem fio; o dispositivo ficou offline após o teste anterior.
 - Moto G34 fora do `adb` nesta sessão (`adb devices` vazio): teste
   instrumentado do leitor, gestos no aparelho e ensaio longo de memória
   continuam pendentes.
-- Resta: teclas de volume, binge, backup local/PT-BR/tela de update,
-  PDF, scanner em background, OPDS.
+- Resta (aparelho): instrumentado, gestos físicos, ensaio longo de memória,
+  backup/restore ponta a ponta, PDF real, OPDS contra servidor real.
+
+## Lote completo no host — 15/09/2026 (aparelho pendente, testes diferidos)
+
+- JNI novo: `nativeLibrarySnapshot`, `nativeSetFavorite`,
+  `nativeDeletePublication`, `nativeMarkRead`, `nativeListBookmarks`,
+  `nativeUpsertBookmark`, `nativeRemoveBookmark`, `nativeCacheInfo`,
+  `nativeClearCache`. Núcleo lê `ComicInfo.xml` do CBZ (Série #NN).
+- Leitor: toque central = HUD, laterais = página, volume físico = página,
+  marcadores ★/☆ no HUD, binge com contagem de 6s + Cancelar + Abrir agora.
+- Estante: busca, filtros (Todas/Continuar/★/Novas), ordenação,
+  Continuar lendo, seleção múltipla (toque longo) com Lido/Limpar/Excluir,
+  favorito por card, menu •••, aba Pastas com revarredura, import SAF
+  recursivo (500 arquivos, PDF incluso).
+- PDF via `PdfRenderer`: original em `imports/`, PNGs em `pdf-pages/`.
+- Ajustes PT-BR: backup local JSON, cache com limpeza, update
+  `native-latest`, OPDS/Komga/Kavita-via-OPDS com download cancelável.
+- Permissões novas: `INTERNET` + `ACCESS_NETWORK_STATE` (só servidores do
+  usuário e GitHub). Versão `0.2.0`.
+- Verificado no host: 53 Rust (1 ignorado), clippy/fmt verdes (corrigido um
+  cast redundante no JNI apontado pelo clippy novo), 49 JVM (8 novos
+  `BookmarkJsonTest`; `tapTogglesHud` ajustado à zona central), `.so` ARM64
+  com os 18 símbolos `TactileCore`, `assembleDebug` e
+  `assembleDebugAndroidTest` verdes.
+- Instrumentado no aparelho, gestos físicos e ensaio longo de memória
+  seguem pendentes (Moto G34 fora do `adb`).
+
+## Núcleo em Kotlin puro — 15/09/2026 (host)
+
+- Decisão de produto: uma linguagem só. O crate Rust e o JNI foram removidos
+  (`core/`, `Cargo.*`, `.so` por ABI, tarefas cargo/NDK). O app é Kotlin
+  puro; o CI perdeu o job Rust e o Android SDK não precisa mais de NDK.
+- Porta fiel do núcleo para `native/app/.../tactilereader/core/`:
+  `LibraryDb` (schema v6 idêntico — bancos existentes seguem válidos —,
+  migrações idempotentes, snapshot, bookmarks, favorito, marcar lido,
+  remoção com limpeza de cache, info/limpeza de cache, LRU simples),
+  `Importer` (CBZ via `java.util.zip`, CBR/RAR4/RAR5 via `junrar` 8.1.1 —
+  o 7.x não lia RAR5 —, 7z via `commons-compress` + `xz`, pastas e coleções
+  ZIP, `ComicInfo.xml` no título), `Internals` (dígitos `sha256` truncados
+  iguais aos do Rust, ordem natural, traversal, reparo de nomes legados).
+- Limitação real do SQLite do sistema: Android 8 tem SQLite 3.18 e não
+  suporta UPSERT (3.24+), que o núcleo embutido do Rust usava; todos os
+  UPSERTs foram reescritos (UPDATE + INSERT, preservando `created_at`) e
+  `PRAGMA journal_mode` passa por `rawQuery` (execSQL recusa statements que
+  retornam linhas).
+- Robolectric agora roda em modo nativo (`robolectric.properties`:
+  `sqliteMode=NATIVE`, `graphicsMode=NATIVE`) para exercitar SQLite e
+  `BitmapFactory` reais na JVM.
+- Verificado no host: 36 JVM verdes (novos `LibraryDbTest` com
+  importar→listar→garantir página→progresso→marcadores→favorito→remover e
+  `InternalsTest` portando os casos de nomes/ordem do Rust),
+  `assembleDebug` e `assembleDebugAndroidTest` verdes. APK 0.3.0.
+- Instrumentado (`LibraryCoreInstrumentedTest`), gestos físicos, ensaio
+  longo e leitura de RAR5 real seguem pendentes de aparelho.
+
+## Endurecimento para uso real — 15/09/2026 (host)
+
+- SQLite nunca mais abre na main thread: `LibraryViewModel`,
+  `ReaderViewModel` e Ajustes usam banco preguiçoso criado dentro de
+  `Dispatchers.IO` (antes, `open` + migração + reconciliação rodavam na
+  composição/init do ViewModel — risco de ANR no cold start).
+- Teclas de volume só passam a página com o leitor aberto; antes o app
+  sequestrava o volume em todas as telas.
+- Exclusão pede confirmação (diálogo explica que o original não é tocado)
+  tanto no menu do card quanto na seleção em lote.
+- Cópia de pasta mostra aviso "Copiando arquivos…" (overlay) e avisa quando
+  a pasta passa do teto de 500 arquivos; pasta sem arquivos suportados
+  também avisa.
+- Import de backup ganhou botão próprio em Ajustes (antes ficava escondido
+  no "+ HQ").
+- Back do Android volta de Ajustes e Servidores (antes fechava o app).
+- Leitor mantém a tela acesa enquanto aberto.
+- Progresso de leitura com debounce de 500 ms: rolar não gera dezenas de
+  escritas por segundo no SQLite.
+- Nome das cópias segue o layout legado `<ts>-<índice>-<nome>`, para o
+  reparo exibir "2000 AD #01" corretamente (antes, nomes iniciados por
+  dígitos perdiam o começo no título).
+- Download OPDS preserva a extensão real (PDF baixa como PDF e passa pelo
+  `PdfImporter`); PDF solto em `imports/` não é reindexado a cada
+  revarredura.
+- A estante não cria mais a HQ de demonstração sozinha: biblioteca vazia
+  mostra o convite para importar.
+- Verificado no host: 43 JVM verdes (novos `BackupManagerTest`,
+  `ResolveHelpersTest`, roundtrip de reabertura no `LibraryDbTest`),
+  `assembleDebug` e `assembleDebugAndroidTest` verdes.
+
+## Validação no Moto G34 — 15/09/2026 (aparelho)
+
+Aparelho: `moto g34 5G`, Android 15, conectado por ADB sem fio (mDNS).
+
+- **Instrumentado 6/6 verdes** (`connectedDebugAndroidTest`):
+  abrir/reabrir banco, importar CBZ gerado no aparelho, capa sob demanda,
+  páginas + progresso + marcadores, **RAR5 real** e ensaio longo de memória.
+- **RAR5 de verdade**: fixture `rar5-fixture.cbr` (545 B, WinRAR `-ma5`,
+  assinatura `Rar!\x1a\x07\x01\x00`) versionado em
+  `app/src/test/resources/` e `app/src/androidTest/assets/`. O teste JVM
+  `Rar5FixtureTest` e o instrumentado importam, listam 3 páginas em ordem e
+  reconstroem os bytes — nenhuma biblioteca Java cria RAR, por isso o
+  arquivo é versionado.
+- **Ensaio longo de memória** (`LongComicMemoryTest`): capítulo gerado com
+  120 páginas de 1080×2400, decodificação igual à do leitor (`size(1080)`)
+  e janela deslizante de 5 bitmaps. Resultado no aparelho:
+  PSS base **76.964 KB**, pico **93.744 KB**, delta **16.780 KB** — a
+  janela não cresce com o capítulo e o pico fica muito abaixo do alvo de
+  180 MB. O teste trava o delta < 80 MB (pega vazamento).
+- **Teto de cache do Coil**: `TactileApp` limita o cache em memória a
+  64 MB (o padrão do Coil reserva 25% da RAM — poderia passar de 1 GB num
+  aparelho de 4 GB).
+- **App real** (debug, estante, cold start): `TOTAL PSS 93.753 KB`
+  (~91,6 MB) — dentro do alvo de 180 MB.
+- Limitação honesta: o ensaio longo mede núcleo + decodificação e o PSS
+  real mede a estante; a leitura contínua dentro do Compose/Coil ainda não
+  foi medida ponta a ponta.
+
+## Correções reportadas no uso real — 15/09/2026
+
+Dois bugs encontrados usando o app no Moto G34:
+
+1. **Import de pasta parecia travar**: importar centenas de arquivos lê e
+   valida cada página de cada arquivo — minutos de trabalho — e a estante
+   ficava em "Lendo biblioteca…" sem progresso nem saída. Agora:
+   - `Importer.importPaths` reporta `ImportProgress(processed, total, nome)`
+     a cada arquivo e aceita cancelamento cooperativo (`shouldCancel`),
+     checado entre unidades e a cada 16 páginas/entradas de um arquivo;
+   - a estante continua visível durante o import, com banner
+     "Importando X de Y: nome", barra de progresso e botão **Cancelar**;
+   - cancelar mantém o que já entrou (as publicações persistem uma a uma);
+   - a cópia SAF também virou cancelável e mostra "Copiando N arquivos…".
+2. **Não dava para rolar o quadrinho** (só toque e volume): o detector de
+   pinça (`detectTransformGestures`) consumia o arrasto de um dedo mesmo
+   com zoom 1x, então o `LazyColumn` nunca recebia o scroll. O gesto agora
+   é manual: dedo único em 1x **não** é consumido (rolagem é da faixa),
+   pinça e pan com zoom consomem.
+
+Regressões cobertas na JVM: `swipeUpScrollsTheStripToTheNextPage` (arrasto
+muda a página visível) e `cancelledImportReportsProgressAndKeepsWhatEntered`
+(cancelar reporta progresso, mantém o que entrou e avisa). Verificado no
+host: 46 JVM verdes; no aparelho: 6/6 instrumentados verdes; APK reinstalado
+no Moto G34 para o usuário testar.
+
+## Segunda rodada de uso real — 15/09/2026
+
+1. **Zoom era por página; virou global**: cada página tinha o próprio zoom,
+   e com zoom ativo a rolagem travava até voltar a 1x. Agora existe UM
+   estado de escala/pan no leitor inteiro, aplicado à faixa toda:
+   - pinça 1x–5x global; duplo-toque alterna 1x/2x;
+   - arrasto vertical continua sendo rolagem **mesmo ampliado**;
+   - arrasto horizontal, só quando ampliado, vira pan lateral com limites;
+   - zoom reinicia ao trocar de edição (binge) e os toques por zona são
+     convertidos do espaço da camada para a tela.
+   Regressão: `scrollingStillWorksWhileZoomed`.
+2. **Import de pasta**: o `takePersistableUriPermission` cancelava a
+   importação inteira em silêncio quando o sistema negava a persistência
+   (comum em raiz do armazenamento/Downloads). Agora a persistência é
+   melhor-esforço e a cópia segue com a concessão de sessão; a pasta
+   escolhida é lida recursivamente e o erro, quando existe, é específico
+   ("sem acesso a essa pasta" ≠ "nenhum arquivo suportado"). Além disso,
+   "+ HQ" agora é **seleção múltipla** (`OpenMultipleDocuments`): dá para
+   escolher vários quadrinho de uma vez, que é o caminho confiável em
+   qualquer aparelho.
+- Verificado no host: 47 JVM verdes; no aparelho: 6/6 instrumentados;
+  APK reinstalado.
