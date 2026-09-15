@@ -690,3 +690,19 @@ no Moto G34 para o usuário testar.
   precisa da extensão `.bat` no bash. Rolling verde, `native-latest`
   com `tactile-native-0.3.0.apk` assinado (`apksigner` OK) e `v0.3.0`
   com os dois APKs (assinado + debug).
+
+## Update in-app completo — 15/09/2026 (host)
+
+- Ajustes → Atualização só consultava a rolling e mandava abrir o
+  navegador. Agora o ciclo é interno: resolve o APK assinado
+  (`tactile-native-*.apk`, nunca debug) nos assets da `native-latest`,
+  compara o `Version code` do corpo com o instalado e, havendo nova,
+  baixa com progresso/cancelamento para o sandbox (`updates/`, teto de
+  200 MB, parcial descartado) e entrega ao instalador do sistema via
+  FileProvider (permissão `REQUEST_INSTALL_PACKAGES`; o Android pede o
+  consentimento na 1ª vez).
+- Rede: só HTTPS no GitHub (HTTP aberto só em loopback, para testes).
+- Verificado no host: 60 JVM verdes (10 novas do updater, com HTTP fake
+  em socket puro — `com.sun.net.httpserver` não está no bootclasspath
+  dos testes), `assembleDebug` e `assembleDebugAndroidTest` verdes.
+  Ponta a ponta no aparelho pendente.

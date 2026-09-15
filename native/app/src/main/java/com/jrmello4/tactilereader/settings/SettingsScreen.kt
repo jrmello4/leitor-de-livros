@@ -28,12 +28,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.pm.PackageInfoCompat
 import com.jrmello4.tactilereader.core.LibraryDb
 import com.jrmello4.tactilereader.scaffold.AppSources
 import com.jrmello4.tactilereader.core.formatBytes
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -51,6 +55,18 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    // Código instalado para comparar com o da rolling (0 = desconhecido).
+    val installedCode = remember(context) {
+        try {
+            @Suppress("DEPRECATION")
+            val info = context.packageManager.getPackageInfo(context.packageName, 0)
+            PackageInfoCompat.getLongVersionCode(info).toInt()
+        } catch (_: Exception) {
+            0
+        }
+    }
+    var downloadJob by remember { mutableStateOf<Job?>(null) }
     // Nada de abrir SQLite na composição: o banco nasce dentro de IO.
     val dbProvider: () -> LibraryDb = remember(filesDir) {
         { LibraryDb.open(File(filesDir, "lib"), File(filesDir, "imports"), AppSources.opener) }
@@ -71,6 +87,71 @@ fun SettingsScreen(
     }
 
     androidx.activity.compose.BackHandler(onBack = onBack)
+
+    fun startDownload(checked: UpdateState) {
+        val apkUrl = checked.apkUrl ?: return
+        val name = safeApkName(checked.apkName ?: "update.apk")
+        downloadJob?.cancel()
+        downloadJob = scope.launch {
+            updateState = checked.copy(
+                downloading = true,
+                progress = 0f,
+                message = "Baixando…",
+                downloadedPath = null,
+            )
+            try {
+                val dir = File(filesDir, "updates").apply { mkdirs() }
+                dir.listFiles()?.forEach { it.delete() }
+                val file = UpdateDownloader.download(apkUrl, File(dir, name)) { read, total ->
+                    val fraction = total?.let { (read.toFloat() / it).coerceIn(0f, 1f) }
+                    val detail = if (total != null) {
+                        "${formatBytes(read)} de ${formatBytes(total)}"
+                    } else {
+                        formatBytes(read)
+                    }
+                    updateState = updateState.copy(progress = fraction, message = "Baixando… $detail")
+                }
+                updateState = updateState.copy(
+                    downloading = false,
+                    progress = null,
+                    downloadedPath = file.absolutePath,
+                    message = "Baixado: $name. Toque em Instalar e confirme no sistema.",
+                )
+            } catch (cancelled: CancellationException) {
+                updateState = checked.copy(
+                    downloading = false,
+                    progress = null,
+                    message = "Download cancelado.",
+                )
+            } catch (error: Exception) {
+                updateState = checked.copy(
+                    downloading = false,
+                    progress = null,
+                    message = "Falha no download: ${error.message ?: "erro"}",
+                )
+            } finally {
+                downloadJob = null
+            }
+        }
+    }
+
+    fun installDownloaded(path: String) {
+        val apk = File(path)
+        if (!apk.exists()) {
+            updateState = updateState.copy(
+                downloadedPath = null,
+                message = "O arquivo sumiu do aparelho. Baixe de novo.",
+            )
+            return
+        }
+        try {
+            context.startActivity(UpdateInstaller.installIntent(context, apk))
+        } catch (error: Exception) {
+            updateState = updateState.copy(
+                message = "Não abri o instalador: ${error.message ?: "erro"}",
+            )
+        }
+    }
 
     Column(modifier = modifier.fillMaxSize().background(Color(0xFF0D1117)).padding(18.dp)) {
         Row(
@@ -188,13 +269,19 @@ fun SettingsScreen(
             Column(Modifier.fillMaxWidth().padding(14.dp)) {
                 Text("Atualização do app", color = Color(0xFFF7F2E8))
                 Text(
-                    "Canal rolling native-latest no GitHub. A instalação usa o instalador do sistema.",
+                    "Canal rolling native-latest no GitHub. O APK baixa neste aparelho e a instalação usa o instalador do sistema.",
                     style = MaterialTheme.typography.labelSmall,
                     color = Color(0xFFC8C0B3),
                     modifier = Modifier.padding(top = 2.dp, bottom = 8.dp),
                 )
                 if (updateState.checking) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+                if (updateState.downloading) {
+                    LinearProgressIndicator(
+                        progress = { updateState.progress ?: 0f },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
                 if (updateState.message != null) {
                     Text(
@@ -204,24 +291,71 @@ fun SettingsScreen(
                         modifier = Modifier.padding(bottom = 8.dp),
                     )
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = {
-                            scope.launch {
-                                updateState = updateState.copy(checking = true, message = null)
-                                updateState = withContext(Dispatchers.IO) {
-                                    UpdateChecker.check()
-                                }
+                val downloaded = updateState.downloadedPath
+                when {
+                    updateState.downloading -> {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { downloadJob?.cancel() }) {
+                                Text("Cancelar", color = Color.White)
                             }
-                        },
-                    ) { Text("Verificar", color = Color.White) }
-                }
-                if (updateState.version != null) {
-                    Text(
-                        "Disponível: ${updateState.version}",
-                        color = Color(0xFFF7F2E8),
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
+                        }
+                    }
+                    downloaded != null -> {
+                        Text(
+                            "Pronto para instalar.",
+                            color = Color(0xFFF7F2E8),
+                            modifier = Modifier.padding(bottom = 8.dp),
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { installDownloaded(downloaded) }) {
+                                Text("Instalar agora", color = Color.White)
+                            }
+                            TextButton(
+                                onClick = {
+                                    scope.launch {
+                                        updateState = updateState.copy(checking = true, message = null)
+                                        updateState = withContext(Dispatchers.IO) {
+                                            UpdateCheck.check(installedCode)
+                                        }
+                                    }
+                                },
+                            ) { Text("Verificar de novo", color = Color.White) }
+                        }
+                    }
+                    updateState.apkUrl != null -> {
+                        Text(
+                            "Disponível: ${updateState.version ?: "nova versão"}" +
+                                updateState.apkSizeBytes?.let { " (${formatBytes(it)})" }.orEmpty(),
+                            color = Color(0xFFF7F2E8),
+                            modifier = Modifier.padding(bottom = 8.dp),
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { startDownload(updateState) }) {
+                                Text("Baixar atualização", color = Color.White)
+                            }
+                        }
+                    }
+                    else -> {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = {
+                                    scope.launch {
+                                        updateState = updateState.copy(checking = true, message = null)
+                                        updateState = withContext(Dispatchers.IO) {
+                                            UpdateCheck.check(installedCode)
+                                        }
+                                    }
+                                },
+                            ) { Text("Verificar", color = Color.White) }
+                        }
+                        if (updateState.version != null) {
+                            Text(
+                                "Instalada: ${updateState.version}",
+                                color = Color(0xFFF7F2E8),
+                                modifier = Modifier.padding(top = 8.dp),
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -238,33 +372,10 @@ data class UpdateState(
     val checking: Boolean = false,
     val message: String? = null,
     val version: String? = null,
-    val url: String? = null,
+    val apkUrl: String? = null,
+    val apkSizeBytes: Long? = null,
+    val apkName: String? = null,
+    val downloading: Boolean = false,
+    val progress: Float? = null,
+    val downloadedPath: String? = null,
 )
-
-/** Consulta a rolling `native-latest`; sem telemetria, só HTTPS ao GitHub. */
-object UpdateChecker {
-    private const val API = "https://api.github.com/repos/jrmello4/leitor-de-livros/releases/tags/native-latest"
-    private const val PAGE = "https://github.com/jrmello4/leitor-de-livros/releases/tag/native-latest"
-
-    fun check(): UpdateState {
-        return try {
-            val connection = java.net.URL(API).openConnection() as java.net.HttpURLConnection
-            connection.connectTimeout = 8000
-            connection.readTimeout = 8000
-            connection.setRequestProperty("Accept", "application/vnd.github+json")
-            if (connection.responseCode != 200) {
-                return UpdateState(message = "Sem resposta do GitHub (${connection.responseCode}). Tente de novo.")
-            }
-            val body = connection.inputStream.bufferedReader().readText()
-            val root = org.json.JSONObject(body)
-            val name = root.optString("name", "native-latest")
-            UpdateState(
-                version = name.ifBlank { "native-latest" },
-                url = PAGE,
-                message = "Abra a página da release para baixar o APK.",
-            )
-        } catch (error: Exception) {
-            UpdateState(message = "Falha ao verificar: ${error.message ?: "sem rede"}")
-        }
-    }
-}

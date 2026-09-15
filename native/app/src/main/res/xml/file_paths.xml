@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Só o diretório de updates (sandbox privado): o APK baixado sai daqui
+     direto para o instalador do sistema via content:// com grant único. -->
+<paths>
+    <files-path name="updates" path="updates/" />
+</paths>
