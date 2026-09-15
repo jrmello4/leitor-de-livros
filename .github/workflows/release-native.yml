@@ -72,11 +72,13 @@ jobs:
 
       - name: Build signed release APK
         shell: bash
+        # Aspas SIMPLES: senhas com `$` (como a atual) seriam expandidas
+        # como variável pelo bash dentro de aspas duplas.
         run: |
-          export TACTILE_STORE_FILE="release.keystore"
-          export TACTILE_STORE_PASSWORD="${{ secrets.ANDROID_STORE_PASSWORD }}"
-          export TACTILE_KEY_ALIAS="${{ secrets.ANDROID_KEY_ALIAS }}"
-          export TACTILE_KEY_PASSWORD="${{ secrets.ANDROID_KEY_PASSWORD }}"
+          export TACTILE_STORE_FILE='release.keystore'
+          export TACTILE_STORE_PASSWORD='${{ secrets.ANDROID_STORE_PASSWORD }}'
+          export TACTILE_KEY_ALIAS='${{ secrets.ANDROID_KEY_ALIAS }}'
+          export TACTILE_KEY_PASSWORD='${{ secrets.ANDROID_KEY_PASSWORD }}'
           cd native && ./gradlew assembleRelease --no-daemon
 
       - name: Verify signature and collect APK
