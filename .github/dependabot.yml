@@ -1,13 +1,8 @@
 version: 2
 
-# The native reader ships from two dependency trees (cargo, GitHub Actions).
+# O leitor nativo é Kotlin puro: sem workspace Cargo desde 15/09/2026.
+# Resta só o tracking de GitHub Actions.
 updates:
-  - package-ecosystem: cargo
-    directory: /
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-
   - package-ecosystem: github-actions
     directory: /
     schedule:
