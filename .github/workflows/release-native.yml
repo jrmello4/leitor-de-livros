@@ -90,7 +90,7 @@ jobs:
             echo "No release APK found."
             exit 1
           fi
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner.bat" verify --print-certs "$APK"
           mkdir -p release-artifacts
           cp "$APK" "release-artifacts/tactile-native-0.3.0.apk"
           echo "apk_name=tactile-native-0.3.0.apk" >> "$GITHUB_OUTPUT"
