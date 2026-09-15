@@ -73,6 +73,11 @@ dependencies {
     testImplementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
+    // Ícones Material do núcleo (o Material3 já traz o core; o estendido
+    // conflita no classpath e quebra o `Icons.Filled`). Só nomes que
+    // existem no core: Add, Check, Close, MoreVert, Settings, Star,
+    // Favorite e ArrowBack espelhada. Sem icone = texto em PT-BR.
+    implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")

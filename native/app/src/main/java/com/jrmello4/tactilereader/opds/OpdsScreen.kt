@@ -12,11 +12,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -106,7 +109,10 @@ fun OpdsScreen(
 
     Column(modifier = modifier.fillMaxSize().background(Color(0xFF0D1117)).padding(18.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("‹ Ajustes", color = Color.White) }
+            TextButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = Color.White)
+                Text("Ajustes", color = Color.White)
+            }
             Text(
                 "Servidores",
                 style = MaterialTheme.typography.titleLarge,
@@ -204,7 +210,10 @@ fun OpdsScreen(
                                 trail = trail.dropLast(1)
                                 browse(trail.lastOrNull(), pushTrail = false)
                             },
-                        ) { Text("‹ Voltar", color = Color.White) }
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = Color.White)
+                            Text("Voltar", color = Color.White)
+                        }
                     }
                     TextButton(
                         onClick = {

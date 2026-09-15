@@ -155,7 +155,7 @@ class ReaderContentTest {
                 )
             }
         }
-        compose.onNodeWithText("‹ Biblioteca").performClick()
+        compose.onNodeWithText("Biblioteca").performClick()
         assertEquals(1, backs)
     }
 

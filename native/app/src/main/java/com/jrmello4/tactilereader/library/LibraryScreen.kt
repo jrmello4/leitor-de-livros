@@ -21,10 +21,20 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -149,14 +159,20 @@ fun LibraryContent(
                 style = MaterialTheme.typography.titleLarge,
                 color = Color(0xFFF7F2E8),
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Button(onClick = onAddFolderClick) {
+                    Icon(Icons.Filled.Add, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
                     Text("+ Pasta", color = Color.White)
                 }
                 Button(onClick = onAddClick) {
+                    Icon(Icons.Filled.Add, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
                     Text("+ HQ", color = Color.White)
                 }
-                TextButton(onClick = onOpenSettings) { Text("⚙", color = Color.White) }
+                IconButton(onClick = onOpenSettings) {
+                    Icon(Icons.Filled.Settings, contentDescription = "Ajustes", tint = Color.White)
+                }
             }
         }
         Text(
@@ -183,7 +199,7 @@ fun LibraryContent(
         ) {
             FilterChip(filter == LibraryFilter.TODAS, "Todas") { filter = LibraryFilter.TODAS }
             FilterChip(filter == LibraryFilter.CONTINUAR, "Continuar") { filter = LibraryFilter.CONTINUAR }
-            FilterChip(filter == LibraryFilter.FAVORITAS, "★") { filter = LibraryFilter.FAVORITAS }
+            FilterChip(filter == LibraryFilter.FAVORITAS, "Favoritas") { filter = LibraryFilter.FAVORITAS }
             FilterChip(filter == LibraryFilter.NAO_LIDAS, "Novas") { filter = LibraryFilter.NAO_LIDAS }
         }
         androidx.compose.foundation.layout.Row(
@@ -371,7 +387,9 @@ private fun SelectionBar(
         TextButton(onClick = onClearProgress) { Text("Limpar", color = Color.White) }
         TextButton(onClick = onDelete) { Text("Excluir", color = Color(0xFFC96F4A)) }
         androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
-        TextButton(onClick = onClear) { Text("✕", color = Color.White) }
+        TextButton(onClick = onClear) {
+            Icon(Icons.Filled.Close, contentDescription = "Limpar seleção", tint = Color.White)
+        }
     }
 }
 
@@ -593,7 +611,11 @@ private fun SeriesDetail(
             modifier = Modifier.fillMaxWidth().padding(10.dp, 4.dp, 18.dp, 0.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = onBack) { Text("‹ All series", color = Color.White) }
+            TextButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = Color.White)
+                Spacer(Modifier.width(4.dp))
+                Text("All series", color = Color.White)
+            }
             Text(
                 text = group.title,
                 style = MaterialTheme.typography.titleSmall,
@@ -677,7 +699,7 @@ private fun PubCard(
                         Modifier.fillMaxWidth().background(Color(0x99000000)).padding(4.dp),
                         contentAlignment = Alignment.TopEnd,
                     ) {
-                        Text("✓", color = Color(0xFFF2A900))
+                        Icon(Icons.Filled.Check, contentDescription = "Selecionado", tint = Color(0xFFF2A900))
                     }
                 }
             }
@@ -692,7 +714,11 @@ private fun PubCard(
                         modifier = Modifier.weight(1f),
                     )
                     TextButton(onClick = { onToggleFavorite(pub) }) {
-                        Text(if (pub.isFavorite) "★" else "☆", color = Color(0xFFF2A900))
+                        Icon(
+                            Icons.Filled.Star,
+                            contentDescription = if (pub.isFavorite) "Remover dos favoritos" else "Favoritar",
+                            tint = if (pub.isFavorite) Color(0xFFF2A900) else Color(0xFFC8C0B3),
+                        )
                     }
                 }
                 Text(
@@ -708,7 +734,7 @@ private fun PubCard(
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(onClick = { menu = !menu }) {
-                        Text("•••", color = Color(0xFFC8C0B3))
+                        Icon(Icons.Filled.MoreVert, contentDescription = "Opções", tint = Color(0xFFC8C0B3))
                     }
                 }
                 if (menu) {

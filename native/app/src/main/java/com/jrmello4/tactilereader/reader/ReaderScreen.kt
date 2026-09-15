@@ -22,8 +22,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -219,7 +224,11 @@ fun ReaderContent(
             state.error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("Falha: ${state.error}", color = Color(0xFFC96F4A))
-                    TextButton(onClick = onBack) { Text("‹ Biblioteca") }
+                    TextButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = Color.White)
+                        androidx.compose.foundation.layout.Spacer(Modifier.padding(start = 2.dp))
+                        Text("Biblioteca", color = Color.White)
+                    }
                 }
             }
             else -> Box(
@@ -333,7 +342,11 @@ fun ReaderContent(
                         .padding(8.dp, 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TextButton(onClick = onBack) { Text("‹ Biblioteca", color = Color.White) }
+                    TextButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = Color.White)
+                        androidx.compose.foundation.layout.Spacer(Modifier.padding(start = 2.dp))
+                        Text("Biblioteca", color = Color.White)
+                    }
                     Text(
                         text = state.title,
                         style = MaterialTheme.typography.titleSmall,
@@ -342,11 +355,15 @@ fun ReaderContent(
                         modifier = Modifier.weight(1f).padding(start = 4.dp),
                     )
                     val marked = currentPage?.let { bookmarks.contains(it.id) } == true
-                    TextButton(
+                    IconButton(
                         onClick = { currentPage?.let { onToggleBookmark(it.id) } },
                         enabled = currentPage != null,
                     ) {
-                        Text(if (marked) "★" else "☆", color = Color(0xFFF2A900))
+                        Icon(
+                            Icons.Filled.Star,
+                            contentDescription = if (marked) "Remover marcador" else "Marcar página",
+                            tint = if (marked) Color(0xFFF2A900) else Color(0xFFC8C0B3),
+                        )
                     }
                 }
                 Box(Modifier.weight(1f))

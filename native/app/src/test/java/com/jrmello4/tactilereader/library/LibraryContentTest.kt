@@ -75,7 +75,7 @@ class LibraryContentTest {
         compose.onNodeWithText("Série X").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("2 edições").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Série X").performScrollTo().performClick()
-        compose.onNodeWithText("‹ All series").assertIsDisplayed()
+        compose.onNodeWithText("All series").assertIsDisplayed()
         compose.onNodeWithText("capa-b").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("capa-b").performClick()
         assertEquals("b", opened)

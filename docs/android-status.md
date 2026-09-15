@@ -649,3 +649,22 @@ no Moto G34 para o usuário testar.
    qualquer aparelho.
 - Verificado no host: 47 JVM verdes; no aparelho: 6/6 instrumentados;
   APK reinstalado.
+
+## Ícones Material no lugar dos glifos de texto — 15/09/2026 (host)
+
+- A estante, o leitor, os Ajustes e os Servidores usavam glifos de texto
+  como ícone (`⚙`, `★`/`☆`, `✕`, `•••`, `✓`, `‹`): sem nome acessível,
+  com renderização variando por fonte do aparelho.
+- Agora usam `material-icons-core` (só nomes do core: Add, Settings, Star,
+  MoreVert, Close, Check e ArrowBack espelhada): engrenagem, estrela de
+  favorito/marcador com `contentDescription` em PT-BR, menu •••, fechar,
+  check de seleção e setas de voltar com ícone + texto. O filtro `★`
+  virou o rótulo "Favoritas".
+- Detalhe de implementação: os vetores são extension properties
+  (`Icons.Filled.*`), então o uso precisa ser qualificado
+  (`Icons.Filled.Add`, `Icons.AutoMirrored.Filled.ArrowBack`) — nome
+  simples importado não compila (`receiver type mismatch`). O estendido
+  não entra: conflita no classpath e quebra o `Icons.Filled`.
+- Verificado no host: 50 JVM verdes (testes de conteúdo ajustados aos
+  rótulos novos: "All series", "Biblioteca"), `assembleDebug` e
+  `assembleDebugAndroidTest` verdes. Reteste no aparelho pendente.
