@@ -38,6 +38,8 @@ jobs:
           packages: ''
 
       - name: Install platform and build tools
+        # Mesmo motivo do CI: `yes | ... > /dev/null` exige bash no Windows.
+        shell: bash
         run: |
           yes | sdkmanager --licenses > /dev/null
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
