@@ -682,3 +682,11 @@ no Moto G34 para o usuário testar.
 - CI verde no `main`; release manual `v0.3.0` (debug) publicada. A
   rolling assinada `native-latest` segue bloqueada nos segredos
   `TACTILE_*`.
+- Desbloqueio (mesmo dia): keystore novo gerado (`tactile-reader`,
+  RSA-2048, PKCS12, mesma senha em store e chave), 4 segredos
+  `ANDROID_*` atualizados e workflow reapontado. Detalhe que mordeu:
+  senha com `$` era expandida pelo bash nos `export` com aspas duplas
+  (chegava truncada) — exports com aspas simples; `apksigner` também
+  precisa da extensão `.bat` no bash. Rolling verde, `native-latest`
+  com `tactile-native-0.3.0.apk` assinado (`apksigner` OK) e `v0.3.0`
+  com os dois APKs (assinado + debug).

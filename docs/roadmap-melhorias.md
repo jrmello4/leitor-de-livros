@@ -31,8 +31,8 @@ Detalhes e evidências: `docs/android-status.md`.
    em 91,6 MB. Alvo de 180 MB cumprido com folga; falta a leitura contínua
    dentro do Compose/Coil.
 5. **Release assinada do app nativo** — workflow `release-native.yml`
-   pronto (rolling `native-latest`); reutiliza os segredos `ANDROID_*`
-   da era Tauri (a senha da chave vale como senha do keystore).
+   verde e publicando a rolling `native-latest` (reutiliza os segredos
+   `ANDROID_*`; keystore novo `tactile-reader` desde 15/09/2026).
 
 ## P1 — conforto (feito no host em 15/09, aparelho pendente)
 
