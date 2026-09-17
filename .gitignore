@@ -12,3 +12,4 @@ native/**/build/
 native/local.properties
 .DS_Store
 Thumbs.db
+release-artifacts/
