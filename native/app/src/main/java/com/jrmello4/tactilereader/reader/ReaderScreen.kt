@@ -1,6 +1,8 @@
 package com.jrmello4.tactilereader.reader
 
 import androidx.activity.compose.BackHandler
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -48,6 +50,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
@@ -71,10 +76,29 @@ fun ReaderScreen(
     val state by viewModel.state.collectAsState()
     val paths by viewModel.paths.collectAsState()
     val bookmarks by viewModel.bookmarks.collectAsState()
-    BackHandler(onBack = onBack)
+    val finishAndBack = {
+        viewModel.finishSession()
+        onBack()
+    }
+    BackHandler(onBack = finishAndBack)
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(viewModel, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> viewModel.resumeSession()
+                Lifecycle.Event.ON_STOP -> viewModel.pauseSession()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.finishSession()
+        }
+    }
     ReaderContent(
         state = state,
-        onBack = onBack,
+        onBack = finishAndBack,
         modifier = modifier,
         paths = paths,
         onPageVisible = viewModel::requestPage,
@@ -219,15 +243,15 @@ fun ReaderContent(
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
         when {
             state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Abrindo HQ…", color = Color(0xFFC8C0B3))
+                Text("Abrindo HQ…", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             state.error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Falha: ${state.error}", color = Color(0xFFC96F4A))
+                    Text("Falha: ${state.error}", color = MaterialTheme.colorScheme.error)
                     TextButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = Color.White)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                         androidx.compose.foundation.layout.Spacer(Modifier.padding(start = 2.dp))
-                        Text("Biblioteca", color = Color.White)
+                        Text("Biblioteca", color = MaterialTheme.colorScheme.onSurface)
                     }
                 }
             }
@@ -337,23 +361,35 @@ fun ReaderContent(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xB30D1117))
+                        .background(MaterialTheme.colorScheme.background.copy(alpha = 0.7f))
                         .statusBarsPadding()
                         .padding(8.dp, 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     TextButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = Color.White)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                         androidx.compose.foundation.layout.Spacer(Modifier.padding(start = 2.dp))
-                        Text("Biblioteca", color = Color.White)
+                        Text("Biblioteca", color = MaterialTheme.colorScheme.onSurface)
                     }
                     Text(
                         text = state.title,
                         style = MaterialTheme.typography.titleSmall,
-                        color = Color(0xFFF7F2E8),
+                        color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         modifier = Modifier.weight(1f).padding(start = 4.dp),
                     )
+                    TextButton(
+                        onClick = {
+                            zoom = if (zoom > 1f) 1f else 2f
+                            panX = 0f
+                        },
+                        modifier = Modifier.semantics {
+                            contentDescription = if (zoom > 1f) "Restaurar zoom" else "Ampliar"
+                            stateDescription = if (zoom > 1f) "Ampliado" else "Normal"
+                        },
+                    ) {
+                        Text(if (zoom > 1f) "1:1" else "Zoom", color = MaterialTheme.colorScheme.onSurface)
+                    }
                     val marked = currentPage?.let { bookmarks.contains(it.id) } == true
                     IconButton(
                         onClick = { currentPage?.let { onToggleBookmark(it.id) } },
@@ -362,7 +398,7 @@ fun ReaderContent(
                         Icon(
                             Icons.Filled.Star,
                             contentDescription = if (marked) "Remover marcador" else "Marcar página",
-                            tint = if (marked) Color(0xFFF2A900) else Color(0xFFC8C0B3),
+                            tint = if (marked) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
@@ -371,15 +407,15 @@ fun ReaderContent(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(Color(0xB30D1117))
+                            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.7f))
                             .navigationBarsPadding()
                             .padding(12.dp),
                         horizontalArrangement = Arrangement.Center,
                     ) {
                         Text(
-                            text = "página ${firstVisible + 1} de ${pages.size}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Color(0xFFC8C0B3),
+                        text = "página ${firstVisible + 1} de ${pages.size}",
+                        style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
@@ -398,33 +434,33 @@ private fun BingeCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFF151B23))
+            .background(MaterialTheme.colorScheme.surface)
             .padding(18.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
             text = "Fim da edição",
             style = MaterialTheme.typography.labelMedium,
-            color = Color(0xFFC8C0B3),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
             text = nextTitle,
             style = MaterialTheme.typography.titleSmall,
-            color = Color(0xFFF7F2E8),
+            color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.padding(top = 4.dp),
         )
         Text(
             text = if (countdown != null) "Abrindo em ${countdown}s…" else "Próxima edição pronta",
             style = MaterialTheme.typography.labelSmall,
-            color = Color(0xFFF2A900),
+            color = MaterialTheme.colorScheme.secondary,
             modifier = Modifier.padding(top = 4.dp),
         )
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(top = 8.dp),
         ) {
-            TextButton(onClick = onOpenNow) { Text("Abrir agora", color = Color.White) }
-            TextButton(onClick = onCancel) { Text("Cancelar", color = Color(0xFFC8C0B3)) }
+            TextButton(onClick = onOpenNow) { Text("Abrir agora", color = MaterialTheme.colorScheme.onSurface) }
+            TextButton(onClick = onCancel) { Text("Cancelar", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
 }
@@ -446,13 +482,16 @@ internal fun DefaultPageImage(page: ReaderPage, file: File?, modifier: Modifier 
         modifier = modifier
             .fillMaxWidth()
             .aspectRatio(ratio)
-            .background(Color(0xFF0D1117)),
+            .background(MaterialTheme.colorScheme.background)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "Página ${page.index + 1}"
+            },
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = "${page.index + 1}",
             style = MaterialTheme.typography.labelLarge,
-            color = Color(0x55FFFFFF),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.33f),
             modifier = Modifier.padding(48.dp),
         )
         if (file != null) {

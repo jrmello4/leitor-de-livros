@@ -32,6 +32,16 @@ data class Pub(
     val seriesName: String? = null,
     /** Última leitura (para a ordenação "Lidos"). */
     val lastReadAt: String? = null,
+    /** Velocidade observada em páginas por minuto; nulo antes de uma sessão. */
+    val readingPagesPerMinute: Double? = null,
+)
+
+/** Estatística local acumulada, sem dados de conta ou telemetria. */
+data class ReadingStats(
+    val totalMillis: Long,
+    val pagesRead: Int,
+    val sessions: Int,
+    val lastReadAt: String?,
 )
 
 /** Uma página da faixa de leitura: metadados sempre, bytes sob demanda. */
@@ -57,12 +67,55 @@ data class Bookmark(
     val label: String = "",
 )
 
+/** Marcador enriquecido para a Central de Marcadores. */
+data class BookmarkItem(
+    val publicationId: String,
+    val publicationTitle: String,
+    val pageId: String,
+    val pageIndex: Int,
+    val label: String = "",
+    val createdAt: String = "",
+)
+
+/** Resultado individual por arquivo na importação. */
+data class ImportFileResult(
+    val reference: String,
+    val displayName: String,
+    val success: Boolean,
+    val errorMessage: String? = null,
+    val recoverable: Boolean = true,
+)
+
 /** Resultado de uma importação em lote. */
 data class ImportOutcome(
     val importedCount: Int,
     val diagnostics: List<String>,
     /** Verdadeiro quando o usuário cancelou no meio (o que entrou fica). */
     val cancelled: Boolean = false,
+    val fileResults: List<ImportFileResult> = emptyList(),
+)
+
+/** Resumo geral de leitura para a tela Minha Leitura. */
+data class OverallReadingStats(
+    val totalMillis: Long,
+    val totalPagesRead: Int,
+    val totalSessions: Int,
+    val averagePpm: Double,
+    val publications: List<PublicationReadingStat> = emptyList(),
+)
+
+/** Detalhe por publicação na tela Minha Leitura. */
+data class PublicationReadingStat(
+    val id: String,
+    val title: String,
+    val format: String,
+    val pageCount: Int,
+    val progress: Double,
+    val totalMillis: Long,
+    val pagesRead: Int,
+    val sessions: Int,
+    val pagesPerMinute: Double?,
+    val lastReadAt: String?,
 )
 
 /** Progresso da importação para a estante não parecer travada. */

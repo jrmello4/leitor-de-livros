@@ -1,14 +1,20 @@
 package com.jrmello4.tactilereader.opds
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -28,8 +34,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -107,33 +116,66 @@ fun OpdsScreen(
         }
     }
 
-    Column(modifier = modifier.fillMaxSize().background(Color(0xFF0D1117)).padding(18.dp)) {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = Color.White)
-                Text("Ajustes", color = Color.White)
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(18.dp)
+            .navigationBarsPadding(),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(
+                onClick = onBack,
+                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Voltar aos ajustes",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                )
+                Spacer(Modifier.width(4.dp))
+                Text("Ajustes", color = MaterialTheme.colorScheme.onSurface)
             }
             Text(
                 "Servidores",
                 style = MaterialTheme.typography.titleLarge,
-                color = Color(0xFFF7F2E8),
-                modifier = Modifier.weight(1f).padding(start = 4.dp),
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 4.dp)
+                    .semantics { heading() },
             )
-            TextButton(onClick = { showForm = !showForm }) {
-                Text(if (showForm) "Fechar" else "+ Servidor", color = Color.White)
+            TextButton(
+                onClick = { showForm = !showForm },
+                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+            ) {
+                Text(
+                    if (showForm) "Fechar" else "+ Servidor",
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
             }
         }
         Text(
             "OPDS · Komga · Kavita (via OPDS) — só os seus servidores, sem telemetria.",
             style = MaterialTheme.typography.labelSmall,
-            color = Color(0xFFC8C0B3),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 8.dp),
         )
         if (notice != null) {
-            Text(notice!!, color = Color(0xFFF2A900), modifier = Modifier.padding(bottom = 8.dp))
+            Text(
+                notice!!,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier
+                    .padding(bottom = 8.dp)
+                    .semantics { liveRegion = LiveRegionMode.Polite },
+            )
         }
         if (showForm) {
-            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF151B23))) {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(formName, { formName = it }, label = { Text("Nome") }, singleLine = true)
                     OutlinedTextField(formUrl, { formUrl = it }, label = { Text("URL (https://…)") }, singleLine = true)
@@ -147,12 +189,23 @@ fun OpdsScreen(
                             singleLine = true, modifier = Modifier.weight(1f),
                         )
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         for (type in listOf("opds", "komga", "kavita")) {
                             if (formType == type) {
-                                Button(onClick = {}) { Text(type, color = Color.White) }
+                                Button(
+                                    onClick = {},
+                                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                                ) { Text(type, color = MaterialTheme.colorScheme.onPrimary) }
                             } else {
-                                TextButton(onClick = { formType = type }) { Text(type, color = Color(0xFFC8C0B3)) }
+                                TextButton(
+                                    onClick = { formType = type },
+                                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                                ) { Text(type, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                             }
                         }
                     }
@@ -176,18 +229,27 @@ fun OpdsScreen(
                             entries = emptyList()
                             trail = emptyList()
                         },
-                    ) { Text("Salvar", color = Color.White) }
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = 48.dp),
+                    ) { Text("Salvar", color = MaterialTheme.colorScheme.onPrimary) }
                 }
             }
         }
         if (servers.isNotEmpty()) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 for (server in servers) {
                     if (server.id == selectedId) {
-                        Button(onClick = {}) { Text(server.name, color = Color.White) }
+                        Button(
+                            onClick = {},
+                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                        ) { Text(server.name, color = MaterialTheme.colorScheme.onPrimary) }
                     } else {
                         TextButton(
                             onClick = {
@@ -195,14 +257,24 @@ fun OpdsScreen(
                                 entries = emptyList()
                                 trail = emptyList()
                             },
-                        ) { Text(server.name, color = Color(0xFFC8C0B3)) }
+                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                        ) { Text(server.name, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     }
                 }
             }
             if (selected != null) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { trail = emptyList(); browse(null, pushTrail = false) }) {
-                        Text("Abrir catálogo", color = Color.White)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Button(
+                        onClick = { trail = emptyList(); browse(null, pushTrail = false) },
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                    ) {
+                        Text("Abrir catálogo", color = MaterialTheme.colorScheme.onPrimary)
                     }
                     if (trail.isNotEmpty()) {
                         TextButton(
@@ -210,9 +282,15 @@ fun OpdsScreen(
                                 trail = trail.dropLast(1)
                                 browse(trail.lastOrNull(), pushTrail = false)
                             },
+                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                         ) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = Color.White)
-                            Text("Voltar", color = Color.White)
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Voltar no catálogo",
+                                tint = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text("Voltar", color = MaterialTheme.colorScheme.onSurface)
                         }
                     }
                     TextButton(
@@ -221,24 +299,38 @@ fun OpdsScreen(
                             entries = emptyList()
                             trail = emptyList()
                         },
-                    ) { Text("Remover", color = Color(0xFFC96F4A)) }
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                    ) { Text("Remover", color = MaterialTheme.colorScheme.error) }
                 }
                 Text(
                     "Kavita: cadastre a URL OPDS dela (…/api/opds/…). Komga: cadastre a raiz e use o tipo komga.",
                     style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFFC8C0B3),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
                 )
             }
         }
         if (loading) {
-            LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                color = MaterialTheme.colorScheme.secondary,
+                trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
+            )
         }
         if (progress != null) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 LinearProgressIndicator(
                     progress = { progress ?: 0f },
-                    modifier = Modifier.weight(1f).padding(top = 8.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(top = 8.dp),
+                    color = MaterialTheme.colorScheme.secondary,
+                    trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
                 )
                 TextButton(
                     onClick = {
@@ -246,7 +338,8 @@ fun OpdsScreen(
                         progress = null
                         notice = "Download cancelado."
                     },
-                ) { Text("Cancelar", color = Color.White) }
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                ) { Text("Cancelar", color = MaterialTheme.colorScheme.onSurface) }
             }
         }
         LazyColumn(
@@ -254,13 +347,25 @@ fun OpdsScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items(entries, key = { it.id.ifBlank { it.title } + (it.acquisition ?: it.subsection ?: "") }) { entry ->
-                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF151B23))) {
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                     Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                        Text(entry.title, color = Color(0xFFF7F2E8))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            entry.title,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
                             if (entry.subsection != null) {
-                                TextButton(onClick = { browse(entry.subsection) }) {
-                                    Text("Abrir ›", color = Color.White)
+                                TextButton(
+                                    onClick = { browse(entry.subsection) },
+                                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                                ) {
+                                    Text("Abrir ›", color = MaterialTheme.colorScheme.onSurface)
                                 }
                             }
                             if (entry.acquisition != null && selected != null) {
@@ -292,7 +397,8 @@ fun OpdsScreen(
                                             }
                                         }
                                     },
-                                ) { Text("Baixar offline", color = Color(0xFFF2A900)) }
+                                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                                ) { Text("Baixar offline", color = MaterialTheme.colorScheme.secondary) }
                             }
                         }
                     }

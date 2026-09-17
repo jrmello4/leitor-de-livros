@@ -1,5 +1,6 @@
 package com.jrmello4.tactilereader.reader
 
+import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -39,21 +40,27 @@ data class ReaderUiState(
  * `saveProgress` persiste `{pageId, scrollRatio}` sem bloquear a rolagem.
  */
 class ReaderViewModel(
-    filesDir: File,
-    val publicationId: String,
+    private val filesDir: File,
+    private val publicationId: String,
     title: String,
+    private val initialPageId: String? = null,
 ) : ViewModel() {
-    // Preguiçoso de propósito: abrir SQLite nunca na main thread.
     private val db: LibraryDb by lazy {
         LibraryDb.open(File(filesDir, "lib"), File(filesDir, "imports"), AppSources.opener)
     }
-    private val _state = MutableStateFlow(ReaderUiState(title = title))
+    private val _state = MutableStateFlow(ReaderUiState(loading = true, title = title))
     val state: StateFlow<ReaderUiState> = _state
     private val _paths = MutableStateFlow<Map<String, String>>(emptyMap())
     val paths: StateFlow<Map<String, String>> = _paths
     private val _bookmarks = MutableStateFlow<Set<String>>(emptySet())
     val bookmarks: StateFlow<Set<String>> = _bookmarks
     private val inFlight = Collections.synchronizedSet(mutableSetOf<String>())
+    private var sessionStartedAt = 0L
+    private var sessionStartPageIndex = 0
+    private var furthestPageIndex = 0
+    private var pausedAt = 0L
+    private var pausedMillis = 0L
+    private var sessionRecorded = false
 
     init {
         refresh()
@@ -64,13 +71,23 @@ class ReaderViewModel(
             _state.value = try {
                 val title = _state.value.title
                 val (pages, progress) = withContext(Dispatchers.IO) { loadPagesAndState() }
+                val effectiveStartId = initialPageId ?: progress?.pageId
+                val restoredIndex = effectiveStartId?.let { id -> pages.indexOfFirst { it.id == id } }
+                    ?.takeIf { it >= 0 }
+                    ?: 0
+                sessionStartedAt = SystemClock.elapsedRealtime()
+                sessionStartPageIndex = restoredIndex
+                furthestPageIndex = restoredIndex
+                pausedAt = 0L
+                pausedMillis = 0L
+                sessionRecorded = false
                 withContext(Dispatchers.IO) { primeImmediatePages(pages) }
                 ReaderUiState(
                     loading = false,
                     title = title,
                     pages = pages,
-                    startPageId = progress?.pageId,
-                    startRatio = progress?.scrollRatio ?: 0.0,
+                    startPageId = effectiveStartId,
+                    startRatio = if (initialPageId != null) 0.0 else (progress?.scrollRatio ?: 0.0),
                 )
             } catch (error: Exception) {
                 _state.value.copy(loading = false, error = error.message ?: "falha desconhecida")
@@ -151,6 +168,9 @@ class ReaderViewModel(
         if (pageId.isBlank()) {
             return
         }
+        _state.value.pages.indexOfFirst { it.id == pageId }
+            .takeIf { it >= 0 }
+            ?.let { furthestPageIndex = maxOf(furthestPageIndex, it) }
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
@@ -160,6 +180,55 @@ class ReaderViewModel(
                 // Progresso é melhor-esforço; a próxima parada tenta de novo.
             }
         }
+    }
+
+    /**
+     * Fecha a sessão local e acumula uma amostra de velocidade. O cálculo só
+     * considera páginas realmente avançadas; reabrir uma HQ sem navegar não
+     * cria uma métrica artificial.
+     */
+    @Synchronized
+    fun finishSession() {
+        if (sessionRecorded) return
+        sessionRecorded = true
+        val startedAt = sessionStartedAt
+        val now = SystemClock.elapsedRealtime()
+        val pauseAtExit = pausedAt.takeIf { it > 0L }?.let { (now - it).coerceAtLeast(0L) } ?: 0L
+        val totalPaused = saturatingAdd(pausedMillis, pauseAtExit)
+        val duration = (now - startedAt - totalPaused).coerceAtLeast(0L)
+        val pagesRead = (furthestPageIndex - sessionStartPageIndex).coerceAtLeast(0)
+        if (startedAt <= 0L || pagesRead <= 0) return
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    db.recordReadingSession(publicationId, duration, pagesRead)
+                }
+            } catch (_: Exception) {
+                // Estatística é melhor-esforço; progresso e marcadores já foram salvos.
+            }
+        }
+    }
+
+    /** Suspende o relógio quando o app perde o primeiro plano. */
+    @Synchronized
+    fun pauseSession() {
+        if (sessionRecorded || sessionStartedAt <= 0L || pausedAt > 0L) return
+        pausedAt = SystemClock.elapsedRealtime()
+    }
+
+    /** Retoma o relógio sem transformar tempo em segundo plano em leitura. */
+    @Synchronized
+    fun resumeSession() {
+        if (sessionRecorded || pausedAt <= 0L) return
+        pausedMillis = saturatingAdd(
+            pausedMillis,
+            (SystemClock.elapsedRealtime() - pausedAt).coerceAtLeast(0L),
+        )
+        pausedAt = 0L
+    }
+
+    private fun saturatingAdd(left: Long, right: Long): Long {
+        return if (Long.MAX_VALUE - left < right) Long.MAX_VALUE else left + right
     }
 
     private fun primeImmediatePages(pages: List<ReaderPage>) {
@@ -204,9 +273,10 @@ class ReaderViewModelFactory(
     private val filesDir: File,
     private val publicationId: String,
     private val title: String,
+    private val initialPageId: String? = null,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return ReaderViewModel(filesDir, publicationId, title) as T
+        return ReaderViewModel(filesDir, publicationId, title, initialPageId) as T
     }
 }

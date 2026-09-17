@@ -706,3 +706,20 @@ no Moto G34 para o usuário testar.
   em socket puro — `com.sun.net.httpserver` não está no bootclasspath
   dos testes), `assembleDebug` e `assembleDebugAndroidTest` verdes.
   Ponta a ponta no aparelho pendente.
+
+## Versão 0.4.0 — Marcadores, Minha Leitura, Importação Robusta e Acessibilidade (17/09/2026)
+
+- **Central de Marcadores (`BookmarksScreen.kt`)**: Tela dedicada acessível pela estante e ajustes, listagem agregada de todos os marcadores do banco (`listAllBookmarks`), busca instantânea por título de publicação e rótulo de página, abertura direta do leitor na página marcada (com rolagem/foco sincronizado), exclusão individual e integração transparente com backup JSON.
+- **Minha Leitura (`ReadingStatsScreen.kt`)**: Painel editorial de estatísticas de leitura locais construído sob princípios de Calm Tech. Consolida tempo total lido formatado em PT-BR (horas/minutos), total de páginas lidas, sessões concluídas, ritmo (páginas/minuto sem inflação artificial) e desdobramento por publicação com barras de progresso e contadores.
+- **Métricas e Hero Card (`ReadingMetrics.kt`)**: Modelagem pura de sessões de leitura (`ReadingSession`), algoritmo de descarte de pausas longas configuráveis (>5 min), estimativa humanizada de minutos restantes ("Faltam aprox. N min") e indicador "Página X de Y". 16 testes unitários dedicados.
+- **Importação com Diagnóstico por Arquivo (`ImportReportCard`, `ImportFileResult`)**: `Importer.kt` agora rastreia o desfecho individual de cada arquivo (`success`, `duplicate`, `unsupported`, `corrupted`, `io_error`). A estante exibe relatório pós-importação com badge de erros recuperáveis, botão de retry direcionado apenas para as falhas e cancelamento gracioso sem corrupção ou perda de estado.
+- **Acessibilidade Integral e Design System**:
+  - TalkBack semântico refinado em estante, leitor, ajustes, OPDS e novas telas (`heading()`, `liveRegion = LiveRegionMode.Polite/Assertive`, `contentDescription` completo em ícones e ações).
+  - Alvos de toque (touch targets) padronizados com mínimo de 48dp.
+  - Suporte resiliente a fontes ampliadas e larguras compactas até 320dp.
+  - Paleta Material 3 com tokens do Paper Atelier aplicados consistentemente (substituição de cores hex avulsas por `colorScheme`).
+  - Navegação fluida de séries e detalhe isolado de edições com retorno seguro (`‹ All series`).
+- **Verificação Completa no Host**:
+  - 82 testes unitários JVM verdes (0 falhas, 0 erros, 100% de sucesso em Robolectric/JUnit).
+  - `assembleDebug` e `assembleDebugAndroidTest` executados com sucesso.
+  - Validação em hardware físico (Moto G34 5G) programada para a rodada de release.

@@ -92,14 +92,14 @@ jobs:
           fi
           "$ANDROID_HOME/build-tools/35.0.0/apksigner.bat" verify --print-certs "$APK"
           mkdir -p release-artifacts
-          cp "$APK" "release-artifacts/tactile-native-0.3.0.apk"
-          echo "apk_name=tactile-native-0.3.0.apk" >> "$GITHUB_OUTPUT"
+          cp "$APK" "release-artifacts/tactile-native-0.4.0.apk"
+          echo "apk_name=tactile-native-0.4.0.apk" >> "$GITHUB_OUTPUT"
 
       - name: Publish native-latest release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: native-latest
-          name: "Native rolling (0.3.0+${{ github.run_number }})"
+          name: "Native rolling (0.4.0+${{ github.run_number }})"
           body: |
             Rolling build from `main` — app Android nativo.
 

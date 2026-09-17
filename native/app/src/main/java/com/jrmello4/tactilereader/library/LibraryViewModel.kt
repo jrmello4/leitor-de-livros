@@ -20,6 +20,16 @@ import java.util.concurrent.atomic.AtomicBoolean
 /** Teto do mapa capa-em-memória: a grade monta só o visível + vizinhos. */
 internal const val MAX_COVER_ENTRIES = 200
 
+data class ImportReport(
+    val total: Int,
+    val imported: Int,
+    val failed: List<com.jrmello4.tactilereader.core.ImportFileResult> = emptyList(),
+    val cancelled: Boolean = false,
+) {
+    val hasFailures: Boolean get() = failed.isNotEmpty()
+    val recoverableFailures: List<com.jrmello4.tactilereader.core.ImportFileResult> get() = failed.filter { it.recoverable }
+}
+
 data class LibraryUiState(
     val loading: Boolean = true,
     val pubs: List<Pub> = emptyList(),
@@ -27,6 +37,8 @@ data class LibraryUiState(
     val notice: String? = null,
     /** Importação em andamento: a estante continua visível com progresso. */
     val importing: ImportProgress? = null,
+    /** Relatório detalhado da importação recente (sucessos, falhas por arquivo e retry). */
+    val importReport: ImportReport? = null,
 )
 
 /**
@@ -50,6 +62,7 @@ class LibraryViewModel(private val filesDir: File) : ViewModel() {
     val covers: StateFlow<Map<String, String>> = _covers
     private val inFlight = Collections.synchronizedSet(mutableSetOf<String>())
     private val cancelImport = AtomicBoolean(false)
+    private var lastAttemptedSources = listOf<ImportSource>()
 
     init {
         refresh()
@@ -89,9 +102,11 @@ class LibraryViewModel(private val filesDir: File) : ViewModel() {
         if (sources.isEmpty()) {
             return
         }
+        lastAttemptedSources = sources
         cancelImport.set(false)
         _state.value = _state.value.copy(
             notice = null,
+            importReport = null,
             importing = ImportProgress(0, sources.size, ""),
         )
         viewModelScope.launch {
@@ -108,20 +123,43 @@ class LibraryViewModel(private val filesDir: File) : ViewModel() {
                 val notice = outcome.diagnostics.joinToString(" ").ifBlank { null }
                 val pubs = withContext(Dispatchers.IO) { db.listPublications() }
                 withContext(Dispatchers.IO) { primeImmediateCovers(pubs) }
+                val report = ImportReport(
+                    total = sources.size,
+                    imported = outcome.importedCount,
+                    failed = outcome.fileResults.filter { !it.success },
+                    cancelled = outcome.cancelled,
+                )
                 _state.value.copy(
                     loading = false,
                     pubs = pubs,
                     notice = notice,
                     importing = null,
+                    importReport = report,
                 )
             } catch (error: Exception) {
                 _state.value.copy(
                     loading = false,
                     error = error.message ?: "falha desconhecida",
                     importing = null,
+                    importReport = null,
                 )
             }
         }
+    }
+
+    /** Tenta novamente os arquivos com falhas recuperáveis do último relatório. */
+    fun retryFailedImports() {
+        val report = _state.value.importReport ?: return
+        val failedRefs = report.recoverableFailures.map { it.reference }.toSet()
+        val toRetry = lastAttemptedSources.filter { failedRefs.contains(it.reference) }
+        if (toRetry.isNotEmpty()) {
+            importSources(toRetry)
+        }
+    }
+
+    /** Descarta o painel de relatório da importação. */
+    fun dismissImportReport() {
+        _state.value = _state.value.copy(importReport = null)
     }
 
     /** Pede o cancelamento do import em andamento (o que entrou fica). */

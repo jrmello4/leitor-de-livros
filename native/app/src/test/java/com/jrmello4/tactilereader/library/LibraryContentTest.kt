@@ -3,6 +3,7 @@ package com.jrmello4.tactilereader.library
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -14,6 +15,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Prova na JVM (Robolectric) que a estante renderiza por estado e que o
@@ -59,13 +61,13 @@ class LibraryContentTest {
             Pub("a", "Série X #10", "cbz", 20, 0.0, false),
             Pub("b", "Série X #02", "cbz", 20, 0.0, false),
         )
-        var opened: String? = null
+        val opened = AtomicReference<String?>(null)
         compose.setContent {
             MaterialTheme {
                 LibraryContent(
                     LibraryUiState(loading = false, pubs = pubs),
                     onAddClick = {},
-                    onOpenClick = { opened = it.id },
+                    onOpenClick = { opened.set(it.id) },
                     coverImage = { pub, _, _ -> Text("capa-${pub.id}") },
                 )
             }
@@ -77,8 +79,10 @@ class LibraryContentTest {
         compose.onNodeWithText("Série X").performScrollTo().performClick()
         compose.onNodeWithText("All series").assertIsDisplayed()
         compose.onNodeWithText("capa-b").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("capa-b").assertHasClickAction()
         compose.onNodeWithText("capa-b").performClick()
-        assertEquals("b", opened)
+        compose.waitForIdle()
+        assertEquals("b", opened.get())
     }
 
     @Test
@@ -91,6 +95,60 @@ class LibraryContentTest {
         }
         compose.onNodeWithText("demo-hq").assertIsDisplayed()
         compose.onNodeWithText("2 páginas").assertIsDisplayed()
+    }
+
+    @Test
+    fun continueReadingShowsHeroWithHumanizedProgressAndResumeAction() {
+        val pub = Pub("p1", "demo-hq", "cbz", 10, 0.5, false)
+        val opened = AtomicReference<String?>(null)
+        compose.setContent {
+            MaterialTheme {
+                LibraryContent(
+                    LibraryUiState(loading = false, pubs = listOf(pub)),
+                    onAddClick = {},
+                    onOpenClick = { opened.set(it.id) },
+                    coverImage = { _, _, _ -> Text("capa") },
+                )
+            }
+        }
+
+        compose.onNodeWithText("Continuar lendo").assertIsDisplayed()
+        compose.onNodeWithText("Página 6 de 10 • Faltam aprox. 4 páginas").assertIsDisplayed()
+        val summary = compose.onNodeWithText("Página 6 de 10 • Faltam aprox. 4 páginas")
+        summary.assertHasClickAction()
+        summary.performClick()
+        compose.waitForIdle()
+        assertEquals("p1", opened.get())
+    }
+
+    @Test
+    fun readingProgressSummaryClampsInvalidProgress() {
+        assertEquals(
+            "Página 1 de 4 • Faltam aprox. 3 páginas",
+            readingProgressSummary(Pub("low", "low", "cbz", 4, -2.0, false)),
+        )
+        assertEquals(
+            "Página 4 de 4 • Última página",
+            readingProgressSummary(Pub("high", "high", "cbz", 4, 2.0, false)),
+        )
+    }
+
+    @Test
+    fun readingProgressSummaryUsesObservedSpeedWhenAvailable() {
+        val pub = Pub(
+            id = "speed",
+            title = "speed",
+            format = "cbz",
+            pageCount = 40,
+            progress = 9.0 / 39.0,
+            isFavorite = false,
+            readingPagesPerMinute = 2.0,
+        )
+
+        assertEquals(
+            "Página 10 de 40 • Faltam aprox. 15 min",
+            readingProgressSummary(pub),
+        )
     }
 
     @Test

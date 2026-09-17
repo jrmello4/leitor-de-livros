@@ -64,11 +64,12 @@ internal object Importer {
         val sevenZSources = mutableListOf<ImportSource>()
         val collectionSources = mutableListOf<ImportSource>()
         val diagnostics = mutableListOf<String>()
+        val fileResults = mutableListOf<ImportFileResult>()
 
         val expanded = mutableListOf<ImportSource>()
         for (source in sources) {
             if (shouldCancel()) {
-                return ImportOutcome(0, diagnostics, cancelled = true)
+                return ImportOutcome(0, diagnostics, cancelled = true, fileResults = fileResults)
             }
             val local = opener.localPath(source.reference)
             if (local != null && File(local).isDirectory) {
@@ -76,11 +77,15 @@ internal object Importer {
                 try {
                     collectPublicationFiles(File(local), files)
                 } catch (error: Exception) {
-                    diagnostics.add("${source.reference}: ${error.message}")
+                    val msg = "${source.reference}: ${error.message}"
+                    diagnostics.add(msg)
+                    fileResults.add(ImportFileResult(source.reference, source.displayName ?: File(source.reference).name, false, error.message, true))
                     continue
                 }
                 if (files.isEmpty()) {
-                    diagnostics.add("${source.reference}: no supported comics or raster images were found.")
+                    val msg = "${source.reference}: no supported comics or raster images were found."
+                    diagnostics.add(msg)
+                    fileResults.add(ImportFileResult(source.reference, source.displayName ?: File(source.reference).name, false, "Nenhum arquivo suportado na pasta.", false))
                     continue
                 }
                 files.forEach { expanded.add(ImportSource(it.absolutePath, it.name)) }
@@ -91,7 +96,9 @@ internal object Importer {
 
         for (source in expanded) {
             if (!opener.isAvailable(source.reference)) {
-                diagnostics.add("${source.reference}: source is not available")
+                val msg = "${source.reference}: source is not available"
+                diagnostics.add(msg)
+                fileResults.add(ImportFileResult(source.reference, source.displayName ?: source.reference, false, "Arquivo não disponível", true))
                 continue
             }
             val name = source.name(opener)
@@ -104,15 +111,23 @@ internal object Importer {
                     Container.Zip -> archiveSources.add(source)
                     Container.Rar -> cbrSources.add(source)
                     Container.SevenZip -> sevenZSources.add(source)
-                    Container.Unknown -> diagnostics.add(
-                        "$name: file contents are not a supported ZIP/CBZ, RAR/CBR, or 7z archive.",
-                    )
+                    Container.Unknown -> {
+                        val msg = "$name: file contents are not a supported ZIP/CBZ, RAR/CBR, or 7z archive."
+                        diagnostics.add(msg)
+                        fileResults.add(ImportFileResult(source.reference, name, false, "Formato corrompido ou não suportado", false))
+                    }
                 }
                 "zip" -> collectionSources.add(source)
-                "pdf" -> diagnostics.add(
-                    "$name: $PDF_UNAVAILABLE_DIAGNOSTIC",
-                )
-                else -> diagnostics.add("$name: unsupported publication file.")
+                "pdf" -> {
+                    val msg = "$name: $PDF_UNAVAILABLE_DIAGNOSTIC"
+                    diagnostics.add(msg)
+                    fileResults.add(ImportFileResult(source.reference, name, false, "PDF requer renderizador externo", false))
+                }
+                else -> {
+                    val msg = "$name: unsupported publication file."
+                    diagnostics.add(msg)
+                    fileResults.add(ImportFileResult(source.reference, name, false, "Extensão não suportada", false))
+                }
             }
         }
 
@@ -130,6 +145,9 @@ internal object Importer {
         for ((index, work) in works.withIndex()) {
             if (shouldCancel()) {
                 cancelled = true
+                for (rem in works.drop(index)) {
+                    fileResults.add(ImportFileResult(rem.source.reference, rem.label, false, "Cancelado", true))
+                }
                 break
             }
             onProgress(ImportProgress(index, works.size, work.label))
@@ -150,23 +168,30 @@ internal object Importer {
                             cancelled = true
                             break
                         }
+                        fileResults.add(ImportFileResult(work.source.reference, work.label, true))
                         onProgress(ImportProgress(index + 1, works.size, work.label))
                         continue
                     }
                 }
                 imported++
+                fileResults.add(ImportFileResult(work.source.reference, work.label, true))
             } catch (_: Cancelled) {
                 cancelled = true
+                fileResults.add(ImportFileResult(work.source.reference, work.label, false, "Cancelado", true))
+                for (rem in works.drop(index + 1)) {
+                    fileResults.add(ImportFileResult(rem.source.reference, rem.label, false, "Cancelado", true))
+                }
                 break
             } catch (error: Exception) {
                 diagnostics.add("${work.label}: ${error.message}")
+                fileResults.add(ImportFileResult(work.source.reference, work.label, false, error.message ?: "Erro ao importar", true))
             }
             onProgress(ImportProgress(index + 1, works.size, work.label))
         }
         if (cancelled) {
             diagnostics.add("Importação cancelada; o que já entrou ficou na estante.")
         }
-        return ImportOutcome(imported, diagnostics, cancelled)
+        return ImportOutcome(imported, diagnostics, cancelled, fileResults)
     }
 
     // ------------------------------------------------------- ZIP unificado

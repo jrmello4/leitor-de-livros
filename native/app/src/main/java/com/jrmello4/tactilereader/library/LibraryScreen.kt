@@ -2,31 +2,27 @@ package com.jrmello4.tactilereader.library
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -35,6 +31,16 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -48,13 +54,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.jrmello4.tactilereader.core.Pub
+import com.jrmello4.tactilereader.core.ReadingMetrics
 import java.io.File
+import kotlin.math.roundToInt
 
 /** Cor estável por publicação — placeholder e fundo enquanto a capa carrega. */
 internal fun placeholderColor(id: String): Color {
@@ -70,6 +82,8 @@ fun LibraryScreen(
     modifier: Modifier = Modifier,
     onAddFolderClick: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    onOpenBookmarks: () -> Unit = {},
+    onOpenStats: () -> Unit = {},
     folders: List<FolderEntry> = emptyList(),
     onRescan: () -> Unit = {},
 ) {
@@ -82,12 +96,16 @@ fun LibraryScreen(
         modifier = modifier,
         onAddFolderClick = onAddFolderClick,
         onOpenSettings = onOpenSettings,
+        onOpenBookmarks = onOpenBookmarks,
+        onOpenStats = onOpenStats,
         covers = covers,
         onCoverVisible = viewModel::requestCover,
         onToggleFavorite = viewModel::toggleFavorite,
         onDelete = viewModel::deletePublication,
         onSetRead = viewModel::setRead,
         onCancelImport = viewModel::cancelImport,
+        onRetryImport = viewModel::retryFailedImports,
+        onDismissImportReport = viewModel::dismissImportReport,
         folders = folders,
         onRescan = onRescan,
     )
@@ -106,6 +124,8 @@ fun LibraryContent(
     onOpenClick: (Pub) -> Unit = {},
     onAddFolderClick: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    onOpenBookmarks: () -> Unit = {},
+    onOpenStats: () -> Unit = {},
     covers: Map<String, String> = emptyMap(),
     onCoverVisible: (Pub) -> Unit = {},
     coverImage: @Composable (Pub, File?, Modifier) -> Unit = { pub, file, mod ->
@@ -115,6 +135,8 @@ fun LibraryContent(
     onDelete: (String) -> Unit = {},
     onSetRead: (Pub, Boolean) -> Unit = { _, _ -> },
     onCancelImport: () -> Unit = {},
+    onRetryImport: () -> Unit = {},
+    onDismissImportReport: () -> Unit = {},
     folders: List<FolderEntry> = emptyList(),
     onRescan: () -> Unit = {},
 ) {
@@ -147,45 +169,155 @@ fun LibraryContent(
     val continueReading = remember(state.pubs) {
         state.pubs.filter { it.progress > 0.01 && it.progress < 0.99 }.take(5)
     }
+    val groups = remember(filtered) { groupBySeries(filtered) }
+    var openSeriesKey by rememberSaveable { mutableStateOf<String?>(null) }
+    val open = groups.firstOrNull { it.key == openSeriesKey }
+    if (open == null && openSeriesKey != null) {
+        openSeriesKey = null
+    }
 
-    Column(modifier = modifier.fillMaxSize().background(Color(0xFF0D1117))) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(18.dp, 18.dp, 18.dp, 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "Tactile Reader",
-                style = MaterialTheme.typography.titleLarge,
-                color = Color(0xFFF7F2E8),
+    if (open != null) {
+        Column(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+            if (selection.isNotEmpty()) {
+                SelectionBar(
+                    count = selection.size,
+                    onClear = { selection = emptySet() },
+                    onMarkRead = {
+                        filtered.filter { selection.contains(it.id) }.forEach { onSetRead(it, true) }
+                        selection = emptySet()
+                    },
+                    onClearProgress = {
+                        filtered.filter { selection.contains(it.id) }.forEach { onSetRead(it, false) }
+                        selection = emptySet()
+                    },
+                    onDelete = { pendingDelete = selection },
+                )
+            }
+            if (pendingDelete.isNotEmpty()) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { pendingDelete = emptySet() },
+                    title = { Text("Remover da estante?", color = MaterialTheme.colorScheme.onSurface) },
+                    text = {
+                        Text(
+                            "O arquivo original não é tocado. Favoritos, progresso e marcadores desta publicação saem junto.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                pendingDelete.forEach { onDelete(it) }
+                                pendingDelete = emptySet()
+                                selection = emptySet()
+                            },
+                        ) { Text("Remover", color = MaterialTheme.colorScheme.error) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { pendingDelete = emptySet() }) {
+                            Text("Cancelar", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    },
+                )
+            }
+            SeriesDetail(
+                group = open,
+                covers = covers,
+                onCoverVisible = onCoverVisible,
+                onBack = { openSeriesKey = null },
+                onOpenClick = onOpenClick,
+                coverImage = coverImage,
+                selection = selection,
+                onToggleSelect = { id ->
+                    selection = if (selection.contains(id)) selection - id else selection + id
+                },
+                onToggleFavorite = onToggleFavorite,
+                onRequestDelete = { pendingDelete = setOf(it) },
+                onSetRead = onSetRead,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = onAddFolderClick) {
+        }
+        return
+    }
+
+    Column(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        Column(Modifier.fillMaxWidth().padding(18.dp, 18.dp, 18.dp, 4.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Tactile Reader",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.semantics { heading() },
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    TextButton(
+                        onClick = onOpenBookmarks,
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.Star,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.secondary,
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Marcadores", color = MaterialTheme.colorScheme.onSurface)
+                    }
+                    TextButton(
+                        onClick = onOpenStats,
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                    ) {
+                        Text("Leitura", color = MaterialTheme.colorScheme.onSurface)
+                    }
+                    IconButton(
+                        onClick = onOpenSettings,
+                        modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.Settings,
+                            contentDescription = "Ajustes",
+                            tint = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Button(
+                    onClick = onAddClick,
+                    modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
+                ) {
                     Icon(Icons.Filled.Add, contentDescription = null)
                     Spacer(Modifier.width(4.dp))
-                    Text("+ Pasta", color = Color.White)
+                    Text("+ HQ", color = MaterialTheme.colorScheme.onPrimary)
                 }
-                Button(onClick = onAddClick) {
+                Button(
+                    onClick = onAddFolderClick,
+                    modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
+                ) {
                     Icon(Icons.Filled.Add, contentDescription = null)
                     Spacer(Modifier.width(4.dp))
-                    Text("+ HQ", color = Color.White)
-                }
-                IconButton(onClick = onOpenSettings) {
-                    Icon(Icons.Filled.Settings, contentDescription = "Ajustes", tint = Color.White)
+                    Text("+ Pasta", color = MaterialTheme.colorScheme.onPrimary)
                 }
             }
         }
         Text(
             text = "estante local · núcleo nativo",
             style = MaterialTheme.typography.labelMedium,
-            color = Color(0xFFC8C0B3),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(18.dp, 0.dp, 18.dp, 4.dp),
         )
-        androidx.compose.foundation.layout.Row(
+        Row(
             modifier = Modifier.fillMaxWidth().padding(18.dp, 0.dp, 18.dp, 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            androidx.compose.material3.OutlinedTextField(
+            OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
                 label = { Text("Buscar na estante") },
@@ -193,8 +325,11 @@ fun LibraryContent(
                 modifier = Modifier.weight(1f),
             )
         }
-        androidx.compose.foundation.layout.Row(
-            modifier = Modifier.fillMaxWidth().padding(18.dp, 0.dp, 18.dp, 4.dp),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(18.dp, 0.dp, 18.dp, 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             FilterChip(filter == LibraryFilter.TODAS, "Todas") { filter = LibraryFilter.TODAS }
@@ -202,25 +337,31 @@ fun LibraryContent(
             FilterChip(filter == LibraryFilter.FAVORITAS, "Favoritas") { filter = LibraryFilter.FAVORITAS }
             FilterChip(filter == LibraryFilter.NAO_LIDAS, "Novas") { filter = LibraryFilter.NAO_LIDAS }
         }
-        androidx.compose.foundation.layout.Row(
-            modifier = Modifier.fillMaxWidth().padding(18.dp, 0.dp, 18.dp, 8.dp),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(18.dp, 0.dp, 18.dp, 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             FilterChip(tab == LibraryTab.SERIES, "Séries") { tab = LibraryTab.SERIES }
             FilterChip(tab == LibraryTab.PASTAS, "Pastas") { tab = LibraryTab.PASTAS }
-            androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
             FilterChip(sort == LibrarySort.RECENTES, "Recentes") { sort = LibrarySort.RECENTES }
             FilterChip(sort == LibrarySort.TITULO, "A–Z") { sort = LibrarySort.TITULO }
+            FilterChip(sort == LibrarySort.PROGRESSO, "Progresso") { sort = LibrarySort.PROGRESSO }
         }
         if (state.notice != null) {
             Text(
                 text = state.notice!!,
                 style = MaterialTheme.typography.labelSmall,
-                color = Color(0xFFF2A900),
-                modifier = Modifier.padding(18.dp, 0.dp, 18.dp, 8.dp),
+                color = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier
+                    .padding(18.dp, 0.dp, 18.dp, 8.dp)
+                    .semantics { liveRegion = LiveRegionMode.Polite },
             )
         }
+
         // Importação longa: progresso visível e cancelável, estante continua lá.
         state.importing?.let { progress ->
             Column(Modifier.fillMaxWidth().padding(18.dp, 0.dp, 18.dp, 8.dp)) {
@@ -233,13 +374,13 @@ fun LibraryContent(
                             "Preparando importação…"
                         },
                         style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFFF2A900),
+                        color = MaterialTheme.colorScheme.secondary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
                     TextButton(onClick = onCancelImport) {
-                        Text("Cancelar", color = Color.White)
+                        Text("Cancelar", color = MaterialTheme.colorScheme.onSurface)
                     }
                 }
                 LinearProgressIndicator(
@@ -251,11 +392,23 @@ fun LibraryContent(
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    color = Color(0xFFF2A900),
-                    trackColor = Color(0x33FFFFFF),
+                    color = MaterialTheme.colorScheme.secondary,
+                    trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
                 )
             }
         }
+
+        // Relatório detalhado após importação com falha ou cancelamento
+        state.importReport?.let { report ->
+            if (report.hasFailures || report.cancelled) {
+                ImportReportCard(
+                    report = report,
+                    onRetry = onRetryImport,
+                    onDismiss = onDismissImportReport,
+                )
+            }
+        }
+
         if (selection.isNotEmpty()) {
             SelectionBar(
                 count = selection.size,
@@ -274,11 +427,11 @@ fun LibraryContent(
         if (pendingDelete.isNotEmpty()) {
             androidx.compose.material3.AlertDialog(
                 onDismissRequest = { pendingDelete = emptySet() },
-                title = { Text("Remover da estante?", color = Color(0xFFF7F2E8)) },
+                title = { Text("Remover da estante?", color = MaterialTheme.colorScheme.onSurface) },
                 text = {
                     Text(
                         "O arquivo original não é tocado. Favoritos, progresso e marcadores desta publicação saem junto.",
-                        color = Color(0xFFC8C0B3),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 },
                 confirmButton = {
@@ -288,71 +441,235 @@ fun LibraryContent(
                             pendingDelete = emptySet()
                             selection = emptySet()
                         },
-                    ) { Text("Remover", color = Color(0xFFC96F4A)) }
+                    ) { Text("Remover", color = MaterialTheme.colorScheme.error) }
                 },
                 dismissButton = {
                     TextButton(onClick = { pendingDelete = emptySet() }) {
-                        Text("Cancelar", color = Color(0xFFC8C0B3))
+                        Text("Cancelar", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
             )
         }
         when {
             state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Lendo biblioteca…", color = Color(0xFFC8C0B3))
+                Text("Lendo biblioteca…", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             state.error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Falha: ${state.error}", color = Color(0xFFC96F4A))
+                Text(
+                    "Falha: ${state.error}",
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive },
+                )
             }
             tab == LibraryTab.PASTAS -> {
                 FoldersList(folders = folders, onRescan = onRescan)
             }
             else -> {
                 if (filter == LibraryFilter.TODAS && query.isBlank() && continueReading.isNotEmpty()) {
-                    ContinueStrip(
-                        pubs = continueReading,
-                        covers = covers,
+                    val hero = continueReading.first()
+                    ContinueHero(
+                        pub = hero,
+                        cover = covers[hero.id]?.let { File(it) },
                         onCoverVisible = onCoverVisible,
                         onOpenClick = onOpenClick,
                         coverImage = coverImage,
                     )
-                }
-                // A estante abre por séries; edições montam só ao abrir o grupo.
-                val groups = remember(filtered) { groupBySeries(filtered) }
-                var openSeriesKey by rememberSaveable { mutableStateOf<String?>(null) }
-                val open = groups.firstOrNull { it.key == openSeriesKey }
-                if (open == null) {
-                    if (openSeriesKey != null) {
-                        openSeriesKey = null
-                    }
-                    if (groups.isEmpty()) {
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("Nada por aqui — importe uma HQ.", color = Color(0xFFC8C0B3))
-                        }
-                    } else {
-                        SeriesGrid(
-                            groups = groups,
+                    if (continueReading.size > 1) {
+                        ContinueStrip(
+                            pubs = continueReading.drop(1),
                             covers = covers,
                             onCoverVisible = onCoverVisible,
-                            onSeriesClick = { openSeriesKey = it.key },
+                            onOpenClick = onOpenClick,
                             coverImage = coverImage,
                         )
                     }
+                }
+                if (groups.isEmpty()) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Nada por aqui — importe uma HQ.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 } else {
-                    SeriesDetail(
-                        group = open,
+                    SeriesGrid(
+                        groups = groups,
                         covers = covers,
                         onCoverVisible = onCoverVisible,
-                        onBack = { openSeriesKey = null },
-                        onOpenClick = onOpenClick,
+                        onSeriesClick = { openSeriesKey = it.key },
                         coverImage = coverImage,
-                        selection = selection,
-                        onToggleSelect = { id ->
-                            selection = if (selection.contains(id)) selection - id else selection + id
-                        },
-                        onToggleFavorite = onToggleFavorite,
-                        onRequestDelete = { pendingDelete = setOf(it) },
-                        onSetRead = onSetRead,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImportReportCard(
+    report: ImportReport,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(18.dp, 0.dp, 18.dp, 8.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite },
+    ) {
+        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = if (report.cancelled) "Importação cancelada" else "Resultado da importação",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.semantics { heading() },
+                )
+                IconButton(onClick = onDismiss) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = "Fechar relatório",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            }
+            Text(
+                text = "${report.imported} adicionadas com sucesso" +
+                    if (report.failed.isNotEmpty()) ", ${report.failed.size} com falha" else "",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (report.failed.isNotEmpty()) {
+                Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    for (fail in report.failed.take(5)) {
+                        Text(
+                            text = "• ${fail.displayName}: ${fail.errorMessage ?: "Erro"}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    if (report.failed.size > 5) {
+                        Text(
+                            text = "+ mais ${report.failed.size - 5} arquivos com falha",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (report.recoverableFailures.isNotEmpty()) {
+                    Button(
+                        onClick = onRetry,
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                    ) {
+                        Text("Tentar novamente", color = MaterialTheme.colorScheme.onPrimary)
+                    }
+                }
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                ) {
+                    Text("Dispensar", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+/** Texto de progresso para a retomada: páginas são a unidade honesta para HQs. */
+internal fun readingProgressSummary(pub: Pub): String {
+    if (pub.pageCount <= 0) return "Sem páginas disponíveis"
+    val currentPage = (pub.progress.coerceIn(0.0, 1.0) * (pub.pageCount - 1))
+        .roundToInt()
+        .plus(1)
+        .coerceIn(1, pub.pageCount)
+    val remaining = (pub.pageCount - currentPage).coerceAtLeast(0)
+    val pageText = ReadingMetrics.formatPageProgress(currentPage, pub.pageCount)
+    val estimatedMinutes = pub.readingPagesPerMinute?.let {
+        ReadingMetrics.estimateRemainingMinutes(remaining, it)
+    }
+    if (estimatedMinutes != null) {
+        return ReadingMetrics.formatHeroProgress(currentPage, pub.pageCount, estimatedMinutes)
+    }
+    return if (remaining == 0) {
+        "$pageText • Última página"
+    } else {
+        "$pageText • Faltam aprox. $remaining páginas"
+    }
+}
+
+@Composable
+private fun ContinueHero(
+    pub: Pub,
+    cover: File?,
+    onCoverVisible: (Pub) -> Unit,
+    onOpenClick: (Pub) -> Unit,
+    coverImage: @Composable (Pub, File?, Modifier) -> Unit,
+) {
+    LaunchedEffect(pub.id, cover) {
+        if (cover == null) onCoverVisible(pub)
+    }
+    Column(Modifier.fillMaxWidth().padding(18.dp, 0.dp, 18.dp, 8.dp)) {
+        Text(
+            "Continuar lendo",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.semantics { heading() },
+        )
+        Card(
+            onClick = { onOpenClick(pub) },
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.width(112.dp).height(156.dp)) {
+                    coverImage(pub, cover, Modifier.fillMaxSize())
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        pub.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        readingProgressSummary(pub),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    LinearProgressIndicator(
+                        progress = { pub.progress.toFloat().coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.secondary,
+                        trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
+                    )
+                    Text(
+                        "Retomar",
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.primary)
+                            .padding(12.dp),
                     )
                 }
             }
@@ -363,9 +680,15 @@ fun LibraryContent(
 @Composable
 private fun FilterChip(selected: Boolean, label: String, onClick: () -> Unit) {
     if (selected) {
-        Button(onClick = onClick) { Text(label, color = Color.White) }
+        Button(
+            onClick = onClick,
+            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+        ) { Text(label, color = MaterialTheme.colorScheme.onPrimary) }
     } else {
-        TextButton(onClick = onClick) { Text(label, color = Color(0xFFC8C0B3)) }
+        TextButton(
+            onClick = onClick,
+            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+        ) { Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }
 
@@ -378,17 +701,17 @@ private fun SelectionBar(
     onDelete: () -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().background(Color(0xFF151B23)).padding(8.dp),
+        modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text("$count", color = Color(0xFFF2A900), modifier = Modifier.padding(start = 8.dp))
-        TextButton(onClick = onMarkRead) { Text("Lido", color = Color.White) }
-        TextButton(onClick = onClearProgress) { Text("Limpar", color = Color.White) }
-        TextButton(onClick = onDelete) { Text("Excluir", color = Color(0xFFC96F4A)) }
-        androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+        Text("$count", color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(start = 8.dp))
+        TextButton(onClick = onMarkRead) { Text("Lido", color = MaterialTheme.colorScheme.onSurface) }
+        TextButton(onClick = onClearProgress) { Text("Limpar", color = MaterialTheme.colorScheme.onSurface) }
+        TextButton(onClick = onDelete) { Text("Excluir", color = MaterialTheme.colorScheme.error) }
+        Spacer(Modifier.weight(1f))
         TextButton(onClick = onClear) {
-            Icon(Icons.Filled.Close, contentDescription = "Limpar seleção", tint = Color.White)
+            Icon(Icons.Filled.Close, contentDescription = "Limpar seleção", tint = MaterialTheme.colorScheme.onSurface)
         }
     }
 }
@@ -402,8 +725,13 @@ private fun ContinueStrip(
     coverImage: @Composable (Pub, File?, Modifier) -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(18.dp, 0.dp, 18.dp, 8.dp)) {
-        Text("Continuar lendo", style = MaterialTheme.typography.titleSmall, color = Color(0xFFF7F2E8))
-        androidx.compose.foundation.lazy.LazyRow(
+        Text(
+            "Continuar lendo",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.semantics { heading() },
+        )
+        LazyRow(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(vertical = 8.dp),
         ) {
@@ -415,7 +743,7 @@ private fun ContinueStrip(
                 }
                 Card(
                     onClick = { onOpenClick(pub) },
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF151B23)),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     modifier = Modifier.width(140.dp),
                 ) {
                     Column {
@@ -423,7 +751,7 @@ private fun ContinueStrip(
                         Text(
                             pub.title,
                             style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFF7F2E8),
+                            color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(8.dp, 6.dp, 8.dp, 0.dp),
@@ -431,8 +759,8 @@ private fun ContinueStrip(
                         LinearProgressIndicator(
                             progress = { pub.progress.toFloat() },
                             modifier = Modifier.fillMaxWidth().padding(8.dp),
-                            color = Color(0xFFF2A900),
-                            trackColor = Color(0x33FFFFFF),
+                            color = MaterialTheme.colorScheme.secondary,
+                            trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
                         )
                     }
                 }
@@ -452,32 +780,38 @@ private fun FoldersList(folders: List<FolderEntry>, onRescan: () -> Unit) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Pastas do aparelho", style = MaterialTheme.typography.titleSmall, color = Color(0xFFF7F2E8))
-            TextButton(onClick = onRescan) { Text("Revarrer", color = Color.White) }
+            Text(
+                "Pastas do aparelho",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.semantics { heading() },
+            )
+            TextButton(onClick = onRescan) { Text("Revarrer", color = MaterialTheme.colorScheme.onSurface) }
         }
         if (folders.isEmpty()) {
-            Text(
-                "Nenhuma pasta importada ainda. Use + Pasta para autorizar via SAF.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFFC8C0B3),
-                modifier = Modifier.padding(top = 12.dp),
-            )
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Nenhuma pasta com HQs encontrada.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         } else {
-            androidx.compose.foundation.lazy.LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(folders.size) { index ->
-                    val folder = folders[index]
-                    Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF151B23))) {
+            androidx.compose.foundation.lazy.LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(vertical = 8.dp),
+            ) {
+                items(folders) { folder ->
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth().padding(14.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(Modifier.weight(1f)) {
-                                Text(folder.name, color = Color(0xFFF7F2E8))
+                                Text(folder.name, color = MaterialTheme.colorScheme.onSurface)
                                 Text(
                                     if (folder.count < 0) "pasta autorizada (SAF)" else "${folder.count} arquivos",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = Color(0xFFC8C0B3),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                         }
@@ -488,33 +822,25 @@ private fun FoldersList(folders: List<FolderEntry>, onRescan: () -> Unit) {
     }
 }
 
-/**
- * Capa real com Coil (arquivo garantido pelo núcleo, limite de 512px, sem
- * crossfade para não animar a grade). O placeholder de cor com a sigla do
- * formato fica por baixo: se o arquivo faltar ou falhar, a estante continua
- * legível e a arte nunca recebe overlay de marca.
- */
 @Composable
 internal fun DefaultCoverImage(pub: Pub, file: File?, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(150.dp)
+            .height(200.dp)
             .background(placeholderColor(pub.id)),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = pub.format.uppercase(),
             style = MaterialTheme.typography.labelLarge,
-            color = Color.White,
+            color = MaterialTheme.colorScheme.onSurface,
         )
         if (file != null) {
             AsyncImage(
                 model = ImageRequest.Builder(LocalContext.current)
                     .data(file)
-                    .size(512)
-                    .memoryCacheKey("cover-${pub.id}")
-                    .crossfade(false)
+                    .crossfade(true)
                     .build(),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
@@ -531,22 +857,27 @@ private fun SeriesGrid(
     onCoverVisible: (Pub) -> Unit,
     onSeriesClick: (SeriesGroup) -> Unit,
     coverImage: @Composable (Pub, File?, Modifier) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
+        modifier = modifier,
         contentPadding = PaddingValues(18.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         items(groups, key = { it.key }) { group ->
             val first = group.editions.first().pub
             val coverFile = covers[first.id]?.let { File(it) }
             LaunchedEffect(first.id, covers[first.id]) {
-                if (coverFile == null) {
-                    onCoverVisible(first)
-                }
+                if (coverFile == null) onCoverVisible(first)
             }
-            SeriesCard(group, coverFile, coverImage, onSeriesClick)
+            SeriesCard(
+                group = group,
+                coverFile = coverFile,
+                onSeriesClick = onSeriesClick,
+                coverImage = coverImage,
+            )
         }
     }
 }
@@ -555,13 +886,13 @@ private fun SeriesGrid(
 private fun SeriesCard(
     group: SeriesGroup,
     coverFile: File?,
-    coverImage: @Composable (Pub, File?, Modifier) -> Unit,
     onSeriesClick: (SeriesGroup) -> Unit,
+    coverImage: @Composable (Pub, File?, Modifier) -> Unit,
 ) {
     val first = group.editions.first().pub
     Card(
         onClick = { onSeriesClick(group) },
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF151B23)),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
         Column {
             coverImage(first, coverFile, Modifier)
@@ -569,14 +900,14 @@ private fun SeriesCard(
                 Text(
                     text = group.title,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFFF7F2E8),
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = seriesSubtitle(group),
                     style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFFC8C0B3),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
@@ -585,10 +916,15 @@ private fun SeriesCard(
 
 private fun seriesSubtitle(group: SeriesGroup): String {
     val single = group.editions.singleOrNull()
-    return if (single != null && single.number == null) {
-        "${single.pub.pageCount} páginas"
-    } else {
-        "${group.editions.size} edições"
+    if (single != null && single.number == null) {
+        return "${single.pub.pageCount} páginas"
+    }
+    val total = group.editions.size
+    val read = group.editions.count { it.pub.progress >= 0.99 }
+    return when {
+        read == 0 -> "$total edições"
+        read == total -> "$total edições · todas lidas"
+        else -> "$total edições · $read lidas"
     }
 }
 
@@ -600,26 +936,26 @@ private fun SeriesDetail(
     onBack: () -> Unit,
     onOpenClick: (Pub) -> Unit,
     coverImage: @Composable (Pub, File?, Modifier) -> Unit,
-    selection: Set<String> = emptySet(),
-    onToggleSelect: (String) -> Unit = {},
-    onToggleFavorite: (Pub) -> Unit = {},
-    onRequestDelete: (String) -> Unit = {},
-    onSetRead: (Pub, Boolean) -> Unit = { _, _ -> },
+    selection: Set<String>,
+    onToggleSelect: (String) -> Unit,
+    onToggleFavorite: (Pub) -> Unit,
+    onRequestDelete: (String) -> Unit,
+    onSetRead: (Pub, Boolean) -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(10.dp, 4.dp, 18.dp, 0.dp),
+            modifier = Modifier.fillMaxWidth().padding(18.dp, 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TextButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = Color.White)
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                 Spacer(Modifier.width(4.dp))
-                Text("All series", color = Color.White)
+                Text("All series", color = MaterialTheme.colorScheme.onSurface)
             }
             Text(
                 text = group.title,
                 style = MaterialTheme.typography.titleSmall,
-                color = Color(0xFFF7F2E8),
+                color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(start = 4.dp),
@@ -627,24 +963,24 @@ private fun SeriesDetail(
         }
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
+            modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(18.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             items(group.editions, key = { it.pub.id }) { edition ->
                 val pub = edition.pub
-                val coverFile = covers[pub.id]?.let { File(it) }
+                val file = covers[pub.id]?.let { File(it) }
                 LaunchedEffect(pub.id, covers[pub.id]) {
-                    if (coverFile == null) {
-                        onCoverVisible(pub)
-                    }
+                    if (file == null) onCoverVisible(pub)
                 }
                 Column {
                     PubCard(
                         pub = pub,
-                        coverFile = coverFile,
-                        coverImage = coverImage,
+                        coverFile = file,
+                        onCoverVisible = onCoverVisible,
                         onOpenClick = onOpenClick,
+                        coverImage = coverImage,
                         selected = selection.contains(pub.id),
                         onToggleSelect = onToggleSelect,
                         onToggleFavorite = onToggleFavorite,
@@ -655,8 +991,8 @@ private fun SeriesDetail(
                         Text(
                             text = "possible duplicate",
                             style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFF2A900),
-                            modifier = Modifier.padding(top = 4.dp, start = 2.dp),
+                            color = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.padding(top = 4.dp, start = 8.dp),
                         )
                     }
                 }
@@ -665,23 +1001,36 @@ private fun SeriesDetail(
     }
 }
 
+private fun editionLabel(edition: SeriesEdition): String {
+    val issue = edition.number
+    return if (issue != null) {
+        "#$issue"
+    } else {
+        edition.pub.title
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PubCard(
     pub: Pub,
     coverFile: File?,
-    coverImage: @Composable (Pub, File?, Modifier) -> Unit,
+    onCoverVisible: (Pub) -> Unit,
     onOpenClick: (Pub) -> Unit,
-    selected: Boolean = false,
-    onToggleSelect: (String) -> Unit = {},
-    onToggleFavorite: (Pub) -> Unit = {},
-    onRequestDelete: (String) -> Unit = {},
-    onSetRead: (Pub, Boolean) -> Unit = { _, _ -> },
+    coverImage: @Composable (Pub, File?, Modifier) -> Unit,
+    selected: Boolean,
+    onToggleSelect: (String) -> Unit,
+    onToggleFavorite: (Pub) -> Unit,
+    onRequestDelete: (String) -> Unit,
+    onSetRead: (Pub, Boolean) -> Unit,
 ) {
+    LaunchedEffect(pub.id, coverFile) {
+        if (coverFile == null) onCoverVisible(pub)
+    }
     var menu by remember(pub.id) { mutableStateOf(false) }
     Card(
         colors = CardDefaults.cardColors(
-            containerColor = if (selected) Color(0xFF2A3320) else Color(0xFF151B23),
+            containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
         ),
     ) {
         Column(
@@ -692,14 +1041,21 @@ private fun PubCard(
                 onLongClick = { onToggleSelect(pub.id) },
             ),
         ) {
-            Box {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics(mergeDescendants = true) {}
+                    .clickable {
+                        if (selected || menu) onToggleSelect(pub.id) else onOpenClick(pub)
+                    },
+            ) {
                 coverImage(pub, coverFile, Modifier)
                 if (selected) {
                     Box(
-                        Modifier.fillMaxWidth().background(Color(0x99000000)).padding(4.dp),
+                        Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.6f)).padding(4.dp),
                         contentAlignment = Alignment.TopEnd,
                     ) {
-                        Icon(Icons.Filled.Check, contentDescription = "Selecionado", tint = Color(0xFFF2A900))
+                        Icon(Icons.Filled.Check, contentDescription = "Selecionado", tint = MaterialTheme.colorScheme.secondary)
                     }
                 }
             }
@@ -708,45 +1064,45 @@ private fun PubCard(
                     Text(
                         text = pub.title,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFFF7F2E8),
+                        color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
-                    TextButton(onClick = { onToggleFavorite(pub) }) {
+                    IconButton(onClick = { onToggleFavorite(pub) }) {
                         Icon(
                             Icons.Filled.Star,
                             contentDescription = if (pub.isFavorite) "Remover dos favoritos" else "Favoritar",
-                            tint = if (pub.isFavorite) Color(0xFFF2A900) else Color(0xFFC8C0B3),
+                            tint = if (pub.isFavorite) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
                 Text(
                     text = "${pub.pageCount} páginas",
                     style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFFC8C0B3),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 LinearProgressIndicator(
                     progress = { pub.progress.toFloat() },
                     modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                    color = Color(0xFFF2A900),
-                    trackColor = Color(0x33FFFFFF),
+                    color = MaterialTheme.colorScheme.secondary,
+                    trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(onClick = { menu = !menu }) {
-                        Icon(Icons.Filled.MoreVert, contentDescription = "Opções", tint = Color(0xFFC8C0B3))
+                        Icon(Icons.Filled.MoreVert, contentDescription = "Opções", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 if (menu) {
                     Column {
                         TextButton(onClick = { onSetRead(pub, true); menu = false }) {
-                            Text("Marcar como lido", color = Color.White)
+                            Text("Marcar como lido", color = MaterialTheme.colorScheme.onSurface)
                         }
                         TextButton(onClick = { onSetRead(pub, false); menu = false }) {
-                            Text("Limpar progresso", color = Color.White)
+                            Text("Limpar progresso", color = MaterialTheme.colorScheme.onSurface)
                         }
                         TextButton(onClick = { onRequestDelete(pub.id); menu = false }) {
-                            Text("Excluir da estante", color = Color(0xFFC96F4A))
+                            Text("Excluir da estante", color = MaterialTheme.colorScheme.error)
                         }
                     }
                 }

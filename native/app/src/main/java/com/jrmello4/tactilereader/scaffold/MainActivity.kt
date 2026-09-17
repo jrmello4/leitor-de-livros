@@ -11,16 +11,17 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jrmello4.tactilereader.core.ImportSource
+import com.jrmello4.tactilereader.core.LibraryDb
 import com.jrmello4.tactilereader.library.LibraryScreen
 import com.jrmello4.tactilereader.library.LibraryScanner
 import com.jrmello4.tactilereader.library.LibraryViewModel
@@ -54,6 +55,29 @@ class MainActivity : ComponentActivity() {
 
     private val busy = kotlinx.coroutines.flow.MutableStateFlow<BusyState?>(null)
     private val cancelWork = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Paleta Paper Atelier: elimina o roxo/azul padrão do Material. */
+    private val paperAtelierScheme = androidx.compose.material3.darkColorScheme(
+        primary = Color(0xFF3D2F23),
+        onPrimary = Color(0xFFF7F2E8),
+        primaryContainer = Color(0xFF5A4633),
+        onPrimaryContainer = Color(0xFFFFE6C6),
+        secondary = Color(0xFFF2A900),
+        onSecondary = Color(0xFF080B0F),
+        secondaryContainer = Color(0xFF5C4300),
+        onSecondaryContainer = Color(0xFFFFE08A),
+        tertiary = Color(0xFFC96F4A),
+        onTertiary = Color(0xFF080B0F),
+        background = Color(0xFF0D1117),
+        onBackground = Color(0xFFF7F2E8),
+        surface = Color(0xFF151B23),
+        onSurface = Color(0xFFF7F2E8),
+        surfaceVariant = Color(0xFF252A31),
+        onSurfaceVariant = Color(0xFFC8C0B3),
+        outline = Color(0xFF8B8174),
+        error = Color(0xFFC96F4A),
+        onError = Color(0xFF080B0F),
+    )
 
     /** Teclas de volume passam a página no leitor; fora dele, volume normal. */
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
@@ -163,9 +187,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val factory = LibraryViewModelFactory(filesDir)
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
+            MaterialTheme(colorScheme = paperAtelierScheme) {
                 viewModel = viewModel(factory = factory)
                 var openPubId by rememberSaveable { mutableStateOf<String?>(null) }
+                var openPageId by rememberSaveable { mutableStateOf<String?>(null) }
                 var screen by rememberSaveable { mutableStateOf("library") }
                 val pubs by viewModel.state.collectAsState()
                 val current = pubs.pubs.firstOrNull { it.id == openPubId }
@@ -177,15 +202,64 @@ class MainActivity : ComponentActivity() {
                     when {
                         current != null -> {
                             val reader: com.jrmello4.tactilereader.reader.ReaderViewModel = viewModel(
-                                key = "reader-${current.id}",
-                                factory = ReaderViewModelFactory(filesDir, current.id, current.title),
+                                key = "reader-${current.id}-${openPageId ?: "last"}",
+                                factory = ReaderViewModelFactory(filesDir, current.id, current.title, openPageId),
                             )
                             val next = nextEdition(pubs.pubs.map { it }, current.id)
                             ReaderScreen(
                                 reader,
-                                onBack = { openPubId = null },
+                                onBack = {
+                                    openPubId = null
+                                    openPageId = null
+                                    viewModel.refresh()
+                                },
                                 nextTitle = next?.title,
-                                onBingeOpenNext = { if (next != null) openPubId = next.id },
+                                onBingeOpenNext = {
+                                    reader.finishSession()
+                                    if (next != null) {
+                                        openPubId = next.id
+                                        openPageId = null
+                                    }
+                                },
+                            )
+                        }
+                        screen == "bookmarks" -> {
+                            com.jrmello4.tactilereader.bookmarks.BookmarksScreen(
+                                filesDir = filesDir,
+                                onBack = { screen = "library" },
+                                onOpenBookmark = { pubId, pageId ->
+                                    openPubId = pubId
+                                    openPageId = pageId
+                                },
+                                onExportBackup = {
+                                    lifecycleScope.launch {
+                                        busy.value = BusyState("Exportando backup…", cancellable = false)
+                                        val out = withContext(Dispatchers.IO) {
+                                            try {
+                                                val file = com.jrmello4.tactilereader.settings.BackupManager.export(
+                                                    LibraryDb.open(File(filesDir, "lib"), File(filesDir, "imports"), AppSources.opener),
+                                                    File(filesDir, "backups"),
+                                                )
+                                                "Backup gerado em ${file.name}"
+                                            } catch (e: Exception) {
+                                                "Falha ao exportar: ${e.message}"
+                                            }
+                                        }
+                                        busy.value = null
+                                        android.widget.Toast.makeText(this@MainActivity, out, android.widget.Toast.LENGTH_LONG).show()
+                                    }
+                                },
+                                onImportBackup = { pickBackup.launch(arrayOf("*/*")) },
+                            )
+                        }
+                        screen == "stats" -> {
+                            com.jrmello4.tactilereader.stats.ReadingStatsScreen(
+                                filesDir = filesDir,
+                                onBack = { screen = "library" },
+                                onOpenPub = { pubId ->
+                                    openPubId = pubId
+                                    openPageId = null
+                                },
                             )
                         }
                         screen == "settings" -> {
@@ -193,6 +267,8 @@ class MainActivity : ComponentActivity() {
                                 filesDir = filesDir,
                                 onBack = { screen = "library" },
                                 onOpenOpds = { screen = "opds" },
+                                onOpenBookmarks = { screen = "bookmarks" },
+                                onOpenStats = { screen = "stats" },
                                 onImportBackup = { pickBackup.launch(arrayOf("*/*")) },
                             )
                         }
@@ -206,6 +282,7 @@ class MainActivity : ComponentActivity() {
                         else -> {
                             if (openPubId != null && !pubs.loading) {
                                 openPubId = null
+                                openPageId = null
                             }
                             var folders by androidx.compose.runtime.remember {
                                 mutableStateOf<List<com.jrmello4.tactilereader.library.FolderEntry>>(emptyList())
@@ -218,9 +295,14 @@ class MainActivity : ComponentActivity() {
                             LibraryScreen(
                                 viewModel,
                                 onAddClick = { pickComics.launch(arrayOf("*/*")) },
-                                onOpenClick = { openPubId = it.id },
+                                onOpenClick = {
+                                    openPubId = it.id
+                                    openPageId = null
+                                },
                                 onAddFolderClick = { pickFolder.launch(null) },
                                 onOpenSettings = { screen = "settings" },
+                                onOpenBookmarks = { screen = "bookmarks" },
+                                onOpenStats = { screen = "stats" },
                                 folders = folders,
                                 onRescan = {
                                     lifecycleScope.launch {

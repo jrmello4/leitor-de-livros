@@ -4,7 +4,7 @@
 
 ## Platform
 
-Android (phone). Development host may be Windows or Linux; the product ships as an Android APK.
+Android
 
 ## Users
 
@@ -29,6 +29,9 @@ v1 targets mid-range Android phones (for example Moto G34 5G class: 4–8 GB RAM
 - SAF file and folder pickers; originals remain read-only.
 - Progress is stored as page id + scroll ratio inside the page.
 - Series grouping with natural issue order and non-destructive duplicate hints.
+- Central de Marcadores with search, direct page jumping, removal, and JSON backup.
+- Minha Leitura (reading stats) with local calm metrics (read time, pages, PPM, per-publication breakdown).
+- Structured per-file import reporting with diagnostics and targeted retry of failures.
 - PDF is not available on Android yet.
 - V1 excludes EPUB, accounts, sync, online metadata, a store, discovery, iOS, and desktop distribution.
 
@@ -50,4 +53,4 @@ Android implementation log: `docs/android-status.md`. Design specification: `doc
 
 ## Accessibility & Inclusion
 
-Touch targets at least 44px, visible focus for keyboard/switch access when available, scalable contrast, reduced-motion support, and Android Back as a universal escape route.
+Touch targets at least 48dp, TalkBack semantic announcements for pages and controls, semantic headings and live regions, visible focus for keyboard/switch access, scalable text, 320dp viewport resilience, Paper Atelier Material tokens, and Android Back as a universal escape route.

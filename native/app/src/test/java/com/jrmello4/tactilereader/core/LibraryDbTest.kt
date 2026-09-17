@@ -267,4 +267,36 @@ class LibraryDbTest {
         assertTrue(restored.isFavorite)
         assertEquals(page.id, reopened.loadReaderState(pub.id)?.pageId)
     }
+
+    @Test
+    fun savingReaderStateUpdatesShelfProgressWithoutLosingRatio() {
+        val root = tempRoot("shelf-progress")
+        val db = openDb(root)
+        val comic = File(root, "HQ.cbz").apply { writeBytes(cbzBytes(4)) }
+        db.importPaths(listOf(comic.absolutePath))
+        val pub = db.listPublications().single()
+        val page = db.listPages(pub.id)[2]
+
+        db.saveReaderState(pub.id, page.id, 0.42)
+
+        assertEquals(0.75, db.listPublications().single().progress, 0.0001)
+        assertEquals(0.42, db.loadReaderState(pub.id)?.scrollRatio ?: 0.0, 0.0001)
+    }
+
+    @Test
+    fun readingSessionIsStoredAndExposedAsShelfSpeed() {
+        val root = tempRoot("reading-stats")
+        val db = openDb(root)
+        val comic = File(root, "HQ.cbz").apply { writeBytes(cbzBytes(4)) }
+        db.importPaths(listOf(comic.absolutePath))
+        val pub = db.listPublications().single()
+
+        val speed = db.recordReadingSession(pub.id, durationMillis = 120_000, pagesRead = 4)
+
+        assertEquals(2.0, speed?.pagesPerMinute ?: 0.0, 0.0001)
+        assertEquals(2.0, db.listPublications().single().readingPagesPerMinute ?: 0.0, 0.0001)
+        assertEquals(120_000L, db.loadReadingStats(pub.id)?.totalMillis)
+        assertEquals(4, db.loadReadingStats(pub.id)?.pagesRead)
+        assertEquals(1, db.loadReadingStats(pub.id)?.sessions)
+    }
 }

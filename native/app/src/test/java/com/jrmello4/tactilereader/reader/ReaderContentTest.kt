@@ -159,6 +159,22 @@ class ReaderContentTest {
         assertEquals(1, backs)
     }
 
+    @Test
+    fun zoomHasAccessibleButtonAlternative() {
+        compose.setContent {
+            MaterialTheme {
+                ReaderContent(
+                    ReaderUiState(loading = false, title = "demo", pages = pages),
+                    onBack = {},
+                    pageImage = { page, _, _ -> Text("pagina-${page.id}") },
+                )
+            }
+        }
+
+        compose.onNodeWithText("Zoom").performClick()
+        compose.onNodeWithText("1:1").assertIsDisplayed()
+    }
+
     /**
      * Regressão do bug real: o detector de pinça consumia o arrasto de um
      * dedo com zoom 1x e a faixa não rolava. O arrasto precisa chegar ao

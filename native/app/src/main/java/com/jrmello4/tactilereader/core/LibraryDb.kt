@@ -335,7 +335,12 @@ class LibraryDb private constructor(
                    added_at, updated_at, is_favorite, diagnostic,
                    custom_cover_cache, custom_cover_name, source_path, direction,
                    author, year, genre, series_name,
-                   (SELECT last_read_at FROM reading_stats WHERE publication_id = publications.id)
+                   (SELECT last_read_at FROM reading_stats WHERE publication_id = publications.id),
+                   (SELECT CASE
+                       WHEN total_millis > 0 AND pages_read > 0
+                       THEN pages_read * 60000.0 / total_millis
+                       ELSE NULL
+                    END FROM reading_stats WHERE publication_id = publications.id)
               FROM publications
              ORDER BY updated_at DESC, title COLLATE NOCASE ASC
             """.trimIndent(),
@@ -356,7 +361,12 @@ class LibraryDb private constructor(
                    added_at, updated_at, is_favorite, diagnostic,
                    custom_cover_cache, custom_cover_name, source_path, direction,
                    author, year, genre, series_name,
-                   (SELECT last_read_at FROM reading_stats WHERE publication_id = publications.id)
+                   (SELECT last_read_at FROM reading_stats WHERE publication_id = publications.id),
+                   (SELECT CASE
+                       WHEN total_millis > 0 AND pages_read > 0
+                       THEN pages_read * 60000.0 / total_millis
+                       ELSE NULL
+                    END FROM reading_stats WHERE publication_id = publications.id)
               FROM publications WHERE source_path = ?
             """.trimIndent(),
             arrayOf(sourcePath),
@@ -466,24 +476,170 @@ class LibraryDb private constructor(
         if (publicationId.isBlank() || pageId.isBlank()) {
             error("publication id and page id must not be empty")
         }
+        val pageIndex = rawQuery(
+            "SELECT page_index FROM pages WHERE publication_id = ? AND id = ?",
+            arrayOf(publicationId, pageId),
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) error("page does not belong to the publication")
+            cursor.getInt(0).coerceAtLeast(0)
+        }
         val ratio = if (scrollRatio.isNaN()) 0.0 else scrollRatio.coerceIn(0.0, 1.0)
         val now = timestampMillis()
         // Sem UPSERT: o SQLite do sistema é 3.18 no Android 8 (UPSERT pede 3.24).
-        val updated = update(
-            "UPDATE reader_states SET page_id = ?, scroll_ratio = ?, updated_at = ? WHERE publication_id = ?",
-            arrayOf(pageId, ratio, now, publicationId),
-        )
-        if (updated == 0) {
-            execInsert(
-                """
-                INSERT INTO reader_states
-                    (publication_id, zoom_mode, zoom_scale, pan_x, pan_y, page_id, scroll_ratio, updated_at)
-                VALUES (?, 'page', 1.0, 0.0, 0.0, ?, ?, ?)
-                """.trimIndent(),
-                arrayOf(publicationId, pageId, ratio, now),
+        database.beginTransaction()
+        try {
+            val updated = update(
+                "UPDATE reader_states SET page_id = ?, scroll_ratio = ?, updated_at = ? WHERE publication_id = ?",
+                arrayOf(pageId, ratio, now, publicationId),
+            )
+            if (updated == 0) {
+                execInsert(
+                    """
+                    INSERT INTO reader_states
+                        (publication_id, zoom_mode, zoom_scale, pan_x, pan_y, page_id, scroll_ratio, updated_at)
+                    VALUES (?, 'page', 1.0, 0.0, 0.0, ?, ?, ?)
+                    """.trimIndent(),
+                    arrayOf(publicationId, pageId, ratio, now),
+                )
+            }
+            // A estante usa esta tabela leve para exibir o progresso sem
+            // materializar o estado completo do leitor.
+            update(
+                "UPDATE progress SET current_page = ?, updated_at = ? WHERE publication_id = ?",
+                arrayOf(pageIndex, now, publicationId),
+            )
+            database.setTransactionSuccessful()
+        } finally {
+            database.endTransaction()
+        }
+    }
+
+    /** Retorna as métricas locais acumuladas de uma publicação. */
+    @Synchronized
+    fun loadReadingStats(publicationId: String): ReadingStats? {
+        return rawQuery(
+            "SELECT total_millis, pages_read, sessions, last_read_at FROM reading_stats WHERE publication_id = ?",
+            arrayOf(publicationId),
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return null
+            ReadingStats(
+                totalMillis = cursor.getLong(0).coerceAtLeast(0L),
+                pagesRead = cursor.getInt(1).coerceAtLeast(0),
+                sessions = cursor.getInt(2).coerceAtLeast(0),
+                lastReadAt = cursor.getString(3),
             )
         }
     }
+
+    /**
+     * Persiste uma sessão já encerrada e devolve a velocidade acumulada.
+     * O tempo de cada sessão passa pelo mesmo filtro de pausa longa usado
+     * pelo formatador, sem armazenar eventos detalhados ou telemetria.
+     */
+    @Synchronized
+    fun recordReadingSession(
+        publicationId: String,
+        durationMillis: Long,
+        pagesRead: Int,
+    ): ReadingSpeed? {
+        if (publicationId.isBlank()) return null
+        val pages = pagesRead.coerceAtLeast(0)
+        val effective = ReadingMetrics.effectiveDuration(
+            ReadingSession(durationMillis = durationMillis, pagesRead = pages),
+        )
+        val previous = loadReadingStats(publicationId)
+        if (effective <= 0L || pages <= 0) {
+            return previous?.let { speedForStats(it) }
+        }
+        val previousMillis = previous?.totalMillis ?: 0L
+        val previousPages = previous?.pagesRead ?: 0
+        val previousSessions = previous?.sessions ?: 0
+        val totalMillis = if (Long.MAX_VALUE - previousMillis < effective) {
+            Long.MAX_VALUE
+        } else {
+            previousMillis + effective
+        }
+        val totalPages = (previousPages.toLong() + pages)
+            .coerceAtMost(Int.MAX_VALUE.toLong())
+            .toInt()
+        val sessions = (previousSessions.toLong() + 1L)
+            .coerceAtMost(Int.MAX_VALUE.toLong())
+            .toInt()
+        val now = timestampMillis()
+        database.beginTransaction()
+        try {
+            val updated = update(
+                "UPDATE reading_stats SET total_millis = ?, pages_read = ?, sessions = ?, last_read_at = ? WHERE publication_id = ?",
+                arrayOf(totalMillis, totalPages, sessions, now, publicationId),
+            )
+            if (updated == 0) {
+                execInsert(
+                    "INSERT INTO reading_stats (publication_id, total_millis, pages_read, sessions, last_read_at) VALUES (?, ?, ?, ?, ?)",
+                    arrayOf(publicationId, totalMillis, totalPages, sessions, now),
+                )
+            }
+            database.setTransactionSuccessful()
+        } finally {
+            database.endTransaction()
+        }
+        return speedForStats(ReadingStats(totalMillis, totalPages, sessions, now))
+    }
+
+    private fun speedForStats(stats: ReadingStats): ReadingSpeed? {
+        if (stats.totalMillis <= 0L || stats.pagesRead <= 0) return null
+        return ReadingMetrics.calculateSpeed(
+            ReadingSession(stats.totalMillis, stats.pagesRead),
+            maxPauseThresholdMs = Long.MAX_VALUE,
+        )
+    }
+
+    /**
+     * Consolida as métricas locais de leitura de todas as publicações
+     * para a tela Minha Leitura, sem depender de nuvem ou contas.
+     */
+    @Synchronized
+    fun loadOverallReadingStats(): OverallReadingStats {
+        var totalMillis = 0L
+        var totalPages = 0
+        var totalSessions = 0
+        val pubStats = mutableListOf<PublicationReadingStat>()
+
+        val pubs = listPublications()
+        for (pub in pubs) {
+            val stats = loadReadingStats(pub.id)
+            if (stats != null && (stats.totalMillis > 0L || stats.pagesRead > 0)) {
+                totalMillis = saturatingAdd(totalMillis, stats.totalMillis)
+                totalPages = (totalPages.toLong() + stats.pagesRead).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                totalSessions = (totalSessions.toLong() + stats.sessions).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                pubStats.add(
+                    PublicationReadingStat(
+                        id = pub.id,
+                        title = pub.title,
+                        format = pub.format,
+                        pageCount = pub.pageCount,
+                        progress = pub.progress,
+                        totalMillis = stats.totalMillis,
+                        pagesRead = stats.pagesRead,
+                        sessions = stats.sessions,
+                        pagesPerMinute = pub.readingPagesPerMinute,
+                        lastReadAt = stats.lastReadAt,
+                    )
+                )
+            }
+        }
+        val minutes = totalMillis.toDouble() / 60_000.0
+        val avgPpm = if (minutes > 0.0) totalPages.toDouble() / minutes else 0.0
+        return OverallReadingStats(
+            totalMillis = totalMillis,
+            totalPagesRead = totalPages,
+            totalSessions = totalSessions,
+            averagePpm = avgPpm,
+            publications = pubStats.sortedByDescending { it.lastReadAt ?: "" },
+        )
+    }
+
+    private fun saturatingAdd(a: Long, b: Long): Long =
+        if (Long.MAX_VALUE - a < b) Long.MAX_VALUE else a + b
 
     /** Snapshot em lote: bookmarks + reader states em 2 consultas. */
     @Synchronized
@@ -580,6 +736,39 @@ class LibraryDb private constructor(
             "DELETE FROM bookmarks WHERE publication_id = ? AND page_id = ?",
             arrayOf(publicationId, pageId),
         )
+    }
+
+    /**
+     * Lista todos os marcadores de todas as publicações na biblioteca,
+     * incluindo o título da HQ e o índice humano da página (0-based).
+     */
+    @Synchronized
+    fun listAllBookmarks(): List<BookmarkItem> {
+        val list = mutableListOf<BookmarkItem>()
+        rawQuery(
+            """
+            SELECT b.publication_id, p.title, b.page_id, pg.page_index, b.label, b.created_at
+              FROM bookmarks b
+              JOIN publications p ON b.publication_id = p.id
+              JOIN pages pg ON b.publication_id = pg.publication_id AND b.page_id = pg.id
+             ORDER BY b.created_at DESC, p.title COLLATE NOCASE ASC
+            """.trimIndent(),
+            emptyArray(),
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                list.add(
+                    BookmarkItem(
+                        publicationId = cursor.getString(0),
+                        publicationTitle = cursor.getString(1),
+                        pageId = cursor.getString(2),
+                        pageIndex = cursor.getInt(3),
+                        label = cursor.getString(4) ?: "",
+                        createdAt = cursor.getString(5) ?: "",
+                    )
+                )
+            }
+        }
+        return list
     }
 
     @Synchronized
@@ -762,6 +951,7 @@ class LibraryDb private constructor(
             genre = normalized.genre,
             seriesName = normalized.seriesName,
             lastReadAt = normalized.lastReadAt,
+            readingPagesPerMinute = normalized.readingPagesPerMinute,
         )
     }
 
@@ -1260,6 +1450,7 @@ class LibraryDb private constructor(
         val genre: String?,
         val seriesName: String?,
         val lastReadAt: String?,
+        val readingPagesPerMinute: Double?,
     )
 
     private fun Cursor.toPublicationRow() = PublicationRow(
@@ -1281,6 +1472,7 @@ class LibraryDb private constructor(
         genre = getString(15)?.ifBlank { null },
         seriesName = getString(16)?.ifBlank { null },
         lastReadAt = getString(17),
+        readingPagesPerMinute = if (isNull(18)) null else getDouble(18),
     )
 
     companion object {
