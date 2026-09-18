@@ -44,14 +44,17 @@ jobs:
         run: sdkmanager.bat "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       # O núcleo é Kotlin puro: sem Rust, sem NDK, sem .so por ABI.
-      - name: Unit tests and APKs
+      - name: Unit tests, androidTest compilation and release build
         shell: bash
-        run: cd native && ./gradlew testDebugUnitTest assembleDebug assembleDebugAndroidTest --no-daemon
+        run: cd native && ./gradlew testDebugUnitTest compileDebugAndroidTestSources assembleRelease generateReleaseMetadata --no-daemon
 
-      - name: Upload scaffold debug APK
+      - name: Upload release APK and manifest
         uses: actions/upload-artifact@v7
         with:
-          name: tactile-native-scaffold-debug
-          path: native/app/build/outputs/apk/debug/*.apk
+          name: tactile-native-release
+          path: |
+            native/app/build/outputs/apk/release/*.apk
+            release-manifest.json
+            sbom.json
           if-no-files-found: error
           retention-days: 14

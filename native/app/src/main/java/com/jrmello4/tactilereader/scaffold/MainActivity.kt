@@ -5,12 +5,24 @@ import android.os.Bundle
 import android.provider.OpenableColumns
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -30,6 +42,10 @@ import com.jrmello4.tactilereader.library.groupBySeries
 import com.jrmello4.tactilereader.reader.ReaderScreen
 import com.jrmello4.tactilereader.reader.ReaderViewModelFactory
 import com.jrmello4.tactilereader.reader.VolumeScrollBus
+import com.jrmello4.tactilereader.ui.theme.EditorialDarkScheme
+import com.jrmello4.tactilereader.ui.theme.EditorialIcons
+import com.jrmello4.tactilereader.ui.theme.EditorialShapes
+import com.jrmello4.tactilereader.ui.theme.EditorialTypography
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -55,29 +71,6 @@ class MainActivity : ComponentActivity() {
 
     private val busy = kotlinx.coroutines.flow.MutableStateFlow<BusyState?>(null)
     private val cancelWork = java.util.concurrent.atomic.AtomicBoolean(false)
-
-    /** Paleta Paper Atelier: elimina o roxo/azul padrão do Material. */
-    private val paperAtelierScheme = androidx.compose.material3.darkColorScheme(
-        primary = Color(0xFF3D2F23),
-        onPrimary = Color(0xFFF7F2E8),
-        primaryContainer = Color(0xFF5A4633),
-        onPrimaryContainer = Color(0xFFFFE6C6),
-        secondary = Color(0xFFF2A900),
-        onSecondary = Color(0xFF080B0F),
-        secondaryContainer = Color(0xFF5C4300),
-        onSecondaryContainer = Color(0xFFFFE08A),
-        tertiary = Color(0xFFC96F4A),
-        onTertiary = Color(0xFF080B0F),
-        background = Color(0xFF0D1117),
-        onBackground = Color(0xFFF7F2E8),
-        surface = Color(0xFF151B23),
-        onSurface = Color(0xFFF7F2E8),
-        surfaceVariant = Color(0xFF252A31),
-        onSurfaceVariant = Color(0xFFC8C0B3),
-        outline = Color(0xFF8B8174),
-        error = Color(0xFFC96F4A),
-        onError = Color(0xFF080B0F),
-    )
 
     /** Teclas de volume passam a página no leitor; fora dele, volume normal. */
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
@@ -187,7 +180,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val factory = LibraryViewModelFactory(filesDir)
         setContent {
-            MaterialTheme(colorScheme = paperAtelierScheme) {
+            MaterialTheme(
+                colorScheme = EditorialDarkScheme,
+                typography = EditorialTypography,
+                shapes = EditorialShapes,
+            ) {
                 viewModel = viewModel(factory = factory)
                 var openPubId by rememberSaveable { mutableStateOf<String?>(null) }
                 var openPageId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -196,6 +193,12 @@ class MainActivity : ComponentActivity() {
                 val current = pubs.pubs.firstOrNull { it.id == openPubId }
                 val busyText by busy.collectAsState()
                 androidx.compose.runtime.SideEffect { readerOpen = current != null }
+
+                // Retorno previsível do Android: volta à estante antes de fechar o app
+                BackHandler(enabled = current == null && screen != "library") {
+                    screen = if (screen == "opds") "settings" else "library"
+                }
+
                 androidx.compose.foundation.layout.Box(
                     modifier = androidx.compose.ui.Modifier.fillMaxSize(),
                 ) {
@@ -223,114 +226,201 @@ class MainActivity : ComponentActivity() {
                                 },
                             )
                         }
-                        screen == "bookmarks" -> {
-                            com.jrmello4.tactilereader.bookmarks.BookmarksScreen(
-                                filesDir = filesDir,
-                                onBack = { screen = "library" },
-                                onOpenBookmark = { pubId, pageId ->
-                                    openPubId = pubId
-                                    openPageId = pageId
-                                },
-                                onExportBackup = {
-                                    lifecycleScope.launch {
-                                        busy.value = BusyState("Exportando backup…", cancellable = false)
-                                        val out = withContext(Dispatchers.IO) {
-                                            try {
-                                                val file = com.jrmello4.tactilereader.settings.BackupManager.export(
-                                                    LibraryDb.open(File(filesDir, "lib"), File(filesDir, "imports"), AppSources.opener),
-                                                    File(filesDir, "backups"),
-                                                )
-                                                "Backup gerado em ${file.name}"
-                                            } catch (e: Exception) {
-                                                "Falha ao exportar: ${e.message}"
-                                            }
+                        else -> {
+                            Scaffold(
+                                bottomBar = {
+                                    if (screen != "opds") {
+                                        NavigationBar(
+                                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                                            contentColor = MaterialTheme.colorScheme.onSurface,
+                                            tonalElevation = 2.dp,
+                                        ) {
+                                            NavigationBarItem(
+                                                selected = screen == "library",
+                                                onClick = { screen = "library" },
+                                                icon = { Icon(EditorialIcons.Book, contentDescription = "Estante") },
+                                                label = { Text("Estante") },
+                                                colors = NavigationBarItemDefaults.colors(
+                                                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                ),
+                                            )
+                                            NavigationBarItem(
+                                                selected = screen == "bookmarks",
+                                                onClick = { screen = "bookmarks" },
+                                                icon = { Icon(EditorialIcons.Bookmark, contentDescription = "Marcadores") },
+                                                label = { Text("Marcadores") },
+                                                colors = NavigationBarItemDefaults.colors(
+                                                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                ),
+                                            )
+                                            NavigationBarItem(
+                                                selected = screen == "stats",
+                                                onClick = { screen = "stats" },
+                                                icon = { Icon(EditorialIcons.Metrics, contentDescription = "Minha leitura") },
+                                                label = { Text("Leitura") },
+                                                colors = NavigationBarItemDefaults.colors(
+                                                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                ),
+                                            )
+                                            NavigationBarItem(
+                                                selected = screen == "settings",
+                                                onClick = { screen = "settings" },
+                                                icon = { Icon(Icons.Filled.Settings, contentDescription = "Ajustes") },
+                                                label = { Text("Ajustes") },
+                                                colors = NavigationBarItemDefaults.colors(
+                                                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                ),
+                                            )
                                         }
-                                        busy.value = null
-                                        android.widget.Toast.makeText(this@MainActivity, out, android.widget.Toast.LENGTH_LONG).show()
                                     }
                                 },
-                                onImportBackup = { pickBackup.launch(arrayOf("*/*")) },
-                            )
-                        }
-                        screen == "stats" -> {
-                            com.jrmello4.tactilereader.stats.ReadingStatsScreen(
-                                filesDir = filesDir,
-                                onBack = { screen = "library" },
-                                onOpenPub = { pubId ->
-                                    openPubId = pubId
-                                    openPageId = null
+                                floatingActionButton = {
+                                    if (screen == "library") {
+                                        FloatingActionButton(
+                                            onClick = { pickComics.launch(arrayOf("*/*")) },
+                                            containerColor = MaterialTheme.colorScheme.primary,
+                                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                                            shape = RoundedCornerShape(16.dp),
+                                        ) {
+                                            Icon(Icons.Filled.Add, contentDescription = "Importar HQs")
+                                        }
+                                    }
                                 },
-                            )
-                        }
-                        screen == "settings" -> {
-                            com.jrmello4.tactilereader.settings.SettingsScreen(
-                                filesDir = filesDir,
-                                onBack = { screen = "library" },
-                                onOpenOpds = { screen = "opds" },
-                                onOpenBookmarks = { screen = "bookmarks" },
-                                onOpenStats = { screen = "stats" },
-                                onImportBackup = { pickBackup.launch(arrayOf("*/*")) },
-                            )
-                        }
-                        screen == "opds" -> {
-                            com.jrmello4.tactilereader.opds.OpdsScreen(
-                                filesDir = filesDir,
-                                onBack = { screen = "settings" },
-                                onDownloaded = { path -> importLocalPath(path) },
-                            )
-                        }
-                        else -> {
-                            if (openPubId != null && !pubs.loading) {
-                                openPubId = null
-                                openPageId = null
-                            }
-                            var folders by androidx.compose.runtime.remember {
-                                mutableStateOf<List<com.jrmello4.tactilereader.library.FolderEntry>>(emptyList())
-                            }
-                            androidx.compose.runtime.LaunchedEffect(pubs.pubs.size) {
-                                folders = withContext(Dispatchers.IO) {
-                                    LibraryScanner.allFolders(this@MainActivity, filesDir)
+                            ) { innerPadding ->
+                                androidx.compose.foundation.layout.Box(
+                                    modifier = androidx.compose.ui.Modifier
+                                        .fillMaxSize()
+                                        .padding(innerPadding),
+                                ) {
+                                    when (screen) {
+                                        "bookmarks" -> {
+                                            com.jrmello4.tactilereader.bookmarks.BookmarksScreen(
+                                                filesDir = filesDir,
+                                                onBack = { screen = "library" },
+                                                onOpenBookmark = { pubId, pageId ->
+                                                    openPubId = pubId
+                                                    openPageId = pageId
+                                                },
+                                                onExportBackup = {
+                                                    lifecycleScope.launch {
+                                                        busy.value = BusyState("Exportando backup…", cancellable = false)
+                                                        val out = withContext(Dispatchers.IO) {
+                                                            try {
+                                                                val file = com.jrmello4.tactilereader.settings.BackupManager.export(
+                                                                    LibraryDb.open(File(filesDir, "lib"), File(filesDir, "imports"), AppSources.opener),
+                                                                    File(filesDir, "backups"),
+                                                                )
+                                                                "Backup gerado em ${file.name}"
+                                                            } catch (e: Exception) {
+                                                                "Falha ao exportar: ${e.message}"
+                                                            }
+                                                        }
+                                                        busy.value = null
+                                                        android.widget.Toast.makeText(this@MainActivity, out, android.widget.Toast.LENGTH_LONG).show()
+                                                    }
+                                                },
+                                                onImportBackup = { pickBackup.launch(arrayOf("*/*")) },
+                                            )
+                                        }
+                                        "stats" -> {
+                                            com.jrmello4.tactilereader.stats.ReadingStatsScreen(
+                                                filesDir = filesDir,
+                                                onBack = { screen = "library" },
+                                                onOpenPub = { pubId ->
+                                                    openPubId = pubId
+                                                    openPageId = null
+                                                },
+                                            )
+                                        }
+                                        "settings" -> {
+                                            com.jrmello4.tactilereader.settings.SettingsScreen(
+                                                filesDir = filesDir,
+                                                onBack = { screen = "library" },
+                                                onOpenOpds = { screen = "opds" },
+                                                onOpenBookmarks = { screen = "bookmarks" },
+                                                onOpenStats = { screen = "stats" },
+                                                onImportBackup = { pickBackup.launch(arrayOf("*/*")) },
+                                            )
+                                        }
+                                        "opds" -> {
+                                            com.jrmello4.tactilereader.opds.OpdsScreen(
+                                                filesDir = filesDir,
+                                                onBack = { screen = "settings" },
+                                                onDownloaded = { path -> importLocalPath(path) },
+                                            )
+                                        }
+                                        else -> {
+                                            if (openPubId != null && !pubs.loading) {
+                                                openPubId = null
+                                                openPageId = null
+                                            }
+                                            var folders by androidx.compose.runtime.remember {
+                                                mutableStateOf<List<com.jrmello4.tactilereader.library.FolderEntry>>(emptyList())
+                                            }
+                                            androidx.compose.runtime.LaunchedEffect(pubs.pubs.size) {
+                                                folders = withContext(Dispatchers.IO) {
+                                                    LibraryScanner.allFolders(this@MainActivity, filesDir)
+                                                }
+                                            }
+                                            LibraryScreen(
+                                                viewModel,
+                                                onAddClick = { pickComics.launch(arrayOf("*/*")) },
+                                                onOpenClick = {
+                                                    openPubId = it.id
+                                                    openPageId = null
+                                                },
+                                                onAddFolderClick = { pickFolder.launch(null) },
+                                                onOpenSettings = { screen = "settings" },
+                                                onOpenBookmarks = { screen = "bookmarks" },
+                                                onOpenStats = { screen = "stats" },
+                                                folders = folders,
+                                                onRescan = {
+                                                    lifecycleScope.launch {
+                                                        cancelWork.set(false)
+                                                        busy.value = BusyState("Revarrendo origens…", cancellable = true)
+                                                        val sources = withContext(Dispatchers.IO) {
+                                                            val local = LibraryScanner.collectLocalCandidates(filesDir)
+                                                                .map { ImportSource(it, File(it).name) }
+                                                            val saf = LibraryScanner.persistedTreeUris(this@MainActivity)
+                                                                .flatMap { tree ->
+                                                                    LibraryScanner.collectSafSources(
+                                                                        this@MainActivity,
+                                                                        tree,
+                                                                        shouldCancel = { cancelWork.get() },
+                                                                    ).sources
+                                                                }
+                                                            local + saf
+                                                        }
+                                                        busy.value = null
+                                                        if (sources.isNotEmpty()) {
+                                                            viewModel.importSources(sources)
+                                                        }
+                                                        folders = withContext(Dispatchers.IO) {
+                                                            LibraryScanner.allFolders(this@MainActivity, filesDir)
+                                                        }
+                                                    }
+                                                },
+                                            )
+                                        }
+                                    }
                                 }
                             }
-                            LibraryScreen(
-                                viewModel,
-                                onAddClick = { pickComics.launch(arrayOf("*/*")) },
-                                onOpenClick = {
-                                    openPubId = it.id
-                                    openPageId = null
-                                },
-                                onAddFolderClick = { pickFolder.launch(null) },
-                                onOpenSettings = { screen = "settings" },
-                                onOpenBookmarks = { screen = "bookmarks" },
-                                onOpenStats = { screen = "stats" },
-                                folders = folders,
-                                onRescan = {
-                                    lifecycleScope.launch {
-                                        cancelWork.set(false)
-                                        busy.value = BusyState("Revarrendo origens…", cancellable = true)
-                                        val sources = withContext(Dispatchers.IO) {
-                                            val local = LibraryScanner.collectLocalCandidates(filesDir)
-                                                .map { ImportSource(it, File(it).name) }
-                                            val saf = LibraryScanner.persistedTreeUris(this@MainActivity)
-                                                .flatMap { tree ->
-                                                    LibraryScanner.collectSafSources(
-                                                        this@MainActivity,
-                                                        tree,
-                                                        shouldCancel = { cancelWork.get() },
-                                                    ).sources
-                                                }
-                                            local + saf
-                                        }
-                                        busy.value = null
-                                        if (sources.isNotEmpty()) {
-                                            viewModel.importSources(sources)
-                                        }
-                                        folders = withContext(Dispatchers.IO) {
-                                            LibraryScanner.allFolders(this@MainActivity, filesDir)
-                                        }
-                                    }
-                                },
-                            )
                         }
                     }
                     busyText?.let { state ->

@@ -1,0 +1,42 @@
+# Baseline Profile para Tactile Reader
+# Compilação AOT (Ahead-of-Time) de classes e métodos críticos verificáveis
+
+# 1. Startup e Ciclo de Vida da Aplicação
+Lcom/jrmello4/tactilereader/scaffold/MainActivity;
+HSPLcom/jrmello4/tactilereader/scaffold/MainActivity;->onCreate(Landroid/os/Bundle;)V
+Lcom/jrmello4/tactilereader/scaffold/TactileApp;
+HSPLcom/jrmello4/tactilereader/scaffold/TactileApp;->onCreate()V
+
+# 2. Métricas de Leitura e Cálculos de Ritmo (Core)
+Lcom/jrmello4/tactilereader/core/ReadingMetrics;
+HSPLcom/jrmello4/tactilereader/core/ReadingMetrics;->calculateSpeed(Lcom/jrmello4/tactilereader/core/ReadingSession;J)Lcom/jrmello4/tactilereader/core/ReadingSpeed;
+HSPLcom/jrmello4/tactilereader/core/ReadingMetrics;->estimateRemainingMinutes(ID)Ljava/lang/Integer;
+HSPLcom/jrmello4/tactilereader/core/ReadingMetrics;->formatPageProgress(II)Ljava/lang/String;
+Lcom/jrmello4/tactilereader/core/ReadingSession;
+Lcom/jrmello4/tactilereader/core/ReadingSpeed;
+
+# 3. Persistência SQLite Local e Restauração de Leitura
+Lcom/jrmello4/tactilereader/core/LibraryDb;
+HSPLcom/jrmello4/tactilereader/core/LibraryDb;->listPublications()Ljava/util/List;
+HSPLcom/jrmello4/tactilereader/core/LibraryDb;->ensurePage(Ljava/lang/String;Ljava/lang/String;)Lcom/jrmello4/tactilereader/core/PageCacheResult;
+HSPLcom/jrmello4/tactilereader/core/LibraryDb;->loadReaderState(Ljava/lang/String;)Lcom/jrmello4/tactilereader/core/ReaderState;
+HSPLcom/jrmello4/tactilereader/core/LibraryDb;->saveReaderState(Ljava/lang/String;Ljava/lang/String;D)V
+HSPLcom/jrmello4/tactilereader/core/LibraryDb;->listBookmarks(Ljava/lang/String;)Ljava/util/List;
+HSPLcom/jrmello4/tactilereader/core/LibraryDb;->upsertBookmark(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+
+# 4. Segurança do Atualizador In-App e Integridade
+Lcom/jrmello4/tactilereader/settings/UpdateSecurity;
+HSPLcom/jrmello4/tactilereader/settings/UpdateSecurity;->validateSafeUrl(Ljava/lang/String;)Ljava/net/URL;
+HSPLcom/jrmello4/tactilereader/settings/UpdateSecurity;->computeSha256(Ljava/io/File;)Ljava/lang/String;
+HSPLcom/jrmello4/tactilereader/settings/UpdateSecurity;->isValidSha256(Ljava/lang/String;)Z
+Lcom/jrmello4/tactilereader/settings/UpdateValidator;
+HSPLcom/jrmello4/tactilereader/settings/UpdateValidator;->validateBeforeInstall(Landroid/content/Context;Ljava/io/File;)V
+Lcom/jrmello4/tactilereader/settings/UpdateCheck;
+HSPLcom/jrmello4/tactilereader/settings/UpdateCheck;->parseVersionCode(Ljava/lang/String;)I
+HSPLcom/jrmello4/tactilereader/settings/UpdateCheck;->parseSha256(Ljava/lang/String;)Ljava/lang/String;
+
+# 5. Escaneamento e Carregamento de Origens
+Lcom/jrmello4/tactilereader/library/LibraryScanner;
+HSPLcom/jrmello4/tactilereader/library/LibraryScanner;->isSupportedFile(Ljava/lang/String;)Z
+Lcom/jrmello4/tactilereader/library/LibraryViewModel;
+Lcom/jrmello4/tactilereader/reader/ReaderViewModel;

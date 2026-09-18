@@ -251,6 +251,7 @@ internal object PublicationNames {
         return original
     }
 
+    @android.annotation.SuppressLint("SdCardPath")
     private fun storagePath(value: String): String {
         val stripped = value.removePrefix("\\\\?\\")
         return if (stripped.startsWith("/data/data/")) {

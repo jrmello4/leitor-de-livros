@@ -3,6 +3,7 @@ package com.jrmello4.tactilereader.reader
 import androidx.activity.compose.BackHandler
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -14,30 +15,43 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -50,16 +64,30 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.jrmello4.tactilereader.core.ReaderPage
+import com.jrmello4.tactilereader.ui.theme.DarkGraphite750
+import com.jrmello4.tactilereader.ui.theme.DarkGraphite800
+import com.jrmello4.tactilereader.ui.theme.DarkGraphite900
+import com.jrmello4.tactilereader.ui.theme.DarkGraphite950
+import com.jrmello4.tactilereader.ui.theme.Paper300
+import com.jrmello4.tactilereader.ui.theme.Paper50
+import com.jrmello4.tactilereader.ui.theme.Paper500
+import com.jrmello4.tactilereader.ui.theme.SeamSubtle
+import com.jrmello4.tactilereader.ui.theme.WarmAmber
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -132,7 +160,7 @@ fun ReaderContent(
     val listState = rememberLazyListState()
 
     // Ler não deve apagar a tela no meio de uma página.
-    val view = androidx.compose.ui.platform.LocalView.current
+    val view = LocalView.current
     androidx.compose.runtime.DisposableEffect(view) {
         view.keepScreenOn = true
         onDispose { view.keepScreenOn = false }
@@ -168,9 +196,7 @@ fun ReaderContent(
         }
     }
 
-    // Observa a primeira página visível e persiste {pageId, scrollRatio} —
-    // só depois da restauração, para não sobrescrever o ponto salvo. Com
-    // debounce: rolar não vira dezenas de escritas por segundo no SQLite.
+    // Observa a primeira página visível e persiste {pageId, scrollRatio}
     LaunchedEffect(listState, pages, didRestore, didRestoreOffset) {
         snapshotFlow {
             val info = listState.layoutInfo.visibleItemsInfo.firstOrNull()
@@ -202,8 +228,8 @@ fun ReaderContent(
     val isLastStretch = pages.isNotEmpty() && firstVisible >= (pages.size - 2).coerceAtLeast(0)
     var bingeVisible by remember(pages, nextTitle) { mutableStateOf(true) }
     var bingeCountdown by remember(pages, nextTitle) { mutableStateOf<Int?>(null) }
-    // Binge: no fim da edição, conta 6s e abre a próxima; Cancelar aborta
-    // (bingeVisible é chave do efeito, então cancelar interrompe a contagem).
+
+    // Binge: no fim da edição, conta 6s e abre a próxima
     LaunchedEffect(isLastStretch, nextTitle, didRestore, bingeVisible) {
         if (!isLastStretch || nextTitle == null || !didRestore || !bingeVisible) {
             bingeCountdown = null
@@ -211,18 +237,15 @@ fun ReaderContent(
         }
         for (left in 6 downTo 1) {
             bingeCountdown = left
-            kotlinx.coroutines.delay(1000)
+            delay(1000)
         }
         bingeCountdown = null
         onBingeOpenNext()
     }
 
-    // Zoom GLOBAL do leitor (não por página): um único estado de escala e
-    // deslocamento horizontal aplicado à faixa inteira. Rolar na vertical
-    // continua sempre livre — ampliado ou não; arrasto horizontal vira pan
-    // só quando ampliado.
-    var zoom by remember(pages) { mutableStateOf(1f) }
-    var panX by remember(pages) { mutableStateOf(0f) }
+    // Zoom GLOBAL do leitor
+    var zoom by remember(pages) { mutableFloatStateOf(1f) }
+    var panX by remember(pages) { mutableFloatStateOf(0f) }
     var viewport by remember { mutableStateOf(IntSize.Zero) }
 
     fun clampPan(value: Float): Float {
@@ -232,26 +255,43 @@ fun ReaderContent(
         return value.coerceIn(-max, max)
     }
 
-    // Toque por zona: centro alterna o HUD; lateral superior/inferior avança
-    // ou volta uma página (mesma semântica das teclas de volume).
     suspend fun scrollBlock(direction: Int) {
         val target = (firstVisible + direction).coerceIn(0, (pages.size - 1).coerceAtLeast(0))
         listState.animateScrollToItem(target)
     }
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val scope = rememberCoroutineScope()
 
-    Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
+    Box(modifier = modifier.fillMaxSize().background(DarkGraphite950)) {
         when {
             state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Abrindo HQ…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "Abrindo HQ…",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Paper300,
+                )
             }
             state.error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Falha: ${state.error}", color = MaterialTheme.colorScheme.error)
-                    TextButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
-                        androidx.compose.foundation.layout.Spacer(Modifier.padding(start = 2.dp))
-                        Text("Biblioteca", color = MaterialTheme.colorScheme.onSurface)
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(24.dp),
+                ) {
+                    Text(
+                        "Falha: ${state.error}",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    TextButton(
+                        onClick = onBack,
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = null,
+                            tint = Paper50,
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Biblioteca", color = Paper50)
                     }
                 }
             }
@@ -285,14 +325,13 @@ fun ReaderContent(
                                     panX = clampPan(panX + pan.x)
                                     event.changes.forEach { it.consume() }
                                 }
-                                // Arrasto vertical nunca é consumido: é a rolagem.
+                                // Arrasto vertical nunca é consumido: é a rolagem livre.
                             } while (event.changes.any { it.pressed })
                         }
                     }
                     .pointerInput(Unit) {
                         detectTapGestures(
                             onTap = { pos ->
-                                // pos chega no espaço da camada; converte para a tela.
                                 val width = viewport.width.toFloat()
                                 val height = viewport.height.toFloat()
                                 val screenX = if (width > 0) {
@@ -339,7 +378,7 @@ fun ReaderContent(
                         }
                         pageImage(page, file, Modifier)
                     }
-                    // Binge: card de transição no fim da edição.
+                    // Binge: card editorial de transição no fim da edição
                     if (nextTitle != null && pages.isNotEmpty()) {
                         item(key = "binge") {
                             BingeCard(
@@ -356,66 +395,96 @@ fun ReaderContent(
                 }
             }
         }
+
+        // HUD Editorial coordenado em Dark Graphite profundo
         if (hud && !state.loading) {
             Column(Modifier.fillMaxSize()) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.background.copy(alpha = 0.7f))
+                        .background(Color(0xF2101318))
                         .statusBarsPadding()
-                        .padding(8.dp, 4.dp),
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TextButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
-                        androidx.compose.foundation.layout.Spacer(Modifier.padding(start = 2.dp))
-                        Text("Biblioteca", color = MaterialTheme.colorScheme.onSurface)
+                    TextButton(
+                        onClick = onBack,
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = null,
+                            tint = Paper50,
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Biblioteca", color = Paper50, style = MaterialTheme.typography.labelLarge)
                     }
+
                     Text(
                         text = state.title,
                         style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        color = Paper50,
                         maxLines = 1,
-                        modifier = Modifier.weight(1f).padding(start = 4.dp),
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 4.dp),
                     )
+
                     TextButton(
                         onClick = {
                             zoom = if (zoom > 1f) 1f else 2f
                             panX = 0f
                         },
-                        modifier = Modifier.semantics {
-                            contentDescription = if (zoom > 1f) "Restaurar zoom" else "Ampliar"
-                            stateDescription = if (zoom > 1f) "Ampliado" else "Normal"
-                        },
+                        modifier = Modifier
+                            .defaultMinSize(minHeight = 48.dp)
+                            .semantics {
+                                contentDescription = if (zoom > 1f) "Restaurar zoom" else "Ampliar"
+                                stateDescription = if (zoom > 1f) "Ampliado" else "Normal"
+                            },
                     ) {
-                        Text(if (zoom > 1f) "1:1" else "Zoom", color = MaterialTheme.colorScheme.onSurface)
+                        Text(
+                            if (zoom > 1f) "1:1" else "Zoom",
+                            color = if (zoom > 1f) WarmAmber else Paper50,
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                        )
                     }
+
                     val marked = currentPage?.let { bookmarks.contains(it.id) } == true
                     IconButton(
                         onClick = { currentPage?.let { onToggleBookmark(it.id) } },
                         enabled = currentPage != null,
+                        modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
                     ) {
                         Icon(
                             Icons.Filled.Star,
                             contentDescription = if (marked) "Remover marcador" else "Marcar página",
-                            tint = if (marked) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            tint = if (marked) WarmAmber else Paper500,
                         )
                     }
                 }
+
                 Box(Modifier.weight(1f))
+
                 if (pages.isNotEmpty()) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.7f))
+                            .background(Color(0xF2101318))
                             .navigationBarsPadding()
                             .padding(12.dp),
                         horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                        text = "página ${firstVisible + 1} de ${pages.size}",
-                        style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            text = "página ${firstVisible + 1} de ${pages.size}",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                letterSpacing = 0.5.sp,
+                            ),
+                            color = Paper300,
+                            modifier = Modifier.semantics {
+                                stateDescription = "Página ${firstVisible + 1} de ${pages.size}"
+                            },
                         )
                     }
                 }
@@ -431,36 +500,63 @@ private fun BingeCard(
     onOpenNow: () -> Unit,
     onCancel: () -> Unit,
 ) {
-    Column(
+    Card(
+        colors = CardDefaults.cardColors(containerColor = DarkGraphite800),
+        border = BorderStroke(1.dp, SeamSubtle),
+        shape = RoundedCornerShape(16.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(18.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .padding(16.dp),
     ) {
-        Text(
-            text = "Fim da edição",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            text = nextTitle,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.padding(top = 4.dp),
-        )
-        Text(
-            text = if (countdown != null) "Abrindo em ${countdown}s…" else "Próxima edição pronta",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.secondary,
-            modifier = Modifier.padding(top = 4.dp),
-        )
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.padding(top = 8.dp),
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            TextButton(onClick = onOpenNow) { Text("Abrir agora", color = MaterialTheme.colorScheme.onSurface) }
-            TextButton(onClick = onCancel) { Text("Cancelar", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            Text(
+                text = "FIM DA EDIÇÃO",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    letterSpacing = 1.sp,
+                    fontWeight = FontWeight.Bold,
+                ),
+                color = Paper500,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = nextTitle,
+                style = MaterialTheme.typography.titleMedium,
+                color = Paper50,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = if (countdown != null) "Próxima edição abrindo em ${countdown}s…" else "Próxima edição pronta",
+                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                color = WarmAmber,
+            )
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = onOpenNow,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = WarmAmber,
+                        contentColor = DarkGraphite900,
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                ) {
+                    Text("Abrir agora", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                }
+                TextButton(
+                    onClick = onCancel,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                ) {
+                    Text("Cancelar", color = Paper300, style = MaterialTheme.typography.labelLarge)
+                }
+            }
         }
     }
 }
@@ -468,8 +564,7 @@ private fun BingeCard(
 /**
  * Página real com Coil (arquivo garantido pelo núcleo, limite de 1080px, sem
  * crossfade para não animar a faixa). A proporção vem dos metadados do
- * núcleo para reservar a altura antes dos bytes chegarem; sem o arquivo,
- * o fundo escuro com o número da página segura o lugar.
+ * núcleo para reservar a altura antes dos bytes chegarem.
  */
 @Composable
 internal fun DefaultPageImage(page: ReaderPage, file: File?, modifier: Modifier = Modifier) {
@@ -482,7 +577,7 @@ internal fun DefaultPageImage(page: ReaderPage, file: File?, modifier: Modifier 
         modifier = modifier
             .fillMaxWidth()
             .aspectRatio(ratio)
-            .background(MaterialTheme.colorScheme.background)
+            .background(DarkGraphite950)
             .semantics(mergeDescendants = true) {
                 contentDescription = "Página ${page.index + 1}"
             },
@@ -491,7 +586,7 @@ internal fun DefaultPageImage(page: ReaderPage, file: File?, modifier: Modifier 
         Text(
             text = "${page.index + 1}",
             style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.33f),
+            color = DarkGraphite750,
             modifier = Modifier.padding(48.dp),
         )
         if (file != null) {

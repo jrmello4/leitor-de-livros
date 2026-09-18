@@ -75,11 +75,12 @@ jobs:
         # Aspas SIMPLES: senhas com `$` (como a atual) seriam expandidas
         # como variável pelo bash dentro de aspas duplas.
         run: |
+          export REQUIRE_RELEASE_SIGNING='true'
           export TACTILE_STORE_FILE='release.keystore'
           export TACTILE_STORE_PASSWORD='${{ secrets.ANDROID_STORE_PASSWORD }}'
           export TACTILE_KEY_ALIAS='${{ secrets.ANDROID_KEY_ALIAS }}'
           export TACTILE_KEY_PASSWORD='${{ secrets.ANDROID_KEY_PASSWORD }}'
-          cd native && ./gradlew assembleRelease --no-daemon
+          cd native && ./gradlew assembleRelease generateReleaseMetadata --no-daemon
 
       - name: Verify signature and collect APK
         id: apk
@@ -91,8 +92,20 @@ jobs:
             exit 1
           fi
           "$ANDROID_HOME/build-tools/35.0.0/apksigner.bat" verify --print-certs "$APK"
+          if grep -q '"publishable": false' release-manifest.json; then
+            echo "ERRO CRÍTICO: Artefato classificado como não-publicável (debug-signed) no workflow oficial de release!"
+            exit 1
+          fi
+          SHA=$(sha256sum "$APK" | awk '{print $1}')
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
           mkdir -p release-artifacts
           cp "$APK" "release-artifacts/tactile-native-0.4.0.apk"
+          if [ -f "release-manifest.json" ]; then
+            cp release-manifest.json release-artifacts/
+          fi
+          if [ -f "sbom.json" ]; then
+            cp sbom.json release-artifacts/
+          fi
           echo "apk_name=tactile-native-0.4.0.apk" >> "$GITHUB_OUTPUT"
 
       - name: Publish native-latest release
@@ -105,8 +118,11 @@ jobs:
 
             - Version code: `${{ github.run_number }}`
             - Commit: `${{ github.sha }}`
+            - SHA-256: `${{ steps.apk.outputs.sha256 }}`
             - Install: download `${{ steps.apk.outputs.apk_name }}` e permita “Instalar apps desconhecidos”.
           prerelease: true
           make_latest: false
           files: |
             release-artifacts/${{ steps.apk.outputs.apk_name }}
+            release-artifacts/release-manifest.json
+            release-artifacts/sbom.json

@@ -1,7 +1,9 @@
 package com.jrmello4.tactilereader.library
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
@@ -15,22 +17,25 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -39,6 +44,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -51,6 +58,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -58,6 +66,8 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
@@ -177,7 +187,13 @@ fun LibraryContent(
     }
 
     if (open != null) {
-        Column(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .statusBarsPadding()
+                .navigationBarsPadding(),
+        ) {
             if (selection.isNotEmpty()) {
                 SelectionBar(
                     count = selection.size,
@@ -194,7 +210,7 @@ fun LibraryContent(
                 )
             }
             if (pendingDelete.isNotEmpty()) {
-                androidx.compose.material3.AlertDialog(
+                AlertDialog(
                     onDismissRequest = { pendingDelete = emptySet() },
                     title = { Text("Remover da estante?", color = MaterialTheme.colorScheme.onSurface) },
                     text = {
@@ -238,194 +254,14 @@ fun LibraryContent(
         return
     }
 
-    Column(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        Column(Modifier.fillMaxWidth().padding(18.dp, 18.dp, 18.dp, 4.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "Tactile Reader",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.semantics { heading() },
-                )
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    TextButton(
-                        onClick = onOpenBookmarks,
-                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                    ) {
-                        Icon(
-                            Icons.Filled.Star,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.secondary,
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text("Marcadores", color = MaterialTheme.colorScheme.onSurface)
-                    }
-                    TextButton(
-                        onClick = onOpenStats,
-                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                    ) {
-                        Text("Leitura", color = MaterialTheme.colorScheme.onSurface)
-                    }
-                    IconButton(
-                        onClick = onOpenSettings,
-                        modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                    ) {
-                        Icon(
-                            Icons.Filled.Settings,
-                            contentDescription = "Ajustes",
-                            tint = MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Button(
-                    onClick = onAddClick,
-                    modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
-                ) {
-                    Icon(Icons.Filled.Add, contentDescription = null)
-                    Spacer(Modifier.width(4.dp))
-                    Text("+ HQ", color = MaterialTheme.colorScheme.onPrimary)
-                }
-                Button(
-                    onClick = onAddFolderClick,
-                    modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
-                ) {
-                    Icon(Icons.Filled.Add, contentDescription = null)
-                    Spacer(Modifier.width(4.dp))
-                    Text("+ Pasta", color = MaterialTheme.colorScheme.onPrimary)
-                }
-            }
-        }
-        Text(
-            text = "estante local · núcleo nativo",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(18.dp, 0.dp, 18.dp, 4.dp),
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(18.dp, 0.dp, 18.dp, 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                label = { Text("Buscar na estante") },
-                singleLine = true,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(18.dp, 0.dp, 18.dp, 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            FilterChip(filter == LibraryFilter.TODAS, "Todas") { filter = LibraryFilter.TODAS }
-            FilterChip(filter == LibraryFilter.CONTINUAR, "Continuar") { filter = LibraryFilter.CONTINUAR }
-            FilterChip(filter == LibraryFilter.FAVORITAS, "Favoritas") { filter = LibraryFilter.FAVORITAS }
-            FilterChip(filter == LibraryFilter.NAO_LIDAS, "Novas") { filter = LibraryFilter.NAO_LIDAS }
-        }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(18.dp, 0.dp, 18.dp, 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            FilterChip(tab == LibraryTab.SERIES, "Séries") { tab = LibraryTab.SERIES }
-            FilterChip(tab == LibraryTab.PASTAS, "Pastas") { tab = LibraryTab.PASTAS }
-            FilterChip(sort == LibrarySort.RECENTES, "Recentes") { sort = LibrarySort.RECENTES }
-            FilterChip(sort == LibrarySort.TITULO, "A–Z") { sort = LibrarySort.TITULO }
-            FilterChip(sort == LibrarySort.PROGRESSO, "Progresso") { sort = LibrarySort.PROGRESSO }
-        }
-        if (state.notice != null) {
-            Text(
-                text = state.notice!!,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.secondary,
-                modifier = Modifier
-                    .padding(18.dp, 0.dp, 18.dp, 8.dp)
-                    .semantics { liveRegion = LiveRegionMode.Polite },
-            )
-        }
-
-        // Importação longa: progresso visível e cancelável, estante continua lá.
-        state.importing?.let { progress ->
-            Column(Modifier.fillMaxWidth().padding(18.dp, 0.dp, 18.dp, 8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = if (progress.total > 0) {
-                            "Importando ${progress.processed} de ${progress.total}" +
-                                progress.currentName.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()
-                        } else {
-                            "Preparando importação…"
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.secondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(onClick = onCancelImport) {
-                        Text("Cancelar", color = MaterialTheme.colorScheme.onSurface)
-                    }
-                }
-                LinearProgressIndicator(
-                    progress = {
-                        if (progress.total > 0) {
-                            (progress.processed.toFloat() / progress.total).coerceIn(0f, 1f)
-                        } else {
-                            0f
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    color = MaterialTheme.colorScheme.secondary,
-                    trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
-                )
-            }
-        }
-
-        // Relatório detalhado após importação com falha ou cancelamento
-        state.importReport?.let { report ->
-            if (report.hasFailures || report.cancelled) {
-                ImportReportCard(
-                    report = report,
-                    onRetry = onRetryImport,
-                    onDismiss = onDismissImportReport,
-                )
-            }
-        }
-
-        if (selection.isNotEmpty()) {
-            SelectionBar(
-                count = selection.size,
-                onClear = { selection = emptySet() },
-                onMarkRead = {
-                    filtered.filter { selection.contains(it.id) }.forEach { onSetRead(it, true) }
-                    selection = emptySet()
-                },
-                onClearProgress = {
-                    filtered.filter { selection.contains(it.id) }.forEach { onSetRead(it, false) }
-                    selection = emptySet()
-                },
-                onDelete = { pendingDelete = selection },
-            )
-        }
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding(),
+    ) {
         if (pendingDelete.isNotEmpty()) {
-            androidx.compose.material3.AlertDialog(
+            AlertDialog(
                 onDismissRequest = { pendingDelete = emptySet() },
                 title = { Text("Remover da estante?", color = MaterialTheme.colorScheme.onSurface) },
                 text = {
@@ -450,52 +286,408 @@ fun LibraryContent(
                 },
             )
         }
+
         when {
             state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Lendo biblioteca…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "Lendo biblioteca…",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyLarge,
+                )
             }
             state.error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
                     "Falha: ${state.error}",
                     color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive },
                 )
             }
-            tab == LibraryTab.PASTAS -> {
-                FoldersList(folders = folders, onRescan = onRescan)
-            }
             else -> {
-                if (filter == LibraryFilter.TODAS && query.isBlank() && continueReading.isNotEmpty()) {
-                    val hero = continueReading.first()
-                    ContinueHero(
-                        pub = hero,
-                        cover = covers[hero.id]?.let { File(it) },
-                        onCoverVisible = onCoverVisible,
-                        onOpenClick = onOpenClick,
-                        coverImage = coverImage,
-                    )
-                    if (continueReading.size > 1) {
-                        ContinueStrip(
-                            pubs = continueReading.drop(1),
-                            covers = covers,
-                            onCoverVisible = onCoverVisible,
-                            onOpenClick = onOpenClick,
-                            coverImage = coverImage,
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .navigationBarsPadding(),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    // Header unificado (título, ações rápidas e botões + HQ / + Pasta)
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp)) {
+                            if (selection.isNotEmpty()) {
+                                SelectionBar(
+                                    count = selection.size,
+                                    onClear = { selection = emptySet() },
+                                    onMarkRead = {
+                                        filtered.filter { selection.contains(it.id) }.forEach { onSetRead(it, true) }
+                                        selection = emptySet()
+                                    },
+                                    onClearProgress = {
+                                        filtered.filter { selection.contains(it.id) }.forEach { onSetRead(it, false) }
+                                        selection = emptySet()
+                                    },
+                                    onDelete = { pendingDelete = selection },
+                                )
+                                Spacer(Modifier.height(8.dp))
+                            }
+                            LibraryHeaderBar(
+                                onAddClick = onAddClick,
+                                onAddFolderClick = onAddFolderClick,
+                                onOpenBookmarks = onOpenBookmarks,
+                                onOpenStats = onOpenStats,
+                                onOpenSettings = onOpenSettings,
+                            )
+                        }
+                    }
+
+                    // Campo de busca refinado
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        OutlinedTextField(
+                            value = query,
+                            onValueChange = { query = it },
+                            placeholder = {
+                                Text(
+                                    "Buscar na estante…",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                )
+                            },
+                            singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
-                }
-                if (groups.isEmpty()) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("Nada por aqui — importe uma HQ.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                    // Fita única de filtros com rolagem horizontal fluida
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            FilterChip(filter == LibraryFilter.TODAS, "Todas") { filter = LibraryFilter.TODAS }
+                            FilterChip(filter == LibraryFilter.CONTINUAR, "Continuar") { filter = LibraryFilter.CONTINUAR }
+                            FilterChip(filter == LibraryFilter.FAVORITAS, "Favoritas") { filter = LibraryFilter.FAVORITAS }
+                            FilterChip(filter == LibraryFilter.NAO_LIDAS, "Novas") { filter = LibraryFilter.NAO_LIDAS }
+
+                            Box(
+                                modifier = Modifier
+                                    .width(1.dp)
+                                    .height(20.dp)
+                                    .background(MaterialTheme.colorScheme.outlineVariant),
+                            )
+
+                            FilterChip(tab == LibraryTab.SERIES, "Séries") { tab = LibraryTab.SERIES }
+                            FilterChip(tab == LibraryTab.PASTAS, "Pastas") { tab = LibraryTab.PASTAS }
+
+                            Box(
+                                modifier = Modifier
+                                    .width(1.dp)
+                                    .height(20.dp)
+                                    .background(MaterialTheme.colorScheme.outlineVariant),
+                            )
+
+                            FilterChip(sort == LibrarySort.RECENTES, "Recentes") { sort = LibrarySort.RECENTES }
+                            FilterChip(sort == LibrarySort.TITULO, "A–Z") { sort = LibrarySort.TITULO }
+                            FilterChip(sort == LibrarySort.PROGRESSO, "Progresso") { sort = LibrarySort.PROGRESSO }
+                        }
                     }
-                } else {
-                    SeriesGrid(
-                        groups = groups,
-                        covers = covers,
-                        onCoverVisible = onCoverVisible,
-                        onSeriesClick = { openSeriesKey = it.key },
-                        coverImage = coverImage,
-                        modifier = Modifier.weight(1f),
+
+                    // Aviso passageiro da estante
+                    if (state.notice != null) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            Text(
+                                text = state.notice!!,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier
+                                    .padding(vertical = 4.dp)
+                                    .semantics { liveRegion = LiveRegionMode.Polite },
+                            )
+                        }
+                    }
+
+                    // Importação em segundo plano
+                    state.importing?.let { progress ->
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = if (progress.total > 0) {
+                                            "Importando ${progress.processed} de ${progress.total}" +
+                                                progress.currentName.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()
+                                        } else {
+                                            "Preparando importação…"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.secondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    TextButton(onClick = onCancelImport) {
+                                        Text("Cancelar", color = MaterialTheme.colorScheme.onSurface)
+                                    }
+                                }
+                                LinearProgressIndicator(
+                                    progress = {
+                                        if (progress.total > 0) {
+                                            (progress.processed.toFloat() / progress.total).coerceIn(0f, 1f)
+                                        } else {
+                                            0f
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(4.dp)
+                                        .clip(RoundedCornerShape(2.dp)),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    trackColor = MaterialTheme.colorScheme.outlineVariant,
+                                )
+                            }
+                        }
+                    }
+
+                    // Relatório de erros de importação
+                    state.importReport?.let { report ->
+                        if (report.hasFailures || report.cancelled) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                ImportReportCard(
+                                    report = report,
+                                    onRetry = onRetryImport,
+                                    onDismiss = onDismissImportReport,
+                                )
+                            }
+                        }
+                    }
+
+                    if (tab == LibraryTab.PASTAS) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    "Pastas do aparelho",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.semantics { heading() },
+                                )
+                                TextButton(onClick = onRescan) {
+                                    Text("Revarrer", color = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                        }
+                        if (folders.isEmpty()) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Box(
+                                    Modifier.fillMaxWidth().padding(vertical = 40.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        "Nenhuma pasta com HQs encontrada.",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        } else {
+                            items(folders.size, span = { GridItemSpan(maxLineSpan) }) { idx ->
+                                val folder = folders[idx]
+                                Card(
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text(
+                                                folder.name,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                            )
+                                            Text(
+                                                if (folder.count < 0) "pasta autorizada (SAF)" else "${folder.count} arquivos",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Seção única Continuar Lendo (Hero + Carrossel secundário)
+                        if (filter == LibraryFilter.TODAS && query.isBlank() && continueReading.isNotEmpty()) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Column(Modifier.fillMaxWidth()) {
+                                    Text(
+                                        "Continuar lendo",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier
+                                            .padding(top = 4.dp, bottom = 8.dp)
+                                            .semantics { heading() },
+                                    )
+                                    val hero = continueReading.first()
+                                    ContinueHeroCard(
+                                        pub = hero,
+                                        cover = covers[hero.id]?.let { File(it) },
+                                        onCoverVisible = onCoverVisible,
+                                        onOpenClick = onOpenClick,
+                                        coverImage = coverImage,
+                                    )
+                                    if (continueReading.size > 1) {
+                                        ContinueStripRow(
+                                            pubs = continueReading.drop(1),
+                                            covers = covers,
+                                            onCoverVisible = onCoverVisible,
+                                            onOpenClick = onOpenClick,
+                                            coverImage = coverImage,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Cabeçalho da grade
+                        if (groups.isNotEmpty()) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Text(
+                                    text = if (tab == LibraryTab.SERIES) "Séries" else "Publicações",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier
+                                        .padding(top = 6.dp)
+                                        .semantics { heading() },
+                                )
+                            }
+                        }
+
+                        // Grade de publicações ou estado vazio
+                        if (groups.isEmpty()) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Box(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 40.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        "Nada por aqui — importe uma HQ.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        } else {
+                            items(groups, key = { it.key }) { group ->
+                                val first = group.editions.first().pub
+                                val coverFile = covers[first.id]?.let { File(it) }
+                                LaunchedEffect(first.id, covers[first.id]) {
+                                    if (coverFile == null) onCoverVisible(first)
+                                }
+                                SeriesCard(
+                                    group = group,
+                                    coverFile = coverFile,
+                                    onSeriesClick = { openSeriesKey = it.key },
+                                    coverImage = coverImage,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibraryHeaderBar(
+    onAddClick: () -> Unit,
+    onAddFolderClick: () -> Unit,
+    onOpenBookmarks: () -> Unit = {},
+    onOpenStats: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Tactile Reader",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.semantics { heading() },
+            )
+            Text(
+                text = "mesa editorial · estante local",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+            )
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Surface(
+                onClick = onAddClick,
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)),
+                modifier = Modifier.defaultMinSize(minHeight = 44.dp),
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        text = "+ HQ",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+            Surface(
+                onClick = onAddFolderClick,
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.defaultMinSize(minHeight = 44.dp),
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        text = "+ Pasta",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
                     )
                 }
             }
@@ -510,10 +702,12 @@ private fun ImportReportCard(
     onDismiss: () -> Unit,
 ) {
     Card(
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(18.dp, 0.dp, 18.dp, 8.dp)
+            .padding(vertical = 4.dp)
             .semantics { liveRegion = LiveRegionMode.Polite },
     ) {
         Column(Modifier.fillMaxWidth().padding(14.dp)) {
@@ -525,6 +719,7 @@ private fun ImportReportCard(
                 Text(
                     text = if (report.cancelled) "Importação cancelada" else "Resultado da importação",
                     style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.semantics { heading() },
                 )
@@ -565,20 +760,21 @@ private fun ImportReportCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 8.dp),
+                    .padding(top = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 if (report.recoverableFailures.isNotEmpty()) {
                     Button(
                         onClick = onRetry,
-                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.defaultMinSize(minHeight = 44.dp),
                     ) {
                         Text("Tentar novamente", color = MaterialTheme.colorScheme.onPrimary)
                     }
                 }
                 TextButton(
                     onClick = onDismiss,
-                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                    modifier = Modifier.defaultMinSize(minHeight = 44.dp),
                 ) {
                     Text("Dispensar", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -610,7 +806,7 @@ internal fun readingProgressSummary(pub: Pub): String {
 }
 
 @Composable
-private fun ContinueHero(
+private fun ContinueHeroCard(
     pub: Pub,
     cover: File?,
     onCoverVisible: (Pub) -> Unit,
@@ -620,57 +816,71 @@ private fun ContinueHero(
     LaunchedEffect(pub.id, cover) {
         if (cover == null) onCoverVisible(pub)
     }
-    Column(Modifier.fillMaxWidth().padding(18.dp, 0.dp, 18.dp, 8.dp)) {
-        Text(
-            "Continuar lendo",
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.semantics { heading() },
-        )
-        Card(
-            onClick = { onOpenClick(pub) },
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+    Card(
+        onClick = { onOpenClick(pub) },
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            Box(
+                Modifier
+                    .width(106.dp)
+                    .height(152.dp)
+                    .clip(RoundedCornerShape(10.dp)),
             ) {
-                Box(Modifier.width(112.dp).height(156.dp)) {
-                    coverImage(pub, cover, Modifier.fillMaxSize())
-                }
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                coverImage(pub, cover, Modifier.fillMaxSize())
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    pub.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    readingProgressSummary(pub),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                LinearProgressIndicator(
+                    progress = { pub.progress.toFloat().coerceIn(0f, 1f) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp)),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.outlineVariant,
+                )
+                Spacer(Modifier.height(4.dp))
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(
-                        pub.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        readingProgressSummary(pub),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    LinearProgressIndicator(
-                        progress = { pub.progress.toFloat().coerceIn(0f, 1f) },
-                        modifier = Modifier.fillMaxWidth(),
-                        color = MaterialTheme.colorScheme.secondary,
-                        trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
-                    )
-                    Text(
-                        "Retomar",
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.primary)
-                            .padding(12.dp),
-                    )
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.padding(vertical = 10.dp),
+                    ) {
+                        Text(
+                            "Retomar",
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
                 }
             }
         }
@@ -679,16 +889,27 @@ private fun ContinueHero(
 
 @Composable
 private fun FilterChip(selected: Boolean, label: String, onClick: () -> Unit) {
-    if (selected) {
-        Button(
-            onClick = onClick,
-            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-        ) { Text(label, color = MaterialTheme.colorScheme.onPrimary) }
-    } else {
-        TextButton(
-            onClick = onClick,
-            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-        ) { Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(18.dp),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(
+            1.dp,
+            if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+        ),
+        modifier = Modifier.defaultMinSize(minHeight = 44.dp),
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -701,68 +922,84 @@ private fun SelectionBar(
     onDelete: () -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text("$count", color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(start = 8.dp))
+        Text(
+            "$count selecionado(s)",
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 4.dp),
+        )
+        Spacer(Modifier.weight(1f))
         TextButton(onClick = onMarkRead) { Text("Lido", color = MaterialTheme.colorScheme.onSurface) }
         TextButton(onClick = onClearProgress) { Text("Limpar", color = MaterialTheme.colorScheme.onSurface) }
         TextButton(onClick = onDelete) { Text("Excluir", color = MaterialTheme.colorScheme.error) }
-        Spacer(Modifier.weight(1f))
-        TextButton(onClick = onClear) {
+        IconButton(onClick = onClear) {
             Icon(Icons.Filled.Close, contentDescription = "Limpar seleção", tint = MaterialTheme.colorScheme.onSurface)
         }
     }
 }
 
 @Composable
-private fun ContinueStrip(
+private fun ContinueStripRow(
     pubs: List<Pub>,
     covers: Map<String, String>,
     onCoverVisible: (Pub) -> Unit,
     onOpenClick: (Pub) -> Unit,
     coverImage: @Composable (Pub, File?, Modifier) -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth().padding(18.dp, 0.dp, 18.dp, 8.dp)) {
-        Text(
-            "Continuar lendo",
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.semantics { heading() },
-        )
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(vertical = 8.dp),
-        ) {
-            items(pubs.size) { index ->
-                val pub = pubs[index]
-                val file = covers[pub.id]?.let { File(it) }
-                LaunchedEffect(pub.id, covers[pub.id]) {
-                    if (file == null) onCoverVisible(pub)
-                }
-                Card(
-                    onClick = { onOpenClick(pub) },
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    modifier = Modifier.width(140.dp),
-                ) {
-                    Column {
-                        coverImage(pub, file, Modifier)
-                        Text(
-                            pub.title,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(8.dp, 6.dp, 8.dp, 0.dp),
-                        )
-                        LinearProgressIndicator(
-                            progress = { pub.progress.toFloat() },
-                            modifier = Modifier.fillMaxWidth().padding(8.dp),
-                            color = MaterialTheme.colorScheme.secondary,
-                            trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
-                        )
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(top = 10.dp, bottom = 4.dp),
+    ) {
+        items(pubs.size) { index ->
+            val pub = pubs[index]
+            val file = covers[pub.id]?.let { File(it) }
+            LaunchedEffect(pub.id, covers[pub.id]) {
+                if (file == null) onCoverVisible(pub)
+            }
+            Card(
+                onClick = { onOpenClick(pub) },
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                modifier = Modifier.width(136.dp),
+            ) {
+                Column {
+                    Box(
+                        Modifier
+                            .height(180.dp)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)),
+                    ) {
+                        coverImage(pub, file, Modifier.fillMaxSize())
                     }
+                    Text(
+                        pub.title,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                    )
+                    LinearProgressIndicator(
+                        progress = { pub.progress.toFloat().coerceIn(0f, 1f) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
+                            .height(3.dp)
+                            .clip(RoundedCornerShape(1.5.dp)),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.outlineVariant,
+                    )
                 }
             }
         }
@@ -771,56 +1008,6 @@ private fun ContinueStrip(
 
 /** Entrada física da aba Pastas: nome + contagem, sem mover originais. */
 data class FolderEntry(val name: String, val count: Int, val path: String = "")
-
-@Composable
-private fun FoldersList(folders: List<FolderEntry>, onRescan: () -> Unit) {
-    Column(Modifier.fillMaxSize().padding(18.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "Pastas do aparelho",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.semantics { heading() },
-            )
-            TextButton(onClick = onRescan) { Text("Revarrer", color = MaterialTheme.colorScheme.onSurface) }
-        }
-        if (folders.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Nenhuma pasta com HQs encontrada.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        } else {
-            androidx.compose.foundation.lazy.LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(vertical = 8.dp),
-            ) {
-                items(folders) { folder ->
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(14.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(folder.name, color = MaterialTheme.colorScheme.onSurface)
-                                Text(
-                                    if (folder.count < 0) "pasta autorizada (SAF)" else "${folder.count} arquivos",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
 
 @Composable
 internal fun DefaultCoverImage(pub: Pub, file: File?, modifier: Modifier = Modifier) {
@@ -851,38 +1038,6 @@ internal fun DefaultCoverImage(pub: Pub, file: File?, modifier: Modifier = Modif
 }
 
 @Composable
-private fun SeriesGrid(
-    groups: List<SeriesGroup>,
-    covers: Map<String, String>,
-    onCoverVisible: (Pub) -> Unit,
-    onSeriesClick: (SeriesGroup) -> Unit,
-    coverImage: @Composable (Pub, File?, Modifier) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(2),
-        modifier = modifier,
-        contentPadding = PaddingValues(18.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        items(groups, key = { it.key }) { group ->
-            val first = group.editions.first().pub
-            val coverFile = covers[first.id]?.let { File(it) }
-            LaunchedEffect(first.id, covers[first.id]) {
-                if (coverFile == null) onCoverVisible(first)
-            }
-            SeriesCard(
-                group = group,
-                coverFile = coverFile,
-                onSeriesClick = onSeriesClick,
-                coverImage = coverImage,
-            )
-        }
-    }
-}
-
-@Composable
 private fun SeriesCard(
     group: SeriesGroup,
     coverFile: File?,
@@ -892,14 +1047,24 @@ private fun SeriesCard(
     val first = group.editions.first().pub
     Card(
         onClick = { onSeriesClick(group) },
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
         Column {
-            coverImage(first, coverFile, Modifier)
+            Box(
+                Modifier
+                    .height(200.dp)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)),
+            ) {
+                coverImage(first, coverFile, Modifier.fillMaxSize())
+            }
             Column(Modifier.padding(10.dp)) {
                 Text(
                     text = group.title,
                     style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -908,6 +1073,7 @@ private fun SeriesCard(
                     text = seriesSubtitle(group),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
                 )
             }
         }
@@ -944,27 +1110,37 @@ private fun SeriesDetail(
 ) {
     Column(Modifier.fillMaxSize()) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(18.dp, 12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
+            TextButton(
+                onClick = onBack,
+                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                )
                 Spacer(Modifier.width(4.dp))
                 Text("All series", color = MaterialTheme.colorScheme.onSurface)
             }
             Text(
                 text = group.title,
-                style = MaterialTheme.typography.titleSmall,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).padding(start = 4.dp),
+                modifier = Modifier.weight(1f).padding(start = 6.dp),
             )
         }
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
             modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(18.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
@@ -1029,6 +1205,11 @@ private fun PubCard(
     }
     var menu by remember(pub.id) { mutableStateOf(false) }
     Card(
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(
+            1.dp,
+            if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+        ),
         colors = CardDefaults.cardColors(
             containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
         ),
@@ -1044,18 +1225,20 @@ private fun PubCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .height(200.dp)
+                    .clip(RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
                     .semantics(mergeDescendants = true) {}
                     .clickable {
                         if (selected || menu) onToggleSelect(pub.id) else onOpenClick(pub)
                     },
             ) {
-                coverImage(pub, coverFile, Modifier)
+                coverImage(pub, coverFile, Modifier.fillMaxSize())
                 if (selected) {
                     Box(
-                        Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.6f)).padding(4.dp),
+                        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)).padding(8.dp),
                         contentAlignment = Alignment.TopEnd,
                     ) {
-                        Icon(Icons.Filled.Check, contentDescription = "Selecionado", tint = MaterialTheme.colorScheme.secondary)
+                        Icon(Icons.Filled.Check, contentDescription = "Selecionado", tint = MaterialTheme.colorScheme.primary)
                     }
                 }
             }
@@ -1064,16 +1247,20 @@ private fun PubCard(
                     Text(
                         text = pub.title,
                         style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
-                    IconButton(onClick = { onToggleFavorite(pub) }) {
+                    IconButton(
+                        onClick = { onToggleFavorite(pub) },
+                        modifier = Modifier.defaultMinSize(minWidth = 36.dp, minHeight = 36.dp),
+                    ) {
                         Icon(
                             Icons.Filled.Star,
                             contentDescription = if (pub.isFavorite) "Remover dos favoritos" else "Favoritar",
-                            tint = if (pub.isFavorite) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            tint = if (pub.isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
@@ -1082,26 +1269,44 @@ private fun PubCard(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                LinearProgressIndicator(
-                    progress = { pub.progress.toFloat() },
-                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                    color = MaterialTheme.colorScheme.secondary,
-                    trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(onClick = { menu = !menu }) {
+                if (pub.progress > 0.0) {
+                    LinearProgressIndicator(
+                        progress = { pub.progress.toFloat().coerceIn(0f, 1f) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp)
+                            .height(3.dp)
+                            .clip(RoundedCornerShape(1.5.dp)),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.outlineVariant,
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    IconButton(
+                        onClick = { menu = !menu },
+                        modifier = Modifier.defaultMinSize(minWidth = 36.dp, minHeight = 36.dp),
+                    ) {
                         Icon(Icons.Filled.MoreVert, contentDescription = "Opções", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 if (menu) {
-                    Column {
-                        TextButton(onClick = { onSetRead(pub, true); menu = false }) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp)
+                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                            .padding(4.dp),
+                    ) {
+                        TextButton(onClick = { onSetRead(pub, true); menu = false }, modifier = Modifier.fillMaxWidth()) {
                             Text("Marcar como lido", color = MaterialTheme.colorScheme.onSurface)
                         }
-                        TextButton(onClick = { onSetRead(pub, false); menu = false }) {
+                        TextButton(onClick = { onSetRead(pub, false); menu = false }, modifier = Modifier.fillMaxWidth()) {
                             Text("Limpar progresso", color = MaterialTheme.colorScheme.onSurface)
                         }
-                        TextButton(onClick = { onRequestDelete(pub.id); menu = false }) {
+                        TextButton(onClick = { onRequestDelete(pub.id); menu = false }, modifier = Modifier.fillMaxWidth()) {
                             Text("Excluir da estante", color = MaterialTheme.colorScheme.error)
                         }
                     }

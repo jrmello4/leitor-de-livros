@@ -3,6 +3,7 @@ package com.jrmello4.tactilereader.settings
 import java.io.File
 import java.net.InetAddress
 import java.net.ServerSocket
+import java.security.MessageDigest
 import java.util.UUID
 import kotlin.concurrent.thread
 import kotlinx.coroutines.runBlocking
@@ -113,13 +114,20 @@ class UpdateCheckTest {
     @Test
     fun downloadsBytesWithProgress() {
         val bytes = ByteArray(50_000) { (it % 251).toByte() }
+        val sha = MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { "%02x".format(it) }
         val server = FakeApkServer(bytes, bytes.size.toLong())
         try {
             val target = File(System.getProperty("java.io.tmpdir"), "upd-${UUID.randomUUID()}.apk")
             var lastRead = 0L
             var lastTotal: Long? = null
             runBlocking {
-                UpdateDownloader.download(server.url, target) { read, total ->
+                UpdateDownloader.download(
+                    apkUrl = server.url,
+                    target = target,
+                    expectedSha256 = sha,
+                ) { read, total ->
                     lastRead = read
                     lastTotal = total
                 }
@@ -141,10 +149,13 @@ class UpdateCheckTest {
         runBlocking {
             try {
                 UpdateDownloader.download(
-                    "http://example.test/app.apk",
-                    File(System.getProperty("java.io.tmpdir"), "upd-${UUID.randomUUID()}.apk"),
+                    apkUrl = "http://example.test/app.apk",
+                    target = File(System.getProperty("java.io.tmpdir"), "upd-${UUID.randomUUID()}.apk"),
+                    expectedSha256 = "a".repeat(64),
                 )
             } catch (_: IllegalArgumentException) {
+                failed = true
+            } catch (_: SecurityException) {
                 failed = true
             }
         }
@@ -161,7 +172,11 @@ class UpdateCheckTest {
             var failed = false
             runBlocking {
                 try {
-                    UpdateDownloader.download(server.url, target)
+                    UpdateDownloader.download(
+                        apkUrl = server.url,
+                        target = target,
+                        expectedSha256 = "b".repeat(64),
+                    )
                 } catch (_: Exception) {
                     failed = true
                 }

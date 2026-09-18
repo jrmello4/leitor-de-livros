@@ -1,100 +1,112 @@
-# Paper Atelier
+# Dark-First Editorial Workbench
 
-<!-- impeccable:design-schema 1 -->
+<!-- tactile-reader:design-system 2.0 -->
 
-## Direction
+## 1. Visão e Direção
 
-Tactile is a quiet editorial frame for a reader's collection. The visual world
-borrows from print rooms, archive labels, ink, uncoated paper and the warm light
-of a reading lamp. On mobile this becomes **Paper Atelier de bolso**: artwork is
-the loudest color, controls recede, and every important action stays reachable
-with one hand.
+O **Tactile Reader** adota a direção **Dark-First Editorial Workbench** ("mesa editorial digital de alto acabamento"), substituindo a estética anterior de painel de desenvolvedor por um instrumento de leitura preciso, focado e calmo (Calm Tech).
 
-The interface must never resemble a generic file manager, a streaming-service
-catalogue, or a neon gaming dashboard.
+Construído 100% em **Android Nativo com Kotlin e Jetpack Compose**, o aplicativo prioriza a obra em si: as capas e páginas trazem o drama visual, enquanto a moldura cromática do leitor recua com elegância e respeito à ergonomia de uso com uma mão.
 
-## Principles
+### Princípios Fundamentais
+1. **A Obra é Soberana:** A arte das capas e páginas dita a cor viva da experiência. As superfícies da interface permanecem sóbrias em grafite escuro.
+2. **Costuras em Vez de Elevação Artificial:** Separação estrutural por linhas finas (*hairline seams* de 1dp) e elevação tonal sutil do Material 3, eliminando gradientes pesados e sombras ornamentais.
+3. **Tipografia Editorial com Números Tabulares (`tnum`):** Todos os números de páginas, durações, velocidades e porcentagens usam alinhamento monoespaçado tabular para evitar oscilações visuais e garantir legibilidade rigorosa.
+4. **Cores Semânticas Estritamente Reservadas:**
+   - **Warm Amber (`#F59E0B`)**: Ação primária, progresso de leitura, estado ativo e marcadores.
+   - **Oxide Red (`#D64045`)**: Erros, ações destrutivas e cancelamentos.
+   - **Sage Green (`#588157`)**: Sucesso exclusivo e leitura 100% concluída.
+   - **Sem Azul Genérico Dominante.**
+5. **Ergonomia M3 de Polegar:** Navegação inferior (`NavigationBar`) acessível com uma mão, alvos de toque mínimos de 48dp com 8dp de espaçamento, e FAB de importação posicionado no canto inferior.
+6. **Rolagem Unificada:** Telas com rolagem única de ponta a ponta, sem menus ou cabeçalhos travados na metade da tela.
 
-1. **Artwork first.** Covers and pages carry the visual drama; application
-   chrome remains restrained.
-2. **One obvious action.** Each mobile region has one primary action. Secondary
-   tools are quieter or progressively disclosed.
-3. **Reading is the destination.** Library chrome is useful; reader chrome is
-   temporary and disappears without leaving the reader stranded.
-4. **Warm, not sepia.** The dark foundation is neutral ink. Amber is reserved
-   for progress, focus and the next meaningful action.
-5. **Tactile, not ornamental.** Depth comes from overlap, edge light and compact
-   shadows rather than gradients on every container.
+---
 
-## Color
+## 2. Paleta de Cores e Tokens de Superfície
 
-- Ink 950 `#080b0f`: OLED-friendly reader and deepest canvas.
-- Ink 900 `#0d1117`: library background.
-- Ink 800 `#151b23`: raised controls and sheets.
-- Paper 50 `#f7f2e8`: primary text with a warmer editorial cast.
-- Paper 300 `#c8c0b3`: supporting copy.
-- Amber 500 `#f2a900`: action and progress.
-- Amber 300 `#ffc94a`: focus and selected states.
-- Oxide 500 `#c96f4a`: errors and destructive emphasis only.
+### Canvas e Camadas Grafite (Dark-First)
+- `DarkGraphite950` (`#0B0D11`): Canvas profundo do leitor (otimizado para telas OLED e imersão).
+- `DarkGraphite900` (`#101318`): Fundo padrão da Estante, Ajustes, Marcadores e Minha Leitura.
+- `DarkGraphite850` (`#161A22`): Barras de navegação inferior e superior, headers e superfícies intermediárias.
+- `DarkGraphite800` (`#1C222D`): Superfície de cartões de publicações, séries, seções e modais.
+- `DarkGraphite750` (`#242B38`): Containers de controle, filtros secundários e botões de ação secundária.
 
-Never use amber for large decorative fields. Cover artwork must retain its
-natural color and should not receive a brand-colored overlay.
+### Costuras Estruturais (Hairline Seams)
+- `SeamSubtle` (`#232B38`): Contorno fino de 1dp para cartões, divisores horizontais e separadores de lista.
+- `SeamStrong` (`#333E50`): Contorno de foco, campos de texto ativos e ênfase estrutural.
 
-## Typography
+### Tipografia Editorial Paper
+- `Paper50` (`#F7F5EE`): Texto primário de alto contraste (branco editorial com tom sutilmente aquecido).
+- `Paper300` (`#C5C0B4`): Texto secundário, descrições e metadados de suporte.
+- `Paper500` (`#888275`): Rótulos terciários, cabeçalhos de seção e dicas de uso.
 
-Use the system sans stack for controls and reading UI to avoid font-loading
-cost in the Android WebView. Titles use tight tracking and sentence case.
-Uppercase with wide tracking is limited to metadata labels of 12 characters or
-fewer. Mobile body text is at least 14px; actionable labels are at least 13px.
+### Acentos Semânticos
+- `WarmAmber` (`#F59E0B`): Botões primários, indicador de progresso ativo, estrelas de marcadores.
+- `WarmAmberContainer` (`#2E1E08`) / `WarmAmberOnContainer` (`#FDE68A`).
+- `OxideRed` (`#D64045`): Botões de remoção, mensagens de erro e botão cancelar download.
+- `OxideRedContainer` (`#2D1214`) / `OxideRedOnContainer` (`#FCA5A5`).
+- `SageGreen` (`#588157`): Barra de progresso para edições 100% concluídas.
+- `SageGreenContainer` (`#142417`) / `SageGreenOnContainer` (`#A3CFAB`).
 
-## Shape and Spacing
+---
 
-- Spacing unit: 4px; common rhythm: 8, 12, 16, 24, 32.
-- Mobile page gutter: 18px.
-- Touch target: minimum 44x44px; primary actions use 52px.
-- Control radius: 12–16px. Cards follow cover geometry and avoid nested pills.
-- Shadows are short and dense, suggesting stacked paper rather than floating
-  glass.
+## 3. Tipografia e Numeração Tabular
 
-## Library Mobile
+A tipografia do aplicativo segue a escala Material 3 com font feature settings ativado globalmente para números tabulares:
+`fontFeatureSettings = "tnum"`.
 
-The header is compact and visually anchored by the monogram. “Continue reading”
-is a horizontal editorial strip with cover, progress and one compact action.
-The shelf title, search and sort form a single hierarchy. Covers use a two-column
-grid on phones, with title, progress and favourite action below. Diagnostics
-read as compact notices and never dominate the shelf.
+- **Title Large:** 20sp, FontWeight.Bold, letterSpacing -0.25sp, `tnum`.
+- **Title Medium:** 16sp, FontWeight.SemiBold, letterSpacing 0sp, `tnum`.
+- **Title Small:** 14sp, FontWeight.SemiBold, letterSpacing 0.1sp, `tnum`.
+- **Body Large / Medium / Small:** 16sp / 14sp / 12sp, FontWeight.Normal, `tnum`.
+- **Label Large:** 14sp, FontWeight.SemiBold (botões de ação e abas).
+- **Label Small (Headers de Seção):** 11sp, FontWeight.Bold, letterSpacing 1.0sp, uppercase (ex: `RESUMO GERAL`, `ARMAZENAMENTO & CACHE`).
 
-Import is the persistent bottom-corner action until a future navigation model
-adds a dedicated library bar.
+---
 
-## Reader Mobile
+## 4. Arquitetura de Navegação e Telas
 
-Pages occupy the maximum possible canvas. The top and bottom HUDs are translucent
-ink sheets, respect safe areas, and animate as one coordinated layer. Only back,
-page navigation, bookmark, navigator and settings remain immediately visible.
-The stage itself never receives decorative motion. Loading and unavailable-page
-states must explain what is happening instead of presenting a blank black screen.
+### Navegação Principal (M3 NavigationBar)
+Quatro destinos canônicos na barra inferior:
+1. **Estante** (`EditorialIcons.Book`): Coleção local organizada por séries e edições avulsas.
+2. **Marcadores** (`EditorialIcons.Bookmark`): Central consolidada de páginas marcadas com navegação direta.
+3. **Leitura** (`EditorialIcons.Metrics`): Estatísticas de leitura locais (tempo, ritmo, histórico).
+4. **Ajustes** (`Icons.Filled.Settings`): Gerenciamento de armazenamento, backup local, servidores e atualizações.
 
-## Motion
+### Estante (Library)
+- **Rolagem Unificada:** Implementada com `LazyVerticalGrid` como container raiz. Não há listas aninhadas com rolagem bloqueada na metade da tela.
+- **Hero Card Editorial:** Cartão em destaque com capa expandida, título da série/edição, indicador de progresso com tempo restante estimado e botão de continuidade imediata.
+- **Fita de Filtros:** Ribbon horizontal compacto com opções `Tudo`, `Lendo`, `Favoritos` e agrupamento por série.
+- **Floating Action Button (FAB):** Botão flutuante `+ HQ` no canto inferior direito, liberando o cabeçalho superior de poluição visual.
 
-Personality: premium paper — controlled, calm and responsive.
+### Leitor Vertical
+- **Canvas Infinito:** Faixa vertical contínua com carregamento sob demanda de bitmaps via Coil (máximo 1080px).
+- **HUD Coordenado:** Top Bar e Bottom Bar em grafite profundo (`Color(0xF2101318)`) com bordas `SeamSubtle`, ativados por toque central e sem ocluir a arte da página desnecessariamente.
+- **Folio Tabular:** Indicador inferior com semântica TalkBack: `página X de Y`.
+- **Controles Físicos e Gestos:** Teclas de volume para avançar/voltar páginas; duplo toque para zoom 2x; pinça livre para zoom global e pan lateral sem travar a rolagem vertical.
+- **Card de Fim de Edição (Binge):** Transição suave para a próxima edição da série com contagem regressiva de 6 segundos e opção de cancelamento.
 
-- Signature easing: `cubic-bezier(.2, 0, 0, 1)`.
-- Quick: 120ms for press and icon feedback.
-- Standard: 240ms for cards, notices and control state.
-- Slow: 420ms for HUD/sheet entrance.
-- Library entry: 10px upward settle with opacity; stagger capped at 160ms.
-- Press feedback: scale to `.98`; never bounce primary navigation.
-- Reduced motion removes translation, scale, parallax and stagger while keeping
-  immediate state changes.
+### Central de Marcadores
+- Listagem editorial com badges tabulares `PÁG. X`.
+- Toque no marcador abre a publicação diretamente na página salva.
+- Confirmação de exclusão com ação reversível e feedback claro.
 
-No ambient animation runs while a publication is open. Lottie or GSAP require a
-specific narrative moment and may not be introduced for ordinary controls.
+### Minha Leitura (Estatísticas)
+- **100% On-Device:** Sem telemetria, cookies, contas ou chamadas à nuvem.
+- Cartões com números tabulares para tempo total de leitura, páginas lidas, sessões e velocidade média (`págs/min`).
+- Histórico detalhado por publicação com estimativa de tempo restante baseada no ritmo pessoal do leitor.
 
-## Accessibility and Performance
+### Ajustes e Servidores Remotos
+- Seções agrupadas com cabeçalhos estruturados em caixa alta rastreada:
+  - `ARMAZENAMENTO & CACHE`: Medição exata em bytes e limpeza com regeneração transparente.
+  - `BACKUP LOCAL`: Exportação e importação em formato JSON estritamente local.
+  - `SERVIDORES REMOTOS`: Conexão direta com OPDS, Komga e Kavita para streaming sob demanda e download offline.
+  - `ATUALIZAÇÃO DO APLICATIVO`: Verificador da release rolling `native-latest` no GitHub com barra de progresso linear em Amber e instalação direta pelo sistema.
 
-Focus is always visible, color is never the only state indicator, controls have
-accessible names, and layouts support 320px width without horizontal overflow.
-Respect `prefers-reduced-motion` and the in-app reduced-motion profile. Animate
-only opacity and transforms; avoid persistent blur animation and layout-driven
-effects in the Android WebView.
+---
+
+## 5. Acessibilidade e Inclusão
+
+- **Alvos de Toque:** Mínimo absoluto de 48x48dp em todos os botões e áreas interativas, com margem mínima de respiro de 8dp.
+- **Semântica TalkBack:** Anúncios explícitos de headings (`semantics { heading() }`), live regions (`LiveRegionMode.Polite`), rótulos descritivos de ícones e botões (`contentDescription`), e descrições de estado (`stateDescription`).
+- **Resiliência de Layout:** Suporte nativo a largura estreita de 320dp sem quebra ou clipping de texto, e adaptação fluida a escalas de fonte de até 1.3x do sistema Android.

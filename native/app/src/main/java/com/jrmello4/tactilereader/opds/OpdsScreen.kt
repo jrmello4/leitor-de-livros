@@ -1,5 +1,7 @@
 package com.jrmello4.tactilereader.opds
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -9,23 +11,29 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,18 +47,29 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import java.io.File
+import androidx.compose.ui.unit.sp
+import com.jrmello4.tactilereader.ui.theme.DarkGraphite750
+import com.jrmello4.tactilereader.ui.theme.DarkGraphite800
+import com.jrmello4.tactilereader.ui.theme.DarkGraphite900
+import com.jrmello4.tactilereader.ui.theme.OxideRed
+import com.jrmello4.tactilereader.ui.theme.Paper300
+import com.jrmello4.tactilereader.ui.theme.Paper50
+import com.jrmello4.tactilereader.ui.theme.Paper500
+import com.jrmello4.tactilereader.ui.theme.SeamStrong
+import com.jrmello4.tactilereader.ui.theme.SeamSubtle
+import com.jrmello4.tactilereader.ui.theme.WarmAmber
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 /**
- * Servidores OPDS / Komga / Kavita em PT-BR.
- * Cadastro múltiplo, navegação por feed, download offline com progresso e
- * cancelamento. O arquivo baixado vai para `imports/` e entra na estante
- * pelo núcleo — originais remotos nunca são alterados.
+ * Servidores OPDS / Komga / Kavita em estilo Dark-First Editorial Workbench.
+ * Cadastro múltiplo, navegação hierárquica por feeds, download offline com
+ * progresso e cancelamento. Originais remotos nunca são alterados.
  */
 @Composable
 fun OpdsScreen(
@@ -61,7 +80,7 @@ fun OpdsScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    androidx.activity.compose.BackHandler(onBack = onBack)
+    BackHandler(onBack = onBack)
     var servers by remember { mutableStateOf(OpdsStore.list(context)) }
     var selectedId by remember { mutableStateOf(servers.firstOrNull()?.id) }
     var entries by remember { mutableStateOf<List<OpdsClient.Entry>>(emptyList()) }
@@ -119,286 +138,405 @@ fun OpdsScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(18.dp)
+            .background(DarkGraphite900)
+            .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
-        Row(
+        // Top Bar Editorial
+        Surface(
+            color = DarkGraphite900,
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(
-                onClick = onBack,
-                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-            ) {
-                Icon(
-                    Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Voltar aos ajustes",
-                    tint = MaterialTheme.colorScheme.onSurface,
-                )
-                Spacer(Modifier.width(4.dp))
-                Text("Ajustes", color = MaterialTheme.colorScheme.onSurface)
-            }
-            Text(
-                "Servidores",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(start = 4.dp)
-                    .semantics { heading() },
-            )
-            TextButton(
-                onClick = { showForm = !showForm },
-                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-            ) {
-                Text(
-                    if (showForm) "Fechar" else "+ Servidor",
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-            }
-        }
-        Text(
-            "OPDS · Komga · Kavita (via OPDS) — só os seus servidores, sem telemetria.",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 8.dp),
-        )
-        if (notice != null) {
-            Text(
-                notice!!,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.secondary,
-                modifier = Modifier
-                    .padding(bottom = 8.dp)
-                    .semantics { liveRegion = LiveRegionMode.Polite },
-            )
-        }
-        if (showForm) {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(formName, { formName = it }, label = { Text("Nome") }, singleLine = true)
-                    OutlinedTextField(formUrl, { formUrl = it }, label = { Text("URL (https://…)") }, singleLine = true)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            formUser, { formUser = it }, label = { Text("Usuário") },
-                            singleLine = true, modifier = Modifier.weight(1f),
-                        )
-                        OutlinedTextField(
-                            formPass, { formPass = it }, label = { Text("Senha") },
-                            singleLine = true, modifier = Modifier.weight(1f),
-                        )
-                    }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        for (type in listOf("opds", "komga", "kavita")) {
-                            if (formType == type) {
-                                Button(
-                                    onClick = {},
-                                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                                ) { Text(type, color = MaterialTheme.colorScheme.onPrimary) }
-                            } else {
-                                TextButton(
-                                    onClick = { formType = type },
-                                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                                ) { Text(type, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                            }
-                        }
-                    }
-                    Button(
-                        onClick = {
-                            if (formName.isBlank() || formUrl.isBlank()) {
-                                notice = "Dê um nome e a URL do servidor."
-                                return@Button
-                            }
-                            persist(
-                                servers + OpdsServer(
-                                    name = formName.trim(),
-                                    url = formUrl.trim(),
-                                    user = formUser.trim(),
-                                    pass = formPass,
-                                    type = formType,
-                                ),
-                            )
-                            formName = ""; formUrl = ""; formUser = ""; formPass = ""
-                            showForm = false
-                            entries = emptyList()
-                            trail = emptyList()
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .defaultMinSize(minHeight = 48.dp),
-                    ) { Text("Salvar", color = MaterialTheme.colorScheme.onPrimary) }
-                }
-            }
-        }
-        if (servers.isNotEmpty()) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                for (server in servers) {
-                    if (server.id == selectedId) {
-                        Button(
-                            onClick = {},
-                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                        ) { Text(server.name, color = MaterialTheme.colorScheme.onPrimary) }
-                    } else {
-                        TextButton(
-                            onClick = {
-                                selectedId = server.id
-                                entries = emptyList()
-                                trail = emptyList()
-                            },
-                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                        ) { Text(server.name, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                    }
-                }
-            }
-            if (selected != null) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Button(
-                        onClick = { trail = emptyList(); browse(null, pushTrail = false) },
-                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                    ) {
-                        Text("Abrir catálogo", color = MaterialTheme.colorScheme.onPrimary)
-                    }
-                    if (trail.isNotEmpty()) {
-                        TextButton(
-                            onClick = {
-                                trail = trail.dropLast(1)
-                                browse(trail.lastOrNull(), pushTrail = false)
-                            },
-                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                        ) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Voltar no catálogo",
-                                tint = MaterialTheme.colorScheme.onSurface,
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text("Voltar", color = MaterialTheme.colorScheme.onSurface)
-                        }
-                    }
-                    TextButton(
-                        onClick = {
-                            persist(servers.filterNot { it.id == selected.id })
-                            entries = emptyList()
-                            trail = emptyList()
-                        },
-                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                    ) { Text("Remover", color = MaterialTheme.colorScheme.error) }
-                }
-                Text(
-                    "Kavita: cadastre a URL OPDS dela (…/api/opds/…). Komga: cadastre a raiz e use o tipo komga.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
-        }
-        if (loading) {
-            LinearProgressIndicator(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp),
-                color = MaterialTheme.colorScheme.secondary,
-                trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
-            )
-        }
-        if (progress != null) {
-            Row(
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                LinearProgressIndicator(
-                    progress = { progress ?: 0f },
+                TextButton(
+                    onClick = onBack,
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Voltar aos ajustes",
+                        tint = Paper50,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text("Ajustes", color = Paper50, style = MaterialTheme.typography.labelLarge)
+                }
+                Text(
+                    "Servidores",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Paper50,
                     modifier = Modifier
                         .weight(1f)
-                        .padding(top = 8.dp),
-                    color = MaterialTheme.colorScheme.secondary,
-                    trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
+                        .padding(start = 4.dp)
+                        .semantics { heading() },
                 )
                 TextButton(
-                    onClick = {
-                        downloadJob?.cancel()
-                        progress = null
-                        notice = "Download cancelado."
-                    },
+                    onClick = { showForm = !showForm },
                     modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                ) { Text("Cancelar", color = MaterialTheme.colorScheme.onSurface) }
+                ) {
+                    Text(
+                        if (showForm) "Fechar" else "+ Servidor",
+                        color = WarmAmber,
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    )
+                }
             }
         }
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(top = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
         ) {
-            items(entries, key = { it.id.ifBlank { it.title } + (it.acquisition ?: it.subsection ?: "") }) { entry ->
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                    Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                        Text(
-                            entry.title,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
+            Text(
+                "OPDS · KOMGA · KAVITA · APENAS CONEXÕES DIRETAS LOCAIS",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    letterSpacing = 1.sp,
+                    fontWeight = FontWeight.Bold,
+                ),
+                color = Paper500,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+
+            if (notice != null) {
+                Text(
+                    notice!!,
+                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                    color = WarmAmber,
+                    modifier = Modifier
+                        .padding(bottom = 8.dp)
+                        .semantics { liveRegion = LiveRegionMode.Polite },
+                )
+            }
+
+            // Formulário de novo servidor
+            if (showForm) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = DarkGraphite800),
+                    border = BorderStroke(1.dp, SeamStrong),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        val fieldColors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = WarmAmber,
+                            unfocusedBorderColor = SeamSubtle,
+                            focusedTextColor = Paper50,
+                            unfocusedTextColor = Paper50,
+                            focusedLabelColor = WarmAmber,
+                            unfocusedLabelColor = Paper300,
                         )
+
+                        OutlinedTextField(
+                            value = formName,
+                            onValueChange = { formName = it },
+                            label = { Text("Nome da conexão") },
+                            singleLine = true,
+                            colors = fieldColors,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = formUrl,
+                            onValueChange = { formUrl = it },
+                            label = { Text("URL (ex: https://meu-servidor:8080/opds/v1.2/catalog)") },
+                            singleLine = true,
+                            colors = fieldColors,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = formUser,
+                                onValueChange = { formUser = it },
+                                label = { Text("Usuário") },
+                                singleLine = true,
+                                colors = fieldColors,
+                                modifier = Modifier.weight(1f),
+                            )
+                            OutlinedTextField(
+                                value = formPass,
+                                onValueChange = { formPass = it },
+                                label = { Text("Senha") },
+                                singleLine = true,
+                                colors = fieldColors,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+
+                        // Tipo de servidor
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            if (entry.subsection != null) {
-                                TextButton(
-                                    onClick = { browse(entry.subsection) },
+                            for (type in listOf("opds", "komga", "kavita")) {
+                                val isSelected = formType == type
+                                Button(
+                                    onClick = { formType = type },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isSelected) WarmAmber else DarkGraphite750,
+                                        contentColor = if (isSelected) DarkGraphite900 else Paper300,
+                                    ),
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = if (isSelected) null else BorderStroke(1.dp, SeamSubtle),
                                     modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                                 ) {
-                                    Text("Abrir ›", color = MaterialTheme.colorScheme.onSurface)
+                                    Text(type.uppercase(), style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
                                 }
                             }
-                            if (entry.acquisition != null && selected != null) {
-                                TextButton(
-                                    onClick = {
-                                        val server = selected
-                                        downloadJob?.cancel()
-                                        downloadJob = scope.launch {
-                                            progress = 0f
-                                            notice = null
-                                            try {
-                                                val file = OpdsClient.download(
-                                                    server,
-                                                    entry.acquisition,
-                                                    File(filesDir, "imports"),
-                                                    entry.title + extensionFor(entry),
-                                                    onProgress = { progress = it },
-                                                )
-                                                progress = null
-                                                notice = "Baixado: ${file.name}."
-                                                onDownloaded(file.absolutePath)
-                                            } catch (error: Exception) {
-                                                progress = null
-                                                if (error is kotlinx.coroutines.CancellationException) {
-                                                    notice = "Download cancelado."
-                                                } else {
-                                                    notice = "Falha no download: ${error.message ?: "erro"}"
+                        }
+
+                        Button(
+                            onClick = {
+                                if (formName.isBlank() || formUrl.isBlank()) {
+                                    notice = "Informe o nome e a URL do servidor."
+                                    return@Button
+                                }
+                                persist(
+                                    servers + OpdsServer(
+                                        name = formName.trim(),
+                                        url = formUrl.trim(),
+                                        user = formUser.trim(),
+                                        pass = formPass,
+                                        type = formType,
+                                    ),
+                                )
+                                formName = ""; formUrl = ""; formUser = ""; formPass = ""
+                                showForm = false
+                                entries = emptyList()
+                                trail = emptyList()
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = WarmAmber,
+                                contentColor = DarkGraphite900,
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .defaultMinSize(minHeight = 48.dp),
+                        ) {
+                            Text("Salvar servidor", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                        }
+                    }
+                }
+            }
+
+            // Seleção de servidores cadastrados
+            if (servers.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    for (server in servers) {
+                        val isSelected = server.id == selectedId
+                        Button(
+                            onClick = {
+                                selectedId = server.id
+                                entries = emptyList()
+                                trail = emptyList()
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isSelected) DarkGraphite750 else DarkGraphite800,
+                                contentColor = if (isSelected) WarmAmber else Paper300,
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, if (isSelected) WarmAmber else SeamSubtle),
+                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                        ) {
+                            Text(server.name, style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold))
+                        }
+                    }
+                }
+
+                if (selected != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Button(
+                            onClick = { trail = emptyList(); browse(null, pushTrail = false) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = DarkGraphite750,
+                                contentColor = Paper50,
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, SeamSubtle),
+                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                        ) {
+                            Text("Abrir catálogo", style = MaterialTheme.typography.labelLarge)
+                        }
+
+                        if (trail.isNotEmpty()) {
+                            TextButton(
+                                onClick = {
+                                    trail = trail.dropLast(1)
+                                    browse(trail.lastOrNull(), pushTrail = false)
+                                },
+                                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                            ) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = "Voltar no catálogo",
+                                    tint = Paper50,
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text("Voltar", color = Paper50)
+                            }
+                        }
+
+                        TextButton(
+                            onClick = {
+                                persist(servers.filterNot { it.id == selected.id })
+                                entries = emptyList()
+                                trail = emptyList()
+                            },
+                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                        ) {
+                            Text("Remover servidor", color = OxideRed)
+                        }
+                    }
+                }
+            }
+
+            if (loading) {
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp)
+                        .height(4.dp),
+                    color = WarmAmber,
+                    trackColor = DarkGraphite750,
+                )
+            }
+
+            if (progress != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(vertical = 4.dp),
+                ) {
+                    LinearProgressIndicator(
+                        progress = { progress ?: 0f },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(4.dp),
+                        color = WarmAmber,
+                        trackColor = DarkGraphite750,
+                    )
+                    TextButton(
+                        onClick = {
+                            downloadJob?.cancel()
+                            progress = null
+                            notice = "Download cancelado."
+                        },
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                    ) {
+                        Text("Cancelar", color = OxideRed)
+                    }
+                }
+            }
+
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(entries, key = { it.id.ifBlank { it.title } + (it.acquisition ?: it.subsection ?: "") }) { entry ->
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = DarkGraphite800),
+                        border = BorderStroke(1.dp, SeamSubtle),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                        ) {
+                            Text(
+                                text = entry.title,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Paper50,
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 8.dp)
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                if (entry.subsection != null) {
+                                    Button(
+                                        onClick = { browse(entry.subsection) },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = DarkGraphite750,
+                                            contentColor = Paper50,
+                                        ),
+                                        shape = RoundedCornerShape(8.dp),
+                                        border = BorderStroke(1.dp, SeamSubtle),
+                                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                                    ) {
+                                        Text("Explorar pasta ›", style = MaterialTheme.typography.labelMedium)
+                                    }
+                                }
+                                if (entry.acquisition != null && selected != null) {
+                                    Button(
+                                        onClick = {
+                                            val server = selected
+                                            downloadJob?.cancel()
+                                            downloadJob = scope.launch {
+                                                progress = 0f
+                                                notice = null
+                                                try {
+                                                    val file = OpdsClient.download(
+                                                        server,
+                                                        entry.acquisition,
+                                                        File(filesDir, "imports"),
+                                                        entry.title + extensionFor(entry),
+                                                        onProgress = { progress = it },
+                                                    )
+                                                    progress = null
+                                                    notice = "Baixado: ${file.name}."
+                                                    onDownloaded(file.absolutePath)
+                                                } catch (error: Exception) {
+                                                    progress = null
+                                                    if (error is kotlinx.coroutines.CancellationException) {
+                                                        notice = "Download cancelado."
+                                                    } else {
+                                                        notice = "Falha no download: ${error.message ?: "erro"}"
+                                                    }
                                                 }
                                             }
-                                        }
-                                    },
-                                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                                ) { Text("Baixar offline", color = MaterialTheme.colorScheme.secondary) }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = WarmAmber,
+                                            contentColor = DarkGraphite900,
+                                        ),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                                    ) {
+                                        Text("Baixar offline", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
+                                    }
+                                }
                             }
                         }
                     }

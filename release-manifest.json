@@ -1,0 +1,17 @@
+{
+  "name": "tactile-native",
+  "versionName": "0.4.0",
+  "versionCode": 4,
+  "buildType": "release",
+  "minSdkVersion": 26,
+  "targetSdkVersion": 35,
+  "compileSdkVersion": 35,
+  "packageName": "com.jrmello4.tactilereader.scaffold",
+  "apkName": "tactile-native-0.4.0+4-release.apk",
+  "sha256": "ea64bf916c428152adfadc11479bd83d8cb62431352c0d19ba4eb60ab9ed1dcd",
+  "sizeBytes": 2050106,
+  "signing": "debug-signed",
+  "publishable": false,
+  "signatureScheme": "v2",
+  "generatedAt": "2026-09-18T14:02:20.785164200Z"
+}

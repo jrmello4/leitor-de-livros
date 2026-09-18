@@ -34,6 +34,9 @@ object OpdsClient {
         val mime: String? = null,
     )
 
+    const val MAX_FEED_ENTRIES = 500
+    const val MAX_DOWNLOAD_BYTES = 500L * 1024 * 1024 // 500 MB
+
     private fun authHeader(server: OpdsServer): String? {
         if (server.user.isBlank()) return null
         val token = "${server.user}:${server.pass}"
@@ -57,7 +60,7 @@ object OpdsClient {
         }
     }
 
-    /** Feed OPDS → entradas (título, navegação, aquisição). */
+    /** Feed OPDS → entradas (título, navegação, aquisição). Protegido contra XXE e feeds gigantes. */
     fun fetchFeed(server: OpdsServer, feedUrl: String = server.url): List<Entry> {
         val connection = open(feedUrl, server)
         if (connection.responseCode !in 200..299) {
@@ -65,10 +68,20 @@ object OpdsClient {
         }
         val stream = connection.inputStream
         return try {
-            val doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(stream)
+            val factory = DocumentBuilderFactory.newInstance().apply {
+                isExpandEntityReferences = false
+                isNamespaceAware = true
+                runCatching { setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) }
+                runCatching { setFeature("http://xml.org/sax/features/external-general-entities", false) }
+                runCatching { setFeature("http://xml.org/sax/features/external-parameter-entities", false) }
+                runCatching { setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false) }
+                runCatching { isXIncludeAware = false }
+            }
+            val doc = factory.newDocumentBuilder().parse(stream)
             doc.documentElement.normalize()
             val nodes = doc.getElementsByTagName("entry")
-            List(nodes.length) { i ->
+            val count = minOf(nodes.length, MAX_FEED_ENTRIES)
+            List(count) { i ->
                 val element = nodes.item(i) as Element
                 val title = element.getElementsByTagName("title").item(0)?.textContent?.trim().orEmpty()
                 val id = element.getElementsByTagName("id").item(0)?.textContent?.trim().orEmpty()
@@ -130,7 +143,8 @@ object OpdsClient {
             val body = connection.inputStream.bufferedReader().readText()
             val root = org.json.JSONObject(body)
             val content = root.optJSONArray("content") ?: return emptyList()
-            List(content.length()) { i ->
+            val count = minOf(content.length(), MAX_FEED_ENTRIES)
+            List(count) { i ->
                 val o = content.getJSONObject(i)
                 val id = o.optString("id", "")
                 val name = o.optJSONObject("metadata")?.optString("title", "")?.ifBlank { o.optString("name", "Série") } ?: "Série"
@@ -154,7 +168,8 @@ object OpdsClient {
             val body = connection.inputStream.bufferedReader().readText()
             val root = org.json.JSONObject(body)
             val content = root.optJSONArray("content") ?: return emptyList()
-            List(content.length()) { i ->
+            val count = minOf(content.length(), MAX_FEED_ENTRIES)
+            List(count) { i ->
                 val o = content.getJSONObject(i)
                 val id = o.optString("id", "")
                 val meta = o.optJSONObject("metadata")
@@ -194,6 +209,10 @@ object OpdsClient {
             throw IllegalStateException("Download falhou (${connection.responseCode})")
         }
         val total = connection.contentLengthLong.takeIf { it > 0 }
+        if (total != null && total > MAX_DOWNLOAD_BYTES) {
+            connection.disconnect()
+            throw IllegalStateException("Arquivo excede limite de segurança de ${MAX_DOWNLOAD_BYTES / (1024 * 1024)} MB")
+        }
         try {
             with(kotlinx.coroutines.Dispatchers.IO) {
                 connection.inputStream.use { input ->
@@ -208,6 +227,9 @@ object OpdsClient {
                             if (read <= 0) break
                             output.write(buffer, 0, read)
                             done += read
+                            if (done > MAX_DOWNLOAD_BYTES) {
+                                throw IllegalStateException("Download excedeu limite de segurança de ${MAX_DOWNLOAD_BYTES / (1024 * 1024)} MB")
+                            }
                             if (total != null) {
                                 onProgress((done.toFloat() / total).coerceIn(0f, 1f))
                             }

@@ -1,0 +1,114 @@
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.5.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:6a978f13-4357-4148-9366-0d1743fcfd74",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-09-18T14:02:20.791676500Z",
+    "tools": [
+      {
+        "vendor": "Tactile Reader Build System",
+        "name": "tactile-sbom-generator",
+        "version": "0.4.0"
+      }
+    ],
+    "component": {
+      "type": "application",
+      "name": "tactile-native",
+      "version": "0.4.0+4",
+      "description": "Leitor nativo editorial offline de quadrinhos e mangás para Android",
+      "purl": "pkg:maven/com.jrmello4.tactilereader/app@0.4.0"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "androidx.compose.ui:ui",
+      "version": "1.7.4",
+      "description": "Jetpack Compose UI Core",
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
+      "purl": "pkg:maven/androidx.compose.ui/ui@1.7.4"
+    },
+    {
+      "type": "library",
+      "name": "androidx.compose.material3:material3",
+      "version": "1.3.0",
+      "description": "Jetpack Compose Material 3 Components",
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
+      "purl": "pkg:maven/androidx.compose.material3/material3@1.3.0"
+    },
+    {
+      "type": "library",
+      "name": "androidx.activity:activity-compose",
+      "version": "1.9.3",
+      "description": "Compose integration with Android Activity",
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
+      "purl": "pkg:maven/androidx.activity/activity-compose@1.9.3"
+    },
+    {
+      "type": "library",
+      "name": "androidx.core:core-ktx",
+      "version": "1.13.1",
+      "description": "Android KTX extensions",
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
+      "purl": "pkg:maven/androidx.core/core-ktx@1.13.1"
+    },
+    {
+      "type": "library",
+      "name": "androidx.lifecycle:lifecycle-viewmodel-compose",
+      "version": "2.8.6",
+      "description": "Lifecycle ViewModel Compose integration",
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-compose@2.8.6"
+    },
+    {
+      "type": "library",
+      "name": "androidx.profileinstaller:profileinstaller",
+      "version": "1.4.1",
+      "description": "AndroidX ProfileInstaller for ART Baseline Profiles",
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
+      "purl": "pkg:maven/androidx.profileinstaller/profileinstaller@1.4.1"
+    },
+    {
+      "type": "library",
+      "name": "io.coil-kt.coil3:coil-compose",
+      "version": "3.0.4",
+      "description": "Asynchronous Image Loading for Compose",
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
+      "purl": "pkg:maven/io.coil-kt.coil3/coil-compose@3.0.4"
+    },
+    {
+      "type": "library",
+      "name": "com.github.junrar:junrar",
+      "version": "8.1.1",
+      "description": "Pure Java RAR archive extraction (RAR4 and RAR5)",
+      "licenses": [{ "license": { "name": "UnRAR License" } }],
+      "purl": "pkg:maven/com.github.junrar/junrar@8.1.1"
+    },
+    {
+      "type": "library",
+      "name": "org.apache.commons:commons-compress",
+      "version": "1.28.0",
+      "description": "Apache Commons Compress for 7z, ZIP and Tar",
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
+      "purl": "pkg:maven/org.apache.commons/commons-compress@1.28.0"
+    },
+    {
+      "type": "library",
+      "name": "org.tukaani:xz",
+      "version": "1.10",
+      "description": "XZ and 7-Zip compression and decompression support",
+      "licenses": [{ "license": { "id": "CC0-1.0", "name": "Public Domain" } }],
+      "purl": "pkg:maven/org.tukaani/xz@1.10"
+    },
+    {
+      "type": "library",
+      "name": "org.slf4j:slf4j-nop",
+      "version": "2.0.17",
+      "description": "SLF4J No-Operation Logger Binding",
+      "licenses": [{ "license": { "id": "MIT" } }],
+      "purl": "pkg:maven/org.slf4j/slf4j-nop@2.0.17"
+    }
+  ]
+}
