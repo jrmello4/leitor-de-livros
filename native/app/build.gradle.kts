@@ -29,12 +29,12 @@ val appTargetSdk = 35
 val appCompileSdk = 35
 
 // Assinatura de release via ambiente (CI) com fallback para debug em testes locais
-val storeFilePath = System.getenv("TACTILE_STORE_FILE")
-val storePassword = System.getenv("TACTILE_STORE_PASSWORD")
-val keyAlias = System.getenv("TACTILE_KEY_ALIAS")
-val keyPassword = System.getenv("TACTILE_KEY_PASSWORD")
-val hasSigning = !storeFilePath.isNullOrBlank() && !storePassword.isNullOrBlank() &&
-    !keyAlias.isNullOrBlank() && !keyPassword.isNullOrBlank()
+val envStoreFile = System.getenv("TACTILE_STORE_FILE")
+val envStorePassword = System.getenv("TACTILE_STORE_PASSWORD")
+val envKeyAlias = System.getenv("TACTILE_KEY_ALIAS")
+val envKeyPassword = System.getenv("TACTILE_KEY_PASSWORD")
+val hasSigning = !envStoreFile.isNullOrBlank() && !envStorePassword.isNullOrBlank() &&
+    !envKeyAlias.isNullOrBlank() && !envKeyPassword.isNullOrBlank()
 
 android {
     namespace = "com.jrmello4.tactilereader.scaffold"
@@ -55,10 +55,10 @@ android {
     if (hasSigning) {
         signingConfigs {
             create("release") {
-                storeFile = rootDir.resolve(storeFilePath)
-                this.storePassword = storePassword
-                this.keyAlias = keyAlias
-                this.keyPassword = keyPassword
+                storeFile = rootDir.resolve(envStoreFile)
+                storePassword = envStorePassword
+                keyAlias = envKeyAlias
+                keyPassword = envKeyPassword
             }
         }
     }
