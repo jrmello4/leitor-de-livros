@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "projectId": "c:\\users\\adenilson.j\\projects\\leitor-livro",
+  "updatedAt": "2026-09-21T19:41:22.811Z",
+  "generation": 2,
+  "policy": {
+    "enabled": false,
+    "preserveActiveAgents": true,
+    "escalateOnExhaustion": true,
+    "allowRoleEscalation": true,
+    "cooldownMs": 300000,
+    "maxHandoffsPerHour": 6,
+    "failureThreshold": 3,
+    "quotaWarningPercent": 80,
+    "quotaExhaustedPercent": 95
+  },
+  "roles": {
+    "coordinator": {
+      "role": "coordinator",
+      "state": "unassigned",
+      "since": "2026-09-21T19:41:05.975Z"
+    },
+    "implementer": {
+      "role": "implementer",
+      "state": "unassigned",
+      "since": "2026-09-21T19:41:05.975Z"
+    },
+    "reviewer": {
+      "role": "reviewer",
+      "state": "unassigned",
+      "since": "2026-09-21T19:41:05.975Z"
+    },
+    "tester": {
+      "role": "tester",
+      "state": "unassigned",
+      "since": "2026-09-21T19:41:05.975Z"
+    }
+  },
+  "seats": {},
+  "handoffCooldowns": {},
+  "events": [
+    {
+      "id": "a2d28a30-a83e-4ee9-a403-8d3ebf36ad3e",
+      "at": "2026-09-21T19:41:05.975Z",
+      "type": "seat.registered",
+      "reason": "Assento note-mubnhprt-o0u1x registrado para implementer.",
+      "role": "implementer",
+      "toSeatId": "note-mubnhprt-o0u1x"
+    },
+    {
+      "id": "a132f630-8acc-4024-b0d1-18b9afb4ed75",
+      "at": "2026-09-21T19:41:22.811Z",
+      "type": "seat.unregistered",
+      "reason": "Assento note-mubnhprt-o0u1x removido.",
+      "role": "implementer",
+      "fromSeatId": "note-mubnhprt-o0u1x"
+    }
+  ]
+}
