@@ -223,10 +223,10 @@ fun LibraryContent(
             if (pendingDelete.isNotEmpty()) {
                 AlertDialog(
                     onDismissRequest = { pendingDelete = emptySet() },
-                    title = { Text("Remover da estante?", color = MaterialTheme.colorScheme.onSurface) },
+                    title = { Text(stringResource(R.string.library_remove_confirm_title), color = MaterialTheme.colorScheme.onSurface) },
                     text = {
                         Text(
-                            "O arquivo original não é tocado. Favoritos, progresso e marcadores desta publicação saem junto.",
+                            stringResource(R.string.library_remove_confirmation_message),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     },
@@ -237,11 +237,11 @@ fun LibraryContent(
                                 pendingDelete = emptySet()
                                 selection = emptySet()
                             },
-                        ) { Text("Remover", color = MaterialTheme.colorScheme.error) }
+                        ) { Text(stringResource(R.string.action_remove), color = MaterialTheme.colorScheme.error) }
                     },
                     dismissButton = {
                         TextButton(onClick = { pendingDelete = emptySet() }) {
-                            Text("Cancelar", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(stringResource(R.string.action_cancel), color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     },
                 )
@@ -274,10 +274,10 @@ fun LibraryContent(
         if (pendingDelete.isNotEmpty()) {
             AlertDialog(
                 onDismissRequest = { pendingDelete = emptySet() },
-                title = { Text("Remover da estante?", color = MaterialTheme.colorScheme.onSurface) },
+                title = { Text(stringResource(R.string.library_remove_confirm_title), color = MaterialTheme.colorScheme.onSurface) },
                 text = {
                     Text(
-                        "O arquivo original não é tocado. Favoritos, progresso e marcadores desta publicação saem junto.",
+                        stringResource(R.string.library_remove_confirmation_message),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 },
@@ -288,11 +288,11 @@ fun LibraryContent(
                             pendingDelete = emptySet()
                             selection = emptySet()
                         },
-                    ) { Text("Remover", color = MaterialTheme.colorScheme.error) }
+                    ) { Text(stringResource(R.string.action_remove), color = MaterialTheme.colorScheme.error) }
                 },
                 dismissButton = {
                     TextButton(onClick = { pendingDelete = emptySet() }) {
-                        Text("Cancelar", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.action_cancel), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
             )
@@ -324,14 +324,14 @@ fun LibraryContent(
         when {
             state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    "Lendo biblioteca…",
+                    stringResource(R.string.library_loading),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyLarge,
                 )
             }
             state.error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    "Falha: ${state.error}",
+                    stringResource(R.string.common_error_detail, state.error),
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive },
@@ -382,7 +382,7 @@ fun LibraryContent(
                             onValueChange = { query = it },
                             placeholder = {
                                 Text(
-                                    "Buscar na estante…",
+                                    stringResource(R.string.library_search_hint),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                                 )
                             },
@@ -409,10 +409,10 @@ fun LibraryContent(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            FilterChip(filter == LibraryFilter.TODAS, "Todas") { filter = LibraryFilter.TODAS }
-                            FilterChip(filter == LibraryFilter.CONTINUAR, "Continuar") { filter = LibraryFilter.CONTINUAR }
-                            FilterChip(filter == LibraryFilter.FAVORITAS, "Favoritas") { filter = LibraryFilter.FAVORITAS }
-                            FilterChip(filter == LibraryFilter.NAO_LIDAS, "Novas") { filter = LibraryFilter.NAO_LIDAS }
+                            FilterChip(filter == LibraryFilter.TODAS, stringResource(R.string.library_filter_all)) { filter = LibraryFilter.TODAS }
+                            FilterChip(filter == LibraryFilter.CONTINUAR, stringResource(R.string.library_filter_continue)) { filter = LibraryFilter.CONTINUAR }
+                            FilterChip(filter == LibraryFilter.FAVORITAS, stringResource(R.string.library_filter_favorites)) { filter = LibraryFilter.FAVORITAS }
+                            FilterChip(filter == LibraryFilter.NAO_LIDAS, stringResource(R.string.library_filter_new)) { filter = LibraryFilter.NAO_LIDAS }
 
                             Box(
                                 modifier = Modifier
@@ -421,8 +421,8 @@ fun LibraryContent(
                                     .background(MaterialTheme.colorScheme.outlineVariant),
                             )
 
-                            FilterChip(tab == LibraryTab.SERIES, "Séries") { tab = LibraryTab.SERIES }
-                            FilterChip(tab == LibraryTab.PASTAS, "Pastas") { tab = LibraryTab.PASTAS }
+                            FilterChip(tab == LibraryTab.SERIES, stringResource(R.string.library_filter_series)) { tab = LibraryTab.SERIES }
+                            FilterChip(tab == LibraryTab.PASTAS, stringResource(R.string.library_filter_folders)) { tab = LibraryTab.PASTAS }
 
                             Box(
                                 modifier = Modifier
@@ -431,9 +431,9 @@ fun LibraryContent(
                                     .background(MaterialTheme.colorScheme.outlineVariant),
                             )
 
-                            FilterChip(sort == LibrarySort.RECENTES, "Recentes") { sort = LibrarySort.RECENTES }
-                            FilterChip(sort == LibrarySort.TITULO, "A–Z") { sort = LibrarySort.TITULO }
-                            FilterChip(sort == LibrarySort.PROGRESSO, "Progresso") { sort = LibrarySort.PROGRESSO }
+                            FilterChip(sort == LibrarySort.RECENTES, stringResource(R.string.library_sort_recent)) { sort = LibrarySort.RECENTES }
+                            FilterChip(sort == LibrarySort.TITULO, stringResource(R.string.library_sort_title)) { sort = LibrarySort.TITULO }
+                            FilterChip(sort == LibrarySort.PROGRESSO, stringResource(R.string.library_sort_progress)) { sort = LibrarySort.PROGRESSO }
                         }
                     }
 
@@ -458,10 +458,10 @@ fun LibraryContent(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
                                         text = if (progress.total > 0) {
-                                            "Importando ${progress.processed} de ${progress.total}" +
+                                            stringResource(R.string.library_importing_count, progress.processed, progress.total) +
                                                 progress.currentName.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()
                                         } else {
-                                            "Preparando importação…"
+                                            stringResource(R.string.library_import_preparing)
                                         },
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.secondary,
@@ -470,7 +470,7 @@ fun LibraryContent(
                                         modifier = Modifier.weight(1f),
                                     )
                                     TextButton(onClick = onCancelImport) {
-                                        Text("Cancelar", color = MaterialTheme.colorScheme.onSurface)
+                                        Text(stringResource(R.string.action_cancel), color = MaterialTheme.colorScheme.onSurface)
                                     }
                                 }
                                 LinearProgressIndicator(
@@ -513,14 +513,14 @@ fun LibraryContent(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    "Pastas do aparelho",
+                                    stringResource(R.string.library_folders_title),
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.semantics { heading() },
                                 )
                                 TextButton(onClick = onRescan) {
-                                    Text("Revarrer", color = MaterialTheme.colorScheme.primary)
+                                    Text(stringResource(R.string.library_rescan), color = MaterialTheme.colorScheme.primary)
                                 }
                             }
                         }
@@ -531,7 +531,7 @@ fun LibraryContent(
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     Text(
-                                        "Nenhuma pasta com HQs encontrada.",
+                                        stringResource(R.string.library_empty_folders),
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
@@ -556,7 +556,8 @@ fun LibraryContent(
                                                 color = MaterialTheme.colorScheme.onSurface,
                                             )
                                             Text(
-                                                if (folder.count < 0) "pasta autorizada (SAF)" else "${folder.count} arquivos",
+                                                if (folder.count < 0) stringResource(R.string.library_folder_authorized)
+                                                else stringResource(R.string.library_folder_file_count, folder.count),
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             )
@@ -571,7 +572,7 @@ fun LibraryContent(
                             item(span = { GridItemSpan(maxLineSpan) }) {
                                 Column(Modifier.fillMaxWidth()) {
                                     Text(
-                                        "Continuar lendo",
+                                        stringResource(R.string.library_continue_reading),
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.onSurface,
@@ -604,7 +605,11 @@ fun LibraryContent(
                         if (groups.isNotEmpty()) {
                             item(span = { GridItemSpan(maxLineSpan) }) {
                                 Text(
-                                    text = if (tab == LibraryTab.SERIES) "Séries" else "Publicações",
+                                    text = if (tab == LibraryTab.SERIES) {
+                                        stringResource(R.string.library_filter_series)
+                                    } else {
+                                        stringResource(R.string.library_publications)
+                                    },
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSurface,
@@ -625,7 +630,7 @@ fun LibraryContent(
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     Text(
-                                        "Nada por aqui — importe uma HQ.",
+                                        stringResource(R.string.library_empty),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -669,14 +674,14 @@ private fun LibraryHeaderBar(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "Tactile Reader",
+                text = stringResource(R.string.library_brand),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.semantics { heading() },
             )
             Text(
-                text = "mesa editorial · estante local",
+                text = stringResource(R.string.library_tagline),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
             )
@@ -730,7 +735,11 @@ private fun ImportReportCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = if (report.cancelled) "Importação cancelada" else "Resultado da importação",
+                    text = if (report.cancelled) {
+                        stringResource(R.string.library_report_cancelled)
+                    } else {
+                        stringResource(R.string.library_report_result)
+                    },
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -739,14 +748,16 @@ private fun ImportReportCard(
                 IconButton(onClick = onDismiss) {
                     Icon(
                         Icons.Filled.Close,
-                        contentDescription = "Fechar relatório",
+                        contentDescription = stringResource(R.string.library_report_close),
                         tint = MaterialTheme.colorScheme.onSurface,
                     )
                 }
             }
             Text(
-                text = "${report.imported} adicionadas com sucesso" +
-                    if (report.failed.isNotEmpty()) ", ${report.failed.size} com falha" else "",
+                text = stringResource(R.string.library_report_imported_count, report.imported) +
+                    if (report.failed.isNotEmpty()) {
+                        ", ${stringResource(R.string.library_report_failed_count, report.failed.size)}"
+                    } else "",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -754,7 +765,11 @@ private fun ImportReportCard(
                 Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     for (fail in report.failed.take(5)) {
                         Text(
-                            text = "• ${fail.displayName}: ${fail.errorMessage ?: "Erro"}",
+                            text = stringResource(
+                                R.string.library_report_item_error,
+                                fail.displayName,
+                                fail.errorMessage ?: stringResource(R.string.common_error_capitalized),
+                            ),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.error,
                             maxLines = 2,
@@ -763,7 +778,7 @@ private fun ImportReportCard(
                     }
                     if (report.failed.size > 5) {
                         Text(
-                            text = "+ mais ${report.failed.size - 5} arquivos com falha",
+                            text = stringResource(R.string.library_report_more_failures, report.failed.size - 5),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -782,14 +797,14 @@ private fun ImportReportCard(
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.defaultMinSize(minHeight = 44.dp),
                     ) {
-                        Text("Tentar novamente", color = MaterialTheme.colorScheme.onPrimary)
+                        Text(stringResource(R.string.library_import_retry), color = MaterialTheme.colorScheme.onPrimary)
                     }
                 }
                 TextButton(
                     onClick = onDismiss,
                     modifier = Modifier.defaultMinSize(minHeight = 44.dp),
                 ) {
-                    Text("Dispensar", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.library_report_dismiss), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -888,7 +903,7 @@ private fun ContinueHeroCard(
                         modifier = Modifier.padding(vertical = 10.dp),
                     ) {
                         Text(
-                            "Retomar",
+                            stringResource(R.string.library_resume),
                             color = MaterialTheme.colorScheme.onPrimary,
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold,
@@ -951,11 +966,11 @@ private fun SelectionBar(
             modifier = Modifier.padding(start = 4.dp),
         )
         Spacer(Modifier.weight(1f))
-        TextButton(onClick = onMarkRead) { Text("Lido", color = MaterialTheme.colorScheme.onSurface) }
-        TextButton(onClick = onClearProgress) { Text("Limpar", color = MaterialTheme.colorScheme.onSurface) }
-        TextButton(onClick = onDelete) { Text("Excluir", color = MaterialTheme.colorScheme.error) }
+        TextButton(onClick = onMarkRead) { Text(stringResource(R.string.library_mark_read), color = MaterialTheme.colorScheme.onSurface) }
+        TextButton(onClick = onClearProgress) { Text(stringResource(R.string.library_clear), color = MaterialTheme.colorScheme.onSurface) }
+        TextButton(onClick = onDelete) { Text(stringResource(R.string.library_delete), color = MaterialTheme.colorScheme.error) }
         IconButton(onClick = onClear) {
-            Icon(Icons.Filled.Close, contentDescription = "Limpar seleção", tint = MaterialTheme.colorScheme.onSurface)
+            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.library_clear_selection), tint = MaterialTheme.colorScheme.onSurface)
         }
     }
 }
@@ -1178,7 +1193,7 @@ private fun SeriesDetail(
                     )
                     if (edition.possibleDuplicate) {
                         Text(
-                            text = "possible duplicate",
+                            text = stringResource(R.string.library_possible_duplicate),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.secondary,
                             modifier = Modifier.padding(top = 4.dp, start = 8.dp),
@@ -1251,7 +1266,7 @@ private fun PubCard(
                         Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)).padding(8.dp),
                         contentAlignment = Alignment.TopEnd,
                     ) {
-                        Icon(Icons.Filled.Check, contentDescription = "Selecionado", tint = MaterialTheme.colorScheme.primary)
+                        Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.library_selected), tint = MaterialTheme.colorScheme.primary)
                     }
                 }
             }
@@ -1272,13 +1287,15 @@ private fun PubCard(
                     ) {
                         Icon(
                             Icons.Filled.Star,
-                            contentDescription = if (pub.isFavorite) "Remover dos favoritos" else "Favoritar",
+                            contentDescription = stringResource(
+                                if (pub.isFavorite) R.string.library_remove_favorite else R.string.library_add_favorite,
+                            ),
                             tint = if (pub.isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
                 Text(
-                    text = "${pub.pageCount} páginas",
+                    text = stringResource(R.string.library_page_count, pub.pageCount),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1302,7 +1319,7 @@ private fun PubCard(
                         onClick = { menu = !menu },
                         modifier = Modifier.defaultMinSize(minWidth = 36.dp, minHeight = 36.dp),
                     ) {
-                        Icon(Icons.Filled.MoreVert, contentDescription = "Opções", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.library_options), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 if (menu) {
@@ -1314,13 +1331,13 @@ private fun PubCard(
                             .padding(4.dp),
                     ) {
                         TextButton(onClick = { onSetRead(pub, true); menu = false }, modifier = Modifier.fillMaxWidth()) {
-                            Text("Marcar como lido", color = MaterialTheme.colorScheme.onSurface)
+                            Text(stringResource(R.string.library_mark_as_read), color = MaterialTheme.colorScheme.onSurface)
                         }
                         TextButton(onClick = { onSetRead(pub, false); menu = false }, modifier = Modifier.fillMaxWidth()) {
-                            Text("Limpar progresso", color = MaterialTheme.colorScheme.onSurface)
+                            Text(stringResource(R.string.library_clear_progress), color = MaterialTheme.colorScheme.onSurface)
                         }
                         TextButton(onClick = { onRequestDelete(pub.id); menu = false }, modifier = Modifier.fillMaxWidth()) {
-                            Text("Excluir da estante", color = MaterialTheme.colorScheme.error)
+                            Text(stringResource(R.string.library_remove_publication), color = MaterialTheme.colorScheme.error)
                         }
                     }
                 }

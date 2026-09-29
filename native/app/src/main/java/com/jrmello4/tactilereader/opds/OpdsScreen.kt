@@ -43,12 +43,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.jrmello4.tactilereader.scaffold.R
 import androidx.compose.ui.unit.sp
 import com.jrmello4.tactilereader.ui.theme.DarkGraphite750
 import com.jrmello4.tactilereader.ui.theme.DarkGraphite800
@@ -125,10 +127,13 @@ fun OpdsScreen(
                     trail = trail + feedUrl
                 }
                 if (list.isEmpty()) {
-                    notice = "Nada neste nível do catálogo."
+                    notice = context.getString(R.string.opds_empty_catalog)
                 }
             } catch (error: Exception) {
-                notice = "Falha no servidor: ${error.message ?: "erro"}"
+                notice = context.getString(
+                    R.string.opds_server_error,
+                    error.message ?: context.getString(R.string.common_error),
+                )
             } finally {
                 loading = false
             }
@@ -159,14 +164,14 @@ fun OpdsScreen(
                 ) {
                     Icon(
                         Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Voltar aos ajustes",
+                        contentDescription = stringResource(R.string.opds_back_to_settings),
                         tint = Paper50,
                     )
                     Spacer(Modifier.width(4.dp))
-                    Text("Ajustes", color = Paper50, style = MaterialTheme.typography.labelLarge)
+                    Text(stringResource(R.string.navigation_settings), color = Paper50, style = MaterialTheme.typography.labelLarge)
                 }
                 Text(
-                    "Servidores",
+                    stringResource(R.string.opds_servers_title),
                     style = MaterialTheme.typography.titleLarge,
                     color = Paper50,
                     modifier = Modifier
@@ -179,7 +184,7 @@ fun OpdsScreen(
                     modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                 ) {
                     Text(
-                        if (showForm) "Fechar" else "+ Servidor",
+                        if (showForm) stringResource(R.string.opds_close_form) else stringResource(R.string.opds_add_server),
                         color = WarmAmber,
                         style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
                     )
@@ -193,7 +198,7 @@ fun OpdsScreen(
                 .padding(horizontal = 16.dp, vertical = 4.dp),
         ) {
             Text(
-                "OPDS · KOMGA · KAVITA · APENAS CONEXÕES DIRETAS LOCAIS",
+                stringResource(R.string.opds_tagline),
                 style = MaterialTheme.typography.labelSmall.copy(
                     letterSpacing = 1.sp,
                     fontWeight = FontWeight.Bold,
@@ -241,7 +246,7 @@ fun OpdsScreen(
                         OutlinedTextField(
                             value = formName,
                             onValueChange = { formName = it },
-                            label = { Text("Nome da conexão") },
+                            label = { Text(stringResource(R.string.opds_connection_name)) },
                             singleLine = true,
                             colors = fieldColors,
                             modifier = Modifier.fillMaxWidth(),
@@ -249,7 +254,7 @@ fun OpdsScreen(
                         OutlinedTextField(
                             value = formUrl,
                             onValueChange = { formUrl = it },
-                            label = { Text("URL (ex: https://meu-servidor:8080/opds/v1.2/catalog)") },
+                            label = { Text(stringResource(R.string.opds_connection_url)) },
                             singleLine = true,
                             colors = fieldColors,
                             modifier = Modifier.fillMaxWidth(),
@@ -258,7 +263,7 @@ fun OpdsScreen(
                             OutlinedTextField(
                                 value = formUser,
                                 onValueChange = { formUser = it },
-                                label = { Text("Usuário") },
+                                label = { Text(stringResource(R.string.opds_username)) },
                                 singleLine = true,
                                 colors = fieldColors,
                                 modifier = Modifier.weight(1f),
@@ -266,7 +271,7 @@ fun OpdsScreen(
                             OutlinedTextField(
                                 value = formPass,
                                 onValueChange = { formPass = it },
-                                label = { Text("Senha") },
+                                label = { Text(stringResource(R.string.opds_password)) },
                                 singleLine = true,
                                 colors = fieldColors,
                                 modifier = Modifier.weight(1f),
@@ -300,7 +305,7 @@ fun OpdsScreen(
                         Button(
                             onClick = {
                                 if (formName.isBlank() || formUrl.isBlank()) {
-                                    notice = "Informe o nome e a URL do servidor."
+                                    notice = context.getString(R.string.opds_server_required)
                                     return@Button
                                 }
                                 persist(
@@ -326,7 +331,7 @@ fun OpdsScreen(
                                 .fillMaxWidth()
                                 .defaultMinSize(minHeight = 48.dp),
                         ) {
-                            Text("Salvar servidor", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                            Text(stringResource(R.string.opds_save_server), style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
                         }
                     }
                 }
@@ -381,7 +386,7 @@ fun OpdsScreen(
                             border = BorderStroke(1.dp, SeamSubtle),
                             modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                         ) {
-                            Text("Abrir catálogo", style = MaterialTheme.typography.labelLarge)
+                            Text(stringResource(R.string.opds_open_catalog), style = MaterialTheme.typography.labelLarge)
                         }
 
                         if (trail.isNotEmpty()) {
@@ -394,11 +399,11 @@ fun OpdsScreen(
                             ) {
                                 Icon(
                                     Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = "Voltar no catálogo",
+                                    contentDescription = stringResource(R.string.opds_back_to_catalog),
                                     tint = Paper50,
                                 )
                                 Spacer(Modifier.width(4.dp))
-                                Text("Voltar", color = Paper50)
+                                Text(stringResource(R.string.action_back), color = Paper50)
                             }
                         }
 
@@ -410,7 +415,7 @@ fun OpdsScreen(
                             },
                             modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                         ) {
-                            Text("Remover servidor", color = OxideRed)
+                            Text(stringResource(R.string.opds_remove_server), color = OxideRed)
                         }
                     }
                 }
@@ -445,11 +450,11 @@ fun OpdsScreen(
                         onClick = {
                             downloadJob?.cancel()
                             progress = null
-                            notice = "Download cancelado."
+                            notice = context.getString(R.string.opds_download_cancelled)
                         },
                         modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                     ) {
-                        Text("Cancelar", color = OxideRed)
+                        Text(stringResource(R.string.action_cancel), color = OxideRed)
                     }
                 }
             }
@@ -495,7 +500,7 @@ fun OpdsScreen(
                                         border = BorderStroke(1.dp, SeamSubtle),
                                         modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                                     ) {
-                                        Text("Explorar pasta ›", style = MaterialTheme.typography.labelMedium)
+                                        Text(stringResource(R.string.opds_browse_folder), style = MaterialTheme.typography.labelMedium)
                                     }
                                 }
                                 if (entry.acquisition != null && selected != null) {
@@ -515,14 +520,17 @@ fun OpdsScreen(
                                                         onProgress = { progress = it },
                                                     )
                                                     progress = null
-                                                    notice = "Baixado: ${file.name}."
+                                                    notice = context.getString(R.string.opds_downloaded, file.name)
                                                     onDownloaded(file.absolutePath)
                                                 } catch (error: Exception) {
                                                     progress = null
                                                     if (error is kotlinx.coroutines.CancellationException) {
-                                                        notice = "Download cancelado."
+                                                        notice = context.getString(R.string.opds_download_cancelled)
                                                     } else {
-                                                        notice = "Falha no download: ${error.message ?: "erro"}"
+                                                        notice = context.getString(
+                                                            R.string.opds_download_error,
+                                                            error.message ?: context.getString(R.string.common_error),
+                                                        )
                                                     }
                                                 }
                                             }
@@ -534,7 +542,7 @@ fun OpdsScreen(
                                         shape = RoundedCornerShape(8.dp),
                                         modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                                     ) {
-                                        Text("Baixar offline", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
+                                        Text(stringResource(R.string.opds_download_offline), style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
                                     }
                                 }
                             }

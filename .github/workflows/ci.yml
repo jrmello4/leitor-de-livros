@@ -43,10 +43,36 @@ jobs:
         shell: bash
         run: sdkmanager.bat "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      # O núcleo é Kotlin puro: sem Rust, sem NDK, sem .so por ABI.
-      - name: Unit tests, lint, Android builds and androidTest compilation
+      # Tarefas separadas deixam o diagnóstico do primeiro gate que falhar claro.
+      - name: Unit tests
         shell: bash
-        run: cd native && ./gradlew testDebugUnitTest lintRelease assembleDebug compileDebugAndroidTestSources assembleRelease generateReleaseMetadata --no-daemon
+        working-directory: native
+        run: ./gradlew testDebugUnitTest --no-daemon
+
+      - name: Release lint
+        shell: bash
+        working-directory: native
+        run: ./gradlew lintRelease --no-daemon
+
+      - name: Debug APK
+        shell: bash
+        working-directory: native
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Compile androidTest sources
+        shell: bash
+        working-directory: native
+        run: ./gradlew compileDebugAndroidTestSources --no-daemon
+
+      - name: Release APK
+        shell: bash
+        working-directory: native
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Release metadata
+        shell: bash
+        working-directory: native
+        run: ./gradlew generateReleaseMetadata --no-daemon
 
       - name: Upload release APK and manifest
         uses: actions/upload-artifact@v7

@@ -2,14 +2,10 @@ package com.jrmello4.tactilereader.core
 
 import com.github.junrar.Archive
 import com.github.junrar.rarfile.FileHeader
-import org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry
-import org.apache.commons.compress.archivers.sevenz.SevenZFile
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.security.MessageDigest
-import android.os.ParcelFileDescriptor
-import com.jrmello4.tactilereader.pdf.PdfImporter
 import java.util.zip.ZipEntry
 import java.util.zip.ZipException
 import java.util.zip.ZipFile
@@ -33,20 +29,12 @@ internal object Importer {
         val height: Int,
     )
 
-    private data class SevenZipPage(
-        val member: String,
-        val name: String,
-        val archiveIndex: Int,
-        val width: Int,
-        val height: Int,
-    )
-
     private enum class Container { Zip, Rar, SevenZip, Unknown }
 
     /** Cancelamento cooperativo: interrompe entre unidades e a cada 16 itens. */
-    private class Cancelled : Exception()
+    internal class Cancelled : Exception()
 
-    private fun ensureNotCancelled(shouldCancel: () -> Boolean) {
+    internal fun ensureNotCancelled(shouldCancel: () -> Boolean) {
         if (shouldCancel()) throw Cancelled()
     }
 
@@ -169,8 +157,8 @@ internal object Importer {
                     }
                     is Work.Cbz -> importCbz(db, "archive:${work.source.reference}", work.source, shouldCancel)
                     is Work.Cbr -> importCbr(db, "cbr:${work.source.reference}", work.source, shouldCancel)
-                    is Work.SevenZ -> importSevenZip(db, work.source, shouldCancel)
-                    is Work.Pdf -> importPdf(db, work.source)
+                    is Work.SevenZ -> SevenZipImporter.importPublication(db, work.source, shouldCancel)
+                    is Work.Pdf -> PdfPublicationImporter.importPublication(db, work.source)
                     is Work.Collection -> {
                         val nested = importCollectionZip(db, work.source, shouldCancel)
                         imported += nested.importedCount
@@ -457,212 +445,6 @@ internal object Importer {
         )
     }
 
-    // ------------------------------------------------------------------- PDF
-
-    private fun importPdf(db: LibraryDb, source: ImportSource): Pub {
-        val opener = db.opener
-        val size = opener.sizeBytes(source.reference)
-        if (size > MAX_ARCHIVE_BYTES) error("PDF exceeds the supported source size")
-        val sourceKey = pdfSourceKey(
-            source.reference,
-            size,
-            opener.lastModifiedMillis(source.reference),
-        )
-        db.findPublicationBySourcePath(sourceKey)?.let { return it }
-
-        val pageDimensions = withPdfDescriptor(db, source.reference) { PdfImporter.inspect(it) }
-        if (pageDimensions.isEmpty() || pageDimensions.size > MAX_PAGE_COUNT) {
-            error("PDF exceeds the $MAX_PAGE_COUNT page safety limit")
-        }
-        val publicationId = digestId("publication", sourceKey.toByteArray())
-        val pages = pageDimensions.mapIndexed { index, dimensions ->
-            LibraryDb.NewPage(
-                id = "$publicationId-page-%04d".format(index),
-                index = index,
-                name = "page-%04d.pdf".format(index + 1),
-                cachePath = File(""),
-                sourceRef = PageSourceRef.Pdf(source.reference, index),
-                width = dimensions.width,
-                height = dimensions.height,
-            )
-        }
-        return persist(
-            db,
-            LibraryDb.NewPublication(
-                id = publicationId,
-                title = stemOf(source.name(opener)).ifBlank { "Imported PDF" },
-                sourceLabel = source.name(opener),
-                sourcePath = sourceKey,
-                format = "pdf",
-                pages = pages,
-                coverPageId = pages.first().id,
-                addedAt = timestampMillis(),
-                updatedAt = timestampMillis(),
-            ),
-        )
-    }
-
-    private inline fun <T> withPdfDescriptor(
-        db: LibraryDb,
-        reference: String,
-        block: (ParcelFileDescriptor) -> T,
-    ): T {
-        val descriptor = db.opener.openFileDescriptor(reference)
-        if (descriptor != null) return descriptor.use(block)
-        val temp = spoolToTemp(db, reference, "pdf")
-        return try {
-            ParcelFileDescriptor.open(temp, ParcelFileDescriptor.MODE_READ_ONLY).use(block)
-        } finally {
-            temp.delete()
-        }
-    }
-
-    // ------------------------------------------------------------------- 7z
-
-    private fun importSevenZip(
-        db: LibraryDb,
-        source: ImportSource,
-        shouldCancel: () -> Boolean = { false },
-    ): Pub {
-        val sourceKey = "7z:${source.reference}"
-        db.findPublicationBySourcePath(sourceKey)?.let { return it }
-        val opener = db.opener
-        if (opener.sizeBytes(source.reference) > MAX_ARCHIVE_BYTES) {
-            error("7z exceeds the archive size safety limit")
-        }
-        val publicationId = digestId("publication", sourceKey.toByteArray())
-        val indexedPages = mutableListOf<SevenZipPage>()
-        var totalBytes = 0L
-        // Streaming (SAF) é spoolado apenas durante a indexação e removido no fim.
-        var spooled: File? = null
-        try {
-            val local = opener.localPath(source.reference)
-            val sevenZ = try {
-                if (local != null) {
-                    SevenZFile.builder().setFile(File(local)).get()
-                } else {
-                    spooled = spoolToTemp(db, source.reference, "7z")
-                    SevenZFile.builder().setFile(spooled).get()
-                }
-            } catch (error: Exception) {
-                error("Unable to read 7z comic: ${error.message}")
-            }
-            sevenZ.use { zip ->
-                var entry: SevenZArchiveEntry? = zip.nextEntry
-                var entryIndex = 0
-                while (entry != null) {
-                    if (entryIndex % 16 == 0) ensureNotCancelled(shouldCancel)
-                    entryIndex++
-                    val current = entry
-                    if (!current.isDirectory) {
-                        val normalized = validateArchiveName(current.name)
-                        val extension = extensionFromName(normalized).orEmpty()
-                        if (isImageExtension(extension)) {
-                            if (indexedPages.size >= MAX_PAGE_COUNT) {
-                                error("7z exceeds the $MAX_PAGE_COUNT page safety limit")
-                            }
-                            if (current.size > MAX_PAGE_BYTES) {
-                                error("7z page $normalized exceeds the ${MAX_PAGE_BYTES / 1024 / 1024} MiB page limit")
-                            }
-                            totalBytes += current.size
-                            if (totalBytes > MAX_TOTAL_UNCOMPRESSED_BYTES) {
-                                error("7z exceeds the total uncompressed size safety limit")
-                            }
-                            val bytes = readSevenZEntry(zip, current.size)
-                            val (width, height) = validateImageDimensions(bytes, normalized)
-                            indexedPages.add(
-                                SevenZipPage(
-                                    member = normalized,
-                                    name = fileNameOf(normalized),
-                                    archiveIndex = entryIndex,
-                                    width = width,
-                                    height = height,
-                                ),
-                            )
-                        } else {
-                            drainSevenZEntry(zip)
-                        }
-                    }
-                    entry = zip.nextEntry
-                }
-            }
-        } finally {
-            spooled?.delete()
-        }
-        if (indexedPages.isEmpty()) error("7z contains no supported raster image pages")
-        val ordered = indexedPages.sortedWith { left, right ->
-            naturalCompare(left.name, right.name).takeIf { it != 0 }
-                ?: left.archiveIndex.compareTo(right.archiveIndex)
-        }
-        val pages = ordered.mapIndexed { index, page ->
-            LibraryDb.NewPage(
-                id = "$publicationId-page-%04d".format(index),
-                index = index,
-                name = page.name,
-                cachePath = File(""),
-                sourceRef = PageSourceRef.SevenZip(source.reference, page.member),
-                width = page.width,
-                height = page.height,
-            )
-        }
-        return persist(
-            db,
-            LibraryDb.NewPublication(
-                id = publicationId,
-                title = stemOf(source.name(opener)).ifBlank { "Imported 7z" },
-                sourceLabel = source.name(opener),
-                sourcePath = sourceKey,
-                format = "7z",
-                pages = pages,
-                coverPageId = pages.first().id,
-                addedAt = timestampMillis(),
-                updatedAt = timestampMillis(),
-            ),
-        )
-    }
-
-    private fun spoolToTemp(db: LibraryDb, reference: String, extension: String): File {
-        val tempDir = File(db.dataDir, "tmp").apply { mkdirs() }
-        val target = File(tempDir, "spool-${System.nanoTime()}.$extension")
-        var total = 0L
-        db.opener.openStream(reference).use { input ->
-            FileOutputStream(target).use { output ->
-                val buffer = ByteArray(64 * 1024)
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read <= 0) break
-                    total += read
-                    if (total > MAX_ARCHIVE_BYTES) {
-                        target.delete()
-                        error("$extension source exceeds the archive size safety limit")
-                    }
-                    output.write(buffer, 0, read)
-                }
-            }
-        }
-        return target
-    }
-
-    private fun readSevenZEntry(zip: SevenZFile, size: Long): ByteArray {
-        val out = java.io.ByteArrayOutputStream(size.coerceAtMost(MAX_PAGE_BYTES).toInt())
-        val buffer = ByteArray(64 * 1024)
-        var remaining = size
-        while (remaining > 0) {
-            val read = zip.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
-            if (read < 0) break
-            out.write(buffer, 0, read)
-            remaining -= read
-        }
-        return out.toByteArray()
-    }
-
-    private fun drainSevenZEntry(zip: SevenZFile) {
-        val buffer = ByteArray(64 * 1024)
-        while (zip.read(buffer, 0, buffer.size) > 0) {
-            // Descarta o conteúdo não-imagem para posicionar no próximo entry.
-        }
-    }
-
     // -------------------------------------------------------------- imagens
 
     private fun importImageSet(
@@ -825,82 +607,13 @@ internal object Importer {
             }
             is PageSourceRef.SevenZip -> {
                 if (format != "7z") error("7z page source reference does not match the publication format")
-                rebuildSevenZipPage(db, sourceRef.path, sourceRef.member)
+                SevenZipImporter.rebuildPage(db, sourceRef.path, sourceRef.member)
             }
             is PageSourceRef.Pdf -> {
                 if (format != "pdf") error("PDF page source reference does not match the publication format")
-                rebuildPdfPage(db, sourceRef.path, sourceRef.pageIndex)
+                PdfPublicationImporter.rebuildPage(db, sourceRef.path, sourceRef.pageIndex)
             }
         }
-
-    private fun rebuildSevenZipPage(db: LibraryDb, reference: String, member: String): RebuiltPage {
-        val opener = db.opener
-        if (!opener.isAvailable(reference)) error("7z source is missing: $reference")
-        if (opener.sizeBytes(reference) > MAX_ARCHIVE_BYTES) {
-            error("7z exceeds the archive size safety limit")
-        }
-        val expected = validateArchiveName(member)
-        val local = opener.localPath(reference)
-        var spooled: File? = null
-        try {
-            val sevenZ = try {
-                if (local != null) {
-                    SevenZFile.builder().setFile(File(local)).get()
-                } else {
-                    spooled = spoolToTemp(db, reference, "7z")
-                    SevenZFile.builder().setFile(spooled).get()
-                }
-            } catch (error: Exception) {
-                error("Unable to open 7z page source: ${error.message}")
-            }
-            sevenZ.use { archive ->
-                var entry = archive.nextEntry
-                var expandedBytes = 0L
-                var entryCount = 0
-                while (entry != null) {
-                    if (entryCount++ >= MAX_PAGE_COUNT * 4) error("7z has too many entries")
-                    val current = entry
-                    if (!current.isDirectory) {
-                        val name = validateArchiveName(current.name)
-                        val size = current.size.coerceAtLeast(0L)
-                        expandedBytes += size
-                        if (expandedBytes > MAX_TOTAL_UNCOMPRESSED_BYTES) {
-                            error("7z exceeds the total uncompressed size safety limit")
-                        }
-                        if (name == expected) {
-                            if (size > MAX_PAGE_BYTES) error("7z page $name exceeds the page size safety limit")
-                            val bytes = readSevenZEntry(archive, size)
-                            val (width, height) = validateImageDimensions(bytes, name)
-                            return RebuiltPage(extensionFromName(name).orEmpty(), bytes, width, height)
-                        }
-                        drainSevenZEntry(archive)
-                    }
-                    entry = archive.nextEntry
-                }
-            }
-        } finally {
-            spooled?.delete()
-        }
-        error("7z page is missing from the original archive: $expected")
-    }
-
-    private fun rebuildPdfPage(db: LibraryDb, reference: String, pageIndex: Int): RebuiltPage {
-        val opener = db.opener
-        if (!opener.isAvailable(reference)) error("PDF source is missing: $reference")
-        if (opener.sizeBytes(reference) > MAX_ARCHIVE_BYTES) error("PDF exceeds the supported source size")
-        val bitmap = withPdfDescriptor(db, reference) { PdfImporter.renderPage(it, pageIndex) }
-        try {
-            val bytes = java.io.ByteArrayOutputStream().use { output ->
-                if (!bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)) {
-                    error("Unable to encode rendered PDF page")
-                }
-                output.toByteArray()
-            }
-            return RebuiltPage("png", bytes, bitmap.width, bitmap.height)
-        } finally {
-            bitmap.recycle()
-        }
-    }
 
     private fun rebuildImagePage(db: LibraryDb, reference: String): RebuiltPage {
         val opener = db.opener
@@ -986,7 +699,7 @@ internal object Importer {
 
     // ------------------------------------------------------------- helpers
 
-    private fun persist(db: LibraryDb, publication: LibraryDb.NewPublication): Pub {
+    internal fun persist(db: LibraryDb, publication: LibraryDb.NewPublication): Pub {
         val existing = db.findPublicationBySourcePath(publication.sourcePath)
         if (existing != null) return existing
         return db.insertPublication(publication)
@@ -1038,10 +751,10 @@ internal object Importer {
         }
     }
 
-    private fun fileNameOf(normalized: String): String =
+    internal fun fileNameOf(normalized: String): String =
         normalized.substringAfterLast('/').ifBlank { normalized }
 
-    private fun stemOf(name: String): String {
+    internal fun stemOf(name: String): String {
         val base = name.substringAfterLast('/')
         return base.substringBeforeLast('.', base)
     }

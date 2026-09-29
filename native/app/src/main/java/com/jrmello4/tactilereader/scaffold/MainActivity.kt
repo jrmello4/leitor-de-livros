@@ -11,16 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.collectAsState
@@ -43,14 +34,12 @@ import com.jrmello4.tactilereader.reader.ReaderScreen
 import com.jrmello4.tactilereader.reader.ReaderViewModelFactory
 import com.jrmello4.tactilereader.reader.VolumeScrollBus
 import com.jrmello4.tactilereader.ui.theme.EditorialDarkScheme
-import com.jrmello4.tactilereader.ui.theme.EditorialIcons
 import com.jrmello4.tactilereader.ui.theme.EditorialShapes
 import com.jrmello4.tactilereader.ui.theme.EditorialTypography
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileOutputStream
 
 /**
  * Hospeda o app: estante Compose, leitor, ajustes e servidores.
@@ -92,7 +81,9 @@ class MainActivity : ComponentActivity() {
     private val pickBackup = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             lifecycleScope.launch {
-                val path = withContext(Dispatchers.IO) { copyToSandbox(uri) }
+                val path = withContext(Dispatchers.IO) {
+                    BackupImportCoordinator.copyToSandbox(this@MainActivity, filesDir, uri, displayName(uri))
+                }
                 if (path != null) {
                     applyBackup(path)
                 }
@@ -107,7 +98,7 @@ class MainActivity : ComponentActivity() {
         }
         lifecycleScope.launch {
             cancelWork.set(false)
-            busy.value = BusyState("Preparando ${uris.size} arquivos…", cancellable = true)
+            busy.value = BusyState(getString(R.string.activity_import_preparing, uris.size), cancellable = true)
             val sources = withContext(Dispatchers.IO) { uris.mapNotNull { sourceForUri(it) } }
             busy.value = null
             if (sources.isNotEmpty()) {
@@ -115,7 +106,7 @@ class MainActivity : ComponentActivity() {
             } else {
                 android.widget.Toast.makeText(
                     this@MainActivity,
-                    "Nenhum arquivo suportado foi selecionado.",
+                    getString(R.string.activity_import_unsupported_file),
                     android.widget.Toast.LENGTH_LONG,
                 ).show()
             }
@@ -127,7 +118,7 @@ class MainActivity : ComponentActivity() {
         if (uri != null) {
             lifecycleScope.launch {
                 cancelWork.set(false)
-                busy.value = BusyState("Lendo a pasta escolhida…", cancellable = true)
+                busy.value = BusyState(getString(R.string.activity_folder_scanning), cancellable = true)
                 val scan = withContext(Dispatchers.IO) {
                     LibraryScanner.collectSafSources(
                         this@MainActivity,
@@ -143,24 +134,24 @@ class MainActivity : ComponentActivity() {
                         if (scan.truncated) {
                             android.widget.Toast.makeText(
                                 this@MainActivity,
-                                "Pasta grande: importamos os primeiros 500 arquivos. Repita em subpastas para o resto.",
+                                getString(R.string.activity_folder_truncated),
                                 android.widget.Toast.LENGTH_LONG,
                             ).show()
                         }
                     }
                     scan.accessDenied -> android.widget.Toast.makeText(
                         this@MainActivity,
-                        "Sem acesso a essa pasta. Se for raiz do armazenamento ou Downloads, escolha uma subpasta ou use \"+ HQ\".",
+                        getString(R.string.activity_folder_access_denied),
                         android.widget.Toast.LENGTH_LONG,
                     ).show()
                     cancelWork.get() -> android.widget.Toast.makeText(
                         this@MainActivity,
-                        "Importação cancelada.",
+                        getString(R.string.activity_import_cancelled),
                         android.widget.Toast.LENGTH_SHORT,
                     ).show()
                     else -> android.widget.Toast.makeText(
                         this@MainActivity,
-                        "Nenhum arquivo suportado foi encontrado nessa pasta (nem nas subpastas).",
+                        getString(R.string.activity_folder_empty),
                         android.widget.Toast.LENGTH_LONG,
                     ).show()
                 }
@@ -222,76 +213,7 @@ class MainActivity : ComponentActivity() {
                             Scaffold(
                                 bottomBar = {
                                     if (screen != "opds") {
-                                        NavigationBar(
-                                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                                            contentColor = MaterialTheme.colorScheme.onSurface,
-                                            tonalElevation = 2.dp,
-                                        ) {
-                                            NavigationBarItem(
-                                                selected = screen == "library",
-                                                onClick = { screen = "library" },
-                                                icon = { Icon(EditorialIcons.Book, contentDescription = "Estante") },
-                                                label = { Text("Estante") },
-                                                colors = NavigationBarItemDefaults.colors(
-                                                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                                                    selectedTextColor = MaterialTheme.colorScheme.primary,
-                                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                ),
-                                            )
-                                            NavigationBarItem(
-                                                selected = screen == "bookmarks",
-                                                onClick = { screen = "bookmarks" },
-                                                icon = { Icon(EditorialIcons.Bookmark, contentDescription = "Marcadores") },
-                                                label = { Text("Marcadores") },
-                                                colors = NavigationBarItemDefaults.colors(
-                                                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                                                    selectedTextColor = MaterialTheme.colorScheme.primary,
-                                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                ),
-                                            )
-                                            NavigationBarItem(
-                                                selected = screen == "stats",
-                                                onClick = { screen = "stats" },
-                                                icon = { Icon(EditorialIcons.Metrics, contentDescription = "Minha leitura") },
-                                                label = { Text("Leitura") },
-                                                colors = NavigationBarItemDefaults.colors(
-                                                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                                                    selectedTextColor = MaterialTheme.colorScheme.primary,
-                                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                ),
-                                            )
-                                            NavigationBarItem(
-                                                selected = screen == "settings",
-                                                onClick = { screen = "settings" },
-                                                icon = { Icon(Icons.Filled.Settings, contentDescription = "Ajustes") },
-                                                label = { Text("Ajustes") },
-                                                colors = NavigationBarItemDefaults.colors(
-                                                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                                                    selectedTextColor = MaterialTheme.colorScheme.primary,
-                                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                ),
-                                            )
-                                        }
-                                    }
-                                },
-                                floatingActionButton = {
-                                    if (screen == "library") {
-                                        FloatingActionButton(
-                                            onClick = { pickComics.launch(arrayOf("*/*")) },
-                                            containerColor = MaterialTheme.colorScheme.primary,
-                                            contentColor = MaterialTheme.colorScheme.onPrimary,
-                                            shape = RoundedCornerShape(16.dp),
-                                        ) {
-                                            Icon(Icons.Filled.Add, contentDescription = "Importar HQs")
-                                        }
+                                        MainNavigationBar(selectedScreen = screen, onNavigate = { screen = it })
                                     }
                                 },
                             ) { innerPadding ->
@@ -311,16 +233,16 @@ class MainActivity : ComponentActivity() {
                                                 },
                                                 onExportBackup = {
                                                     lifecycleScope.launch {
-                                                        busy.value = BusyState("Exportando backup…", cancellable = false)
+                                                        busy.value = BusyState(getString(R.string.activity_backup_exporting), cancellable = false)
                                                         val out = withContext(Dispatchers.IO) {
                                                             try {
                                                                 val file = com.jrmello4.tactilereader.settings.BackupManager.export(
                                                                     LibraryDb.open(File(filesDir, "lib"), File(filesDir, "imports"), AppSources.opener),
                                                                     File(filesDir, "backups"),
                                                                 )
-                                                                "Backup gerado em ${file.name}"
+                                                                getString(R.string.activity_backup_created, file.name)
                                                             } catch (e: Exception) {
-                                                                "Falha ao exportar: ${e.message}"
+                                                                getString(R.string.activity_backup_failed, e.message ?: getString(R.string.common_error))
                                                             }
                                                         }
                                                         busy.value = null
@@ -386,7 +308,7 @@ class MainActivity : ComponentActivity() {
                                                 onRescan = {
                                                     lifecycleScope.launch {
                                                         cancelWork.set(false)
-                                                        busy.value = BusyState("Revarrendo origens…", cancellable = true)
+                                                        busy.value = BusyState(getString(R.string.activity_rescanning), cancellable = true)
                                                         val sources = withContext(Dispatchers.IO) {
                                                             val local = LibraryScanner.collectLocalCandidates(filesDir)
                                                                 .map { ImportSource(it, File(it).name) }
@@ -436,7 +358,7 @@ class MainActivity : ComponentActivity() {
                                     onClick = { cancelWork.set(true) },
                                 ) {
                                     androidx.compose.material3.Text(
-                                        "Cancelar",
+                                        getString(R.string.action_cancel),
                                         color = androidx.compose.ui.graphics.Color.White,
                                     )
                                 }
@@ -493,45 +415,28 @@ class MainActivity : ComponentActivity() {
             if (cursor.moveToFirst() && index >= 0) cursor.getString(index) else null
         }
 
-    /** Só o backup JSON é copiado: o resto é lido do original. */
-    private fun copyToSandbox(uri: Uri): String? {
-        val name = displayName(uri) ?: "backup.json"
-        val safe = name.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-        val target = File(File(filesDir, "backups").apply { mkdirs() }, "import-$safe")
-        return try {
-            contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(target).use { output -> input.copyTo(output) }
-            } ?: return null
-            target.absolutePath
-        } catch (_: Exception) {
-            target.delete()
-            null
-        }
-    }
-
     private fun applyBackup(path: String) {
         lifecycleScope.launch {
             try {
-                val summary = withContext(Dispatchers.IO) {
-                    com.jrmello4.tactilereader.settings.BackupManager.import(
-                        com.jrmello4.tactilereader.core.LibraryDb.open(
-                            File(filesDir, "lib"),
-                            File(filesDir, "imports"),
-                            AppSources.opener,
-                        ),
-                        File(path),
-                    )
-                }
+                val summary = withContext(Dispatchers.IO) { BackupImportCoordinator.restore(filesDir, path) }
                 viewModel.refresh()
                 android.widget.Toast.makeText(
                     this@MainActivity,
-                    "Backup aplicado: ${summary.favorites} favoritos, ${summary.progress} progressos, ${summary.bookmarks} marcadores.",
+                    getString(
+                        R.string.activity_backup_applied,
+                        summary.favorites,
+                        summary.progress,
+                        summary.bookmarks,
+                    ),
                     android.widget.Toast.LENGTH_LONG,
                 ).show()
             } catch (error: Exception) {
                 android.widget.Toast.makeText(
                     this@MainActivity,
-                    "Falha no backup: ${error.message ?: "erro"}",
+                    getString(
+                        R.string.activity_backup_apply_failed,
+                        error.message ?: getString(R.string.common_error),
+                    ),
                     android.widget.Toast.LENGTH_LONG,
                 ).show()
             }

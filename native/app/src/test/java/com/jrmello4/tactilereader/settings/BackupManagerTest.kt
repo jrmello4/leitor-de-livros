@@ -224,4 +224,68 @@ class BackupManagerTest {
         assertEquals(0.0, restored.progress, 0.0)
         assertEquals(null, db.loadReaderState(pub.id))
     }
+
+    @Test
+    fun backupRestoresFinishedWithoutReaderState() {
+        val root = tempRoot()
+        LibraryDb.closeAll()
+        val db = LibraryDb.open(File(root, "lib"), File(root, "imports"))
+        val comic = File(root, "HQ.cbz").apply { cbz(this) }
+        db.importPaths(listOf(comic.absolutePath))
+        val pub = db.listPublications().single()
+
+        db.markFinished(pub.id)
+        assertEquals(null, db.loadReaderState(pub.id))
+        val backup = BackupManager.export(db, File(root, "finished.json"))
+        db.clearReadingProgress(pub.id)
+
+        val summary = BackupManager.import(db, backup)
+
+        assertEquals(1, summary.progress)
+        assertEquals(com.jrmello4.tactilereader.core.ReadingStatus.FINISHED, db.listPublications().single().readingStatus)
+        assertEquals(null, db.loadReaderState(pub.id))
+    }
+
+    @Test
+    fun backupRestoresReadingPageFifteenAndScrollRatio() {
+        val root = tempRoot()
+        LibraryDb.closeAll()
+        val db = LibraryDb.open(File(root, "lib"), File(root, "imports"))
+        val comic = File(root, "HQ.cbz").apply {
+            cbz(this, (1..20).map { "%03d.png".format(it) })
+        }
+        db.importPaths(listOf(comic.absolutePath))
+        val pub = db.listPublications().single()
+        val pageFifteen = db.listPages(pub.id)[14]
+        db.saveReaderState(pub.id, pageFifteen.id, 0.73)
+        val backup = BackupManager.export(db, File(root, "reading.json"))
+        db.clearReadingProgress(pub.id)
+
+        val summary = BackupManager.import(db, backup)
+
+        assertEquals(1, summary.progress)
+        assertEquals(com.jrmello4.tactilereader.core.ReadingStatus.READING, db.listPublications().single().readingStatus)
+        assertEquals(pageFifteen.id, db.loadReaderState(pub.id)?.pageId)
+        assertEquals(0.73, db.loadReaderState(pub.id)?.scrollRatio ?: 0.0, 0.0001)
+    }
+
+    @Test
+    fun backupPreservesReadingStatusCreatedByMarkReadWithoutReaderState() {
+        val root = tempRoot()
+        LibraryDb.closeAll()
+        val db = LibraryDb.open(File(root, "lib"), File(root, "imports"))
+        val comic = File(root, "HQ.cbz").apply { cbz(this) }
+        db.importPaths(listOf(comic.absolutePath))
+        val pub = db.listPublications().single()
+
+        db.markRead(pub.id, 1)
+        val backup = BackupManager.export(db, File(root, "mark-read.json"))
+        db.clearReadingProgress(pub.id)
+
+        BackupManager.import(db, backup)
+
+        assertEquals(com.jrmello4.tactilereader.core.ReadingStatus.READING, db.listPublications().single().readingStatus)
+        assertEquals(db.listPages(pub.id)[1].id, db.loadReaderState(pub.id)?.pageId)
+        assertEquals(0.0, db.loadReaderState(pub.id)?.scrollRatio ?: -1.0, 0.0)
+    }
 }

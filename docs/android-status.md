@@ -9,7 +9,10 @@ A especificação de 08/09/2026 está em `docs/superpowers/specs/2026-09-08-mobi
 - Progresso usa estado explícito `NOT_STARTED`, `READING` ou `FINISHED`; a página atual e o scroll relativo são guardados separadamente.
 - OPDS/Komga/Kavita e atualizador estão no app nativo. Credenciais OPDS são cifradas pelo Android Keystore e excluídas do backup automático do Android.
 - Backup JSON v2 usa índices de página e fingerprint de metadados mais manifesto ordenado das páginas; o restore só escolhe uma correspondência única e compatível, mantendo leitura de backups antigos por ID.
-- Validação desta revisão no host (29/09): 117 testes JVM, `lintRelease`, `assembleDebug` e `compileDebugAndroidTestSources` passaram. Os testes instrumentados não foram executados e o reteste manual no aparelho permanece pendente; os registros históricos abaixo não certificam o código atual.
+- Identidade de PDF continua baseada no SHA-256 de URI, tamanho e `lastModified`. Quando `lastModified` é zero, a chave ainda distingue URI e tamanho, mas não detecta substituição de conteúdo com os mesmos metadados. O `SourceOpener` SAF não oferece leitura parcial aleatória; um fingerprint de conteúdo pode exigir leitura adicional e fica como P2 para medir em aparelho.
+- Refatoração em andamento (29/09): `ReadingStateRepository` centraliza as transições explícitas e usa uma regra compartilhada para a página final; bookmarks, estatísticas, páginas e cache foram extraídos para componentes próprios. `Importer` delega PDF e 7z a importadores separados. A listagem e as operações de publicação ainda permanecem em `LibraryDb`, então essa divisão arquitetural continua parcial.
+- Medição local 7z (29/09): reconstrução sob demanda em arquivos sintéticos de 50, 100 e 200 páginas levou 24–80 ms para páginas intermediárias/seguintes na JVM do host. Os resultados e limites estão em `docs/performance/7z-page-rebuild.md`; nenhuma otimização foi aplicada. A medição no Moto G34 continua pendente.
+- Validação desta rodada no host (29/09): Gradle executado com JDK Zulu 21 e `TEMP/TMP=C:\tmp`, contornando a falha de loopback deste host. `testDebugUnitTest` passou com 123 testes, `lintRelease`, `assembleDebug` e `compileDebugAndroidTestSources` passaram. Os testes instrumentados não foram executados porque `adb devices` não listou aparelhos.
 
 ## Histórico de implementação
 

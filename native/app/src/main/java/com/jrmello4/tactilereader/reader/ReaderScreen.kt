@@ -65,6 +65,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -76,6 +77,7 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
+import com.jrmello4.tactilereader.scaffold.R
 import com.jrmello4.tactilereader.core.ReaderPage
 import com.jrmello4.tactilereader.ui.theme.DarkGraphite750
 import com.jrmello4.tactilereader.ui.theme.DarkGraphite800
@@ -285,7 +287,7 @@ fun ReaderContent(
         when {
             state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    "Abrindo HQ…",
+                    stringResource(R.string.reader_loading),
                     style = MaterialTheme.typography.bodyMedium,
                     color = Paper300,
                 )
@@ -296,7 +298,7 @@ fun ReaderContent(
                     modifier = Modifier.padding(24.dp),
                 ) {
                     Text(
-                        "Falha: ${state.error}",
+                        stringResource(R.string.common_error_detail, state.error),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.error,
                     )
@@ -311,7 +313,7 @@ fun ReaderContent(
                             tint = Paper50,
                         )
                         Spacer(Modifier.width(4.dp))
-                        Text("Biblioteca", color = Paper50)
+                        Text(stringResource(R.string.reader_back_to_library), color = Paper50)
                     }
                 }
             }
@@ -437,7 +439,7 @@ fun ReaderContent(
                             tint = Paper50,
                         )
                         Spacer(Modifier.width(4.dp))
-                        Text("Biblioteca", color = Paper50, style = MaterialTheme.typography.labelLarge)
+                        Text(stringResource(R.string.reader_back_to_library), color = Paper50, style = MaterialTheme.typography.labelLarge)
                     }
 
                     Text(
@@ -451,6 +453,12 @@ fun ReaderContent(
                             .padding(horizontal = 4.dp),
                     )
 
+                    val zoomDescription = stringResource(
+                        if (zoom > 1f) R.string.reader_zoom_restore else R.string.reader_zoom_enlarge,
+                    )
+                    val zoomStateDescription = stringResource(
+                        if (zoom > 1f) R.string.reader_zoomed else R.string.reader_zoom_normal,
+                    )
                     TextButton(
                         onClick = {
                             zoom = if (zoom > 1f) 1f else 2f
@@ -459,12 +467,12 @@ fun ReaderContent(
                         modifier = Modifier
                             .defaultMinSize(minHeight = 48.dp)
                             .semantics {
-                                contentDescription = if (zoom > 1f) "Restaurar zoom" else "Ampliar"
-                                stateDescription = if (zoom > 1f) "Ampliado" else "Normal"
+                                contentDescription = zoomDescription
+                                stateDescription = zoomStateDescription
                             },
                     ) {
                         Text(
-                            if (zoom > 1f) "1:1" else "Zoom",
+                            if (zoom > 1f) "1:1" else stringResource(R.string.reader_zoom),
                             color = if (zoom > 1f) WarmAmber else Paper50,
                             style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
                         )
@@ -478,7 +486,9 @@ fun ReaderContent(
                     ) {
                         Icon(
                             Icons.Filled.Star,
-                            contentDescription = if (marked) "Remover marcador" else "Marcar página",
+                            contentDescription = stringResource(
+                                if (marked) R.string.reader_remove_bookmark else R.string.reader_add_bookmark,
+                            ),
                             tint = if (marked) WarmAmber else Paper500,
                         )
                     }
@@ -487,6 +497,8 @@ fun ReaderContent(
                 Box(Modifier.weight(1f))
 
                 if (pages.isNotEmpty()) {
+                    val pagePosition = stringResource(R.string.reader_page_position, firstVisible + 1, pages.size)
+                    val pageState = stringResource(R.string.reader_page_state, firstVisible + 1, pages.size)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -497,13 +509,13 @@ fun ReaderContent(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "página ${firstVisible + 1} de ${pages.size}",
+                            text = pagePosition,
                             style = MaterialTheme.typography.labelMedium.copy(
                                 letterSpacing = 0.5.sp,
                             ),
                             color = Paper300,
                             modifier = Modifier.semantics {
-                                stateDescription = "Página ${firstVisible + 1} de ${pages.size}"
+                                stateDescription = pageState
                             },
                         )
                     }
@@ -535,7 +547,7 @@ private fun BingeCard(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                text = "FIM DA EDIÇÃO",
+                text = stringResource(R.string.reader_end_issue),
                 style = MaterialTheme.typography.labelSmall.copy(
                     letterSpacing = 1.sp,
                     fontWeight = FontWeight.Bold,
@@ -552,7 +564,11 @@ private fun BingeCard(
             )
             Spacer(Modifier.height(6.dp))
             Text(
-                text = if (countdown != null) "Próxima edição abrindo em ${countdown}s…" else "Próxima edição pronta",
+                text = if (countdown != null) {
+                    stringResource(R.string.reader_next_issue_countdown, countdown)
+                } else {
+                    stringResource(R.string.reader_next_issue_ready)
+                },
                 style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                 color = WarmAmber,
             )
@@ -567,14 +583,14 @@ private fun BingeCard(
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                 ) {
-                    Text("Abrir agora", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                    Text(stringResource(R.string.reader_open_now), style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
                 }
                 TextButton(
                     onClick = onCancel,
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                 ) {
-                    Text("Cancelar", color = Paper300, style = MaterialTheme.typography.labelLarge)
+                    Text(stringResource(R.string.action_cancel), color = Paper300, style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
@@ -588,6 +604,7 @@ private fun BingeCard(
  */
 @Composable
 internal fun DefaultPageImage(page: ReaderPage, file: File?, modifier: Modifier = Modifier) {
+    val pageDescription = stringResource(R.string.reader_page_content_description, page.index + 1)
     val ratio = if (page.width > 0 && page.height > 0) {
         page.width.toFloat() / page.height
     } else {
@@ -599,7 +616,7 @@ internal fun DefaultPageImage(page: ReaderPage, file: File?, modifier: Modifier 
             .aspectRatio(ratio)
             .background(DarkGraphite950)
             .semantics(mergeDescendants = true) {
-                contentDescription = "Página ${page.index + 1}"
+                contentDescription = pageDescription
             },
         contentAlignment = Alignment.Center,
     ) {

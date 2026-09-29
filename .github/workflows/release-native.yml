@@ -70,17 +70,47 @@ jobs:
         env:
           ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
 
+      - name: Unit tests
+        shell: bash
+        working-directory: native
+        run: ./gradlew testDebugUnitTest --no-daemon
+
+      - name: Release lint
+        shell: bash
+        working-directory: native
+        run: ./gradlew lintRelease --no-daemon
+
+      - name: Debug APK
+        shell: bash
+        working-directory: native
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Compile androidTest sources
+        shell: bash
+        working-directory: native
+        run: ./gradlew compileDebugAndroidTestSources --no-daemon
+
       - name: Validate and build signed release APK
         shell: bash
-        # Aspas SIMPLES: senhas com `$` (como a atual) seriam expandidas
-        # como variável pelo bash dentro de aspas duplas.
-        run: |
-          export REQUIRE_RELEASE_SIGNING='true'
-          export TACTILE_STORE_FILE='release.keystore'
-          export TACTILE_STORE_PASSWORD='${{ secrets.ANDROID_STORE_PASSWORD }}'
-          export TACTILE_KEY_ALIAS='${{ secrets.ANDROID_KEY_ALIAS }}'
-          export TACTILE_KEY_PASSWORD='${{ secrets.ANDROID_KEY_PASSWORD }}'
-          cd native && ./gradlew testDebugUnitTest lintRelease assembleDebug compileDebugAndroidTestSources assembleRelease generateReleaseMetadata --no-daemon
+        working-directory: native
+        run: ./gradlew assembleRelease --no-daemon
+        env:
+          REQUIRE_RELEASE_SIGNING: 'true'
+          TACTILE_STORE_FILE: release.keystore
+          TACTILE_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          TACTILE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          TACTILE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+      - name: Release metadata
+        shell: bash
+        working-directory: native
+        run: ./gradlew generateReleaseMetadata --no-daemon
+        env:
+          REQUIRE_RELEASE_SIGNING: 'true'
+          TACTILE_STORE_FILE: release.keystore
+          TACTILE_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          TACTILE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          TACTILE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
       - name: Verify signature and collect APK
         id: apk

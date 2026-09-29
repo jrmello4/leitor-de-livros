@@ -41,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
@@ -48,6 +49,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.jrmello4.tactilereader.scaffold.R
 import androidx.core.content.pm.PackageInfoCompat
 import com.jrmello4.tactilereader.core.LibraryDb
 import com.jrmello4.tactilereader.core.formatBytes
@@ -100,16 +102,19 @@ fun SettingsScreen(
         { LibraryDb.open(File(filesDir, "lib"), File(filesDir, "imports"), AppSources.opener) }
     }
     var notice by remember { mutableStateOf<String?>(null) }
-    var cacheText by remember { mutableStateOf("Consultando cache…") }
+    var cacheText by remember { mutableStateOf(context.getString(R.string.settings_cache_checking)) }
     var updateState by remember { mutableStateOf(UpdateState()) }
 
     LaunchedEffect(filesDir) {
         cacheText = withContext(Dispatchers.IO) {
             try {
                 val info = dbProvider().cacheInfo()
-                "Cache: ${formatBytes(info.usedBytes)} em ${info.entryCount} páginas"
+                context.getString(R.string.settings_cache_summary, formatBytes(info.usedBytes), info.entryCount)
             } catch (error: Exception) {
-                "Cache indisponível: ${error.message ?: "erro"}"
+                context.getString(
+                    R.string.settings_cache_unavailable,
+                    error.message ?: context.getString(R.string.common_error),
+                )
             }
         }
     }
@@ -124,7 +129,7 @@ fun SettingsScreen(
             updateState = checked.copy(
                 downloading = true,
                 progress = 0f,
-                message = "Baixando…",
+                message = context.getString(R.string.settings_update_downloading),
                 downloadedPath = null,
             )
             try {
@@ -141,31 +146,37 @@ fun SettingsScreen(
                     } else {
                         formatBytes(read)
                     }
-                    updateState = updateState.copy(progress = fraction, message = "Baixando… $detail")
+                    updateState = updateState.copy(
+                        progress = fraction,
+                        message = context.getString(R.string.settings_update_download_progress, detail),
+                    )
                 }
                 updateState = updateState.copy(
                     downloading = false,
                     progress = null,
                     downloadedPath = file.absolutePath,
-                    message = "Baixado: $name. Toque em Instalar e confirme no sistema.",
+                    message = context.getString(R.string.settings_update_downloaded, name),
                 )
             } catch (cancelled: CancellationException) {
                 updateState = checked.copy(
                     downloading = false,
                     progress = null,
-                    message = "Download cancelado.",
+                    message = context.getString(R.string.settings_update_download_cancelled),
                 )
             } catch (error: SecurityException) {
                 updateState = checked.copy(
                     downloading = false,
                     progress = null,
-                    message = "Segurança: ${error.message}",
+                    message = context.getString(R.string.settings_update_security_error, error.message),
                 )
             } catch (error: Exception) {
                 updateState = checked.copy(
                     downloading = false,
                     progress = null,
-                    message = "Falha no download: ${error.message ?: "erro"}",
+                    message = context.getString(
+                        R.string.settings_update_download_error,
+                        error.message ?: context.getString(R.string.common_error),
+                    ),
                 )
             } finally {
                 downloadJob = null
@@ -178,7 +189,7 @@ fun SettingsScreen(
         if (!apk.exists()) {
             updateState = updateState.copy(
                 downloadedPath = null,
-                message = "O arquivo sumiu do aparelho. Baixe de novo.",
+                message = context.getString(R.string.settings_update_file_missing),
             )
             return
         }
@@ -186,11 +197,14 @@ fun SettingsScreen(
             context.startActivity(UpdateInstaller.installIntent(context, apk))
         } catch (error: SecurityException) {
             updateState = updateState.copy(
-                message = "Instalação bloqueada por segurança: ${error.message}",
+                message = context.getString(R.string.settings_update_install_blocked, error.message),
             )
         } catch (error: Exception) {
             updateState = updateState.copy(
-                message = "Não abri o instalador: ${error.message ?: "erro"}",
+                message = context.getString(
+                    R.string.settings_update_install_error,
+                    error.message ?: context.getString(R.string.common_error),
+                ),
             )
         }
     }
@@ -219,14 +233,14 @@ fun SettingsScreen(
                 ) {
                     Icon(
                         Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Voltar para a estante",
+                        contentDescription = stringResource(R.string.settings_back_to_shelf),
                         tint = Paper50,
                     )
                     Spacer(Modifier.width(4.dp))
-                    Text("Estante", color = Paper50, style = MaterialTheme.typography.labelLarge)
+                    Text(stringResource(R.string.navigation_shelf), color = Paper50, style = MaterialTheme.typography.labelLarge)
                 }
                 Text(
-                    "Ajustes",
+                    stringResource(R.string.settings_title),
                     style = MaterialTheme.typography.titleLarge,
                     color = Paper50,
                     modifier = Modifier
@@ -245,7 +259,7 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             Text(
-                "MESA EDITORIAL LOCAL · SEM CONTA · SEM NUVEM",
+                stringResource(R.string.settings_tagline),
                 style = MaterialTheme.typography.labelSmall.copy(
                     letterSpacing = 1.sp,
                     fontWeight = FontWeight.Bold,
@@ -265,9 +279,9 @@ fun SettingsScreen(
             }
 
             // SEÇÃO: ARMAZENAMENTO & CACHE
-            SettingsSection(title = "ARMAZENAMENTO & CACHE") {
+            SettingsSection(title = stringResource(R.string.settings_storage_section)) {
                 Text(
-                    "Páginas renderizadas em cache temporário para aceleração de abertura.",
+                    stringResource(R.string.settings_cache_description),
                     style = MaterialTheme.typography.bodySmall,
                     color = Paper300,
                 )
@@ -286,10 +300,13 @@ fun SettingsScreen(
                             notice = withContext(Dispatchers.IO) {
                                 try {
                                     dbProvider().clearCache()
-                                    cacheText = "Cache: 0 B em 0 páginas"
-                                    "Cache limpo. As páginas reconstroem ao abrir."
+                                    cacheText = context.getString(R.string.settings_cache_empty)
+                                    context.getString(R.string.settings_cache_cleared)
                                 } catch (error: Exception) {
-                                    "Falha ao limpar: ${error.message ?: "erro"}"
+                                    context.getString(
+                                        R.string.settings_cache_clear_failed,
+                                        error.message ?: context.getString(R.string.common_error),
+                                    )
                                 }
                             }
                         }
@@ -302,14 +319,14 @@ fun SettingsScreen(
                     border = BorderStroke(1.dp, SeamSubtle),
                     modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                 ) {
-                    Text("Limpar cache", style = MaterialTheme.typography.labelLarge)
+                    Text(stringResource(R.string.settings_clear_cache), style = MaterialTheme.typography.labelLarge)
                 }
             }
 
             // SEÇÃO: BACKUP LOCAL
-            SettingsSection(title = "BACKUP LOCAL") {
+            SettingsSection(title = stringResource(R.string.settings_backup_section)) {
                 Text(
-                    "Exporta favoritos, progresso e marcadores em JSON no armazenamento deste aparelho.",
+                    stringResource(R.string.settings_backup_description),
                     style = MaterialTheme.typography.bodySmall,
                     color = Paper300,
                 )
@@ -322,9 +339,12 @@ fun SettingsScreen(
                                     try {
                                         val target = BackupManager.defaultExportFile(filesDir)
                                         BackupManager.export(dbProvider(), target)
-                                        "Backup salvo em ${target.name}."
+                                        context.getString(R.string.settings_backup_saved, target.name)
                                     } catch (error: Exception) {
-                                        "Falha no backup: ${error.message ?: "erro"}"
+                                        context.getString(
+                                            R.string.settings_backup_failed,
+                                            error.message ?: context.getString(R.string.common_error),
+                                        )
                                     }
                                 }
                             }
@@ -337,7 +357,7 @@ fun SettingsScreen(
                         border = BorderStroke(1.dp, SeamSubtle),
                         modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                     ) {
-                        Text("Exportar", style = MaterialTheme.typography.labelLarge)
+                        Text(stringResource(R.string.settings_backup_export), style = MaterialTheme.typography.labelLarge)
                     }
 
                     Button(
@@ -350,21 +370,21 @@ fun SettingsScreen(
                         border = BorderStroke(1.dp, SeamSubtle),
                         modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                     ) {
-                        Text("Importar", style = MaterialTheme.typography.labelLarge)
+                        Text(stringResource(R.string.settings_backup_import), style = MaterialTheme.typography.labelLarge)
                     }
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "O arquivo JSON fica exclusivamente neste aparelho; nada trafega para a nuvem.",
+                    stringResource(R.string.settings_backup_privacy),
                     style = MaterialTheme.typography.labelSmall,
                     color = Paper500,
                 )
             }
 
             // SEÇÃO: SERVIDORES REMOTOS
-            SettingsSection(title = "SERVIDORES REMOTOS") {
+            SettingsSection(title = stringResource(R.string.settings_servers_section)) {
                 Text(
-                    "Conecte instâncias de OPDS, Komga ou Kavita para streaming e download offline.",
+                    stringResource(R.string.settings_servers_description),
                     style = MaterialTheme.typography.bodySmall,
                     color = Paper300,
                 )
@@ -379,14 +399,14 @@ fun SettingsScreen(
                     border = BorderStroke(1.dp, SeamSubtle),
                     modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                 ) {
-                    Text("Abrir servidores", style = MaterialTheme.typography.labelLarge)
+                    Text(stringResource(R.string.settings_open_servers), style = MaterialTheme.typography.labelLarge)
                 }
             }
 
             // SEÇÃO: ATUALIZAÇÃO DO APLICATIVO
-            SettingsSection(title = "ATUALIZAÇÃO DO APLICATIVO") {
+            SettingsSection(title = stringResource(R.string.settings_update_section)) {
                 Text(
-                    "Canal rolling native-latest no GitHub. O pacote baixa neste dispositivo e instala via sistema operacional.",
+                    stringResource(R.string.settings_update_description),
                     style = MaterialTheme.typography.bodySmall,
                     color = Paper300,
                 )
@@ -435,12 +455,12 @@ fun SettingsScreen(
                             border = BorderStroke(1.dp, SeamSubtle),
                             modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                         ) {
-                            Text("Cancelar download", style = MaterialTheme.typography.labelLarge)
+                            Text(stringResource(R.string.settings_cancel_download), style = MaterialTheme.typography.labelLarge)
                         }
                     }
                     downloaded != null -> {
                         Text(
-                            "Pacote pronto para instalação.",
+                            stringResource(R.string.settings_update_install_ready),
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                             color = Paper50,
                             modifier = Modifier.padding(bottom = 8.dp),
@@ -455,7 +475,7 @@ fun SettingsScreen(
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                             ) {
-                                Text("Instalar agora", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                                Text(stringResource(R.string.settings_install_now), style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
                             }
                             TextButton(
                                 onClick = {
@@ -468,13 +488,16 @@ fun SettingsScreen(
                                 },
                                 modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                             ) {
-                                Text("Verificar de novo", color = Paper300)
+                                Text(stringResource(R.string.settings_check_again), color = Paper300)
                             }
                         }
                     }
                     updateState.apkUrl != null -> {
                         Text(
-                            "Disponível: ${updateState.version ?: "nova versão"}" +
+                            stringResource(
+                                R.string.settings_update_available,
+                                updateState.version ?: stringResource(R.string.settings_new_version),
+                            ) +
                                 updateState.apkSizeBytes?.let { " (${formatBytes(it)})" }.orEmpty(),
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                             color = Paper50,
@@ -489,10 +512,11 @@ fun SettingsScreen(
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                         ) {
-                            Text("Baixar atualização", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                            Text(stringResource(R.string.settings_download_update), style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
                         }
                     }
                     else -> {
+                        val installedVersion = updateState.version
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -514,11 +538,11 @@ fun SettingsScreen(
                                 border = BorderStroke(1.dp, SeamSubtle),
                                 modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                             ) {
-                                Text("Verificar", style = MaterialTheme.typography.labelLarge)
+                                Text(stringResource(R.string.settings_check_updates), style = MaterialTheme.typography.labelLarge)
                             }
-                            if (updateState.version != null) {
+                            if (installedVersion != null) {
                                 Text(
-                                    "Instalada: ${updateState.version}",
+                                    stringResource(R.string.settings_update_installed, installedVersion),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Paper300,
                                 )
@@ -530,7 +554,7 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(8.dp))
             Text(
-                "Arquivos originais nunca são alterados pelo app · Sem conta, sem nuvem",
+                stringResource(R.string.settings_footer_privacy),
                 style = MaterialTheme.typography.labelSmall,
                 color = Paper500,
                 modifier = Modifier.padding(bottom = 16.dp),

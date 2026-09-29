@@ -2,6 +2,8 @@ package com.jrmello4.tactilereader.settings
 
 import com.jrmello4.tactilereader.core.LibraryDb
 import com.jrmello4.tactilereader.core.Pub
+import com.jrmello4.tactilereader.core.ReaderPage
+import com.jrmello4.tactilereader.core.ReadingStatus
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -120,20 +122,26 @@ object BackupManager {
 
             val pages = db.listPages(target.id)
             val state = item.optJSONObject("readerState")
-            if (item.optString("readingStatus") == "NOT_STARTED") {
-                db.clearReadingProgress(target.id)
-            } else if (state != null) {
-                val pageIndex = state.optInt("pageIndex", -1)
-                val pageId = if (pageIndex in pages.indices) {
-                    pages[pageIndex].id
-                } else {
-                    // v1 backups stored only pageId; accept it only if it belongs to this publication.
-                    val legacyId = state.optString("pageId", "")
-                    legacyId.takeIf { id -> pages.any { it.id == id } }
+            val readingStatus = runCatching {
+                ReadingStatus.valueOf(item.optString("readingStatus"))
+            }.getOrNull()
+            when (readingStatus) {
+                ReadingStatus.NOT_STARTED -> db.clearReadingProgress(target.id)
+                ReadingStatus.READING -> {
+                    if (state != null && restoreReaderState(db, target.id, pages, state)) {
+                        progress++
+                    }
                 }
-                if (pageId != null) {
-                    db.saveReaderState(target.id, pageId, state.optDouble("scrollRatio", 0.0))
+                ReadingStatus.FINISHED -> {
+                    if (state != null) restoreReaderState(db, target.id, pages, state)
+                    db.markFinished(target.id)
                     progress++
+                }
+                null -> {
+                    // Older backups did not always include an explicit status.
+                    if (state != null && restoreReaderState(db, target.id, pages, state)) {
+                        progress++
+                    }
                 }
             }
 
@@ -153,6 +161,24 @@ object BackupManager {
             }
         }
         return RestoreSummary(favorites, progress, bookmarks)
+    }
+
+    private fun restoreReaderState(
+        db: LibraryDb,
+        publicationId: String,
+        pages: List<ReaderPage>,
+        state: JSONObject,
+    ): Boolean {
+        val pageIndex = state.optInt("pageIndex", -1)
+        val pageId = if (pageIndex in pages.indices) {
+            pages[pageIndex].id
+        } else {
+            // v1 backups stored only pageId; accept it only if it belongs to this publication.
+            val legacyId = state.optString("pageId", "")
+            legacyId.takeIf { id -> pages.any { it.id == id } }
+        } ?: return false
+        db.saveReaderState(publicationId, pageId, state.optDouble("scrollRatio", 0.0))
+        return true
     }
 
     fun defaultExportFile(filesDir: File): File {

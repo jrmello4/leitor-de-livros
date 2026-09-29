@@ -307,6 +307,46 @@ class LibraryDbTest {
     }
 
     @Test
+    fun singlePagePublicationFinishesWhenOpenedOrMarkedReadAndCanBeCleared() {
+        val root = tempRoot("single-page-reading")
+        val db = openDb(root)
+        val comic = File(root, "one-page.cbz").apply {
+            writeBytes(cbzBytesWithNames(listOf("only.png")))
+        }
+        db.importPaths(listOf(comic.absolutePath))
+        val pub = db.listPublications().single()
+        val onlyPage = db.listPages(pub.id).single()
+
+        assertEquals(ReadingStatus.NOT_STARTED, pub.readingStatus)
+
+        db.saveReaderState(pub.id, onlyPage.id, 0.4)
+        assertEquals(ReadingStatus.FINISHED, db.listPublications().single().readingStatus)
+
+        db.clearReadingProgress(pub.id)
+        assertEquals(ReadingStatus.NOT_STARTED, db.listPublications().single().readingStatus)
+        assertNull(db.loadReaderState(pub.id))
+
+        db.markRead(pub.id, 0)
+        assertEquals(ReadingStatus.FINISHED, db.listPublications().single().readingStatus)
+    }
+
+    @Test
+    fun openingFirstOfTwoPagesReadsAndOpeningSecondFinishes() {
+        val root = tempRoot("two-page-reading")
+        val db = openDb(root)
+        val comic = File(root, "two-pages.cbz").apply { writeBytes(cbzBytes(2)) }
+        db.importPaths(listOf(comic.absolutePath))
+        val pub = db.listPublications().single()
+        val pages = db.listPages(pub.id)
+
+        db.saveReaderState(pub.id, pages[0].id, 0.2)
+        assertEquals(ReadingStatus.READING, db.listPublications().single().readingStatus)
+
+        db.saveReaderState(pub.id, pages[1].id, 0.0)
+        assertEquals(ReadingStatus.FINISHED, db.listPublications().single().readingStatus)
+    }
+
+    @Test
     fun cbzAndImageFolderUseNaturalPageOrder() {
         val root = tempRoot("natural-order")
         val db = openDb(root)
@@ -359,6 +399,37 @@ class LibraryDbTest {
         db.deletePublication(pub.id)
         assertTrue("exclusão remove o cache derivado", !rebuilt.exists())
         assertTrue("arquivo original preservado", archive.isFile)
+    }
+
+    @Test
+    fun sevenZipPageRebuildTimingProbe() {
+        val root = tempRoot("seven-zip-rebuild-probe")
+        for (pageCount in listOf(50, 100, 200)) {
+            val caseRoot = File(root, "pages-$pageCount").apply { mkdirs() }
+            val archive = sevenZipWithPages(
+                caseRoot,
+                (1..pageCount).map { "page-%03d.png".format(it) },
+            )
+            val db = openDb(caseRoot)
+            val outcome = db.importPaths(listOf(archive.absolutePath))
+            assertEquals(outcome.diagnostics.toString(), 0, outcome.diagnostics.size)
+            val publication = db.listPublications().single()
+            val pages = db.listPages(publication.id)
+            assertEquals(pageCount, pages.size)
+
+            val indices = listOf(0, pageCount / 2, pageCount / 2 + 1)
+            val elapsedMillis = indices.map { index ->
+                val startedAt = System.nanoTime()
+                val page = db.ensurePage(publication.id, pages[index].id)
+                assertTrue(File(page.cachePath ?: "").isFile)
+                (System.nanoTime() - startedAt) / 1_000_000.0
+            }
+            println(
+                "7z-page-probe pages=$pageCount first_ms=${elapsedMillis[0]} " +
+                    "middle_ms=${elapsedMillis[1]} next_ms=${elapsedMillis[2]}",
+            )
+            LibraryDb.closeAll()
+        }
     }
 
     @Test
