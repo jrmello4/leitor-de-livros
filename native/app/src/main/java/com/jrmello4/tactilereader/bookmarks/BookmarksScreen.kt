@@ -44,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
@@ -54,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import com.jrmello4.tactilereader.core.BookmarkItem
 import com.jrmello4.tactilereader.core.LibraryDb
 import com.jrmello4.tactilereader.scaffold.AppSources
+import com.jrmello4.tactilereader.scaffold.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -82,6 +84,7 @@ fun BookmarksScreen(
     var query by remember { mutableStateOf("") }
     var notice by remember { mutableStateOf<String?>(null) }
     var pendingDelete by remember { mutableStateOf<BookmarkItem?>(null) }
+    val bookmarkRemovedNotice = stringResource(R.string.bookmarks_removed_notice)
 
     fun refreshBookmarks() {
         loading = true
@@ -127,14 +130,14 @@ fun BookmarksScreen(
             ) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Voltar para a estante",
+                    contentDescription = stringResource(R.string.settings_back_to_shelf),
                     tint = MaterialTheme.colorScheme.primary,
                 )
                 Spacer(Modifier.width(4.dp))
-                Text("Estante", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
+                Text(stringResource(R.string.navigation_shelf), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
             }
             Text(
-                text = "Marcadores",
+                text = stringResource(R.string.bookmarks_title),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
@@ -170,7 +173,7 @@ fun BookmarksScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Índice de páginas marcadas na sua coleção",
+                text = stringResource(R.string.bookmarks_subtitle),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -182,7 +185,7 @@ fun BookmarksScreen(
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 ) {
                     Text(
-                        "Exportar",
+                        stringResource(R.string.settings_backup_export),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -195,7 +198,7 @@ fun BookmarksScreen(
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 ) {
                     Text(
-                        "Importar",
+                        stringResource(R.string.settings_backup_import),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -210,7 +213,7 @@ fun BookmarksScreen(
                 value = query,
                 onValueChange = { query = it },
                 placeholder = {
-                    Text("Buscar marcador ou título de HQ…", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                    Text(stringResource(R.string.bookmarks_search_hint), color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
                 },
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
@@ -225,7 +228,7 @@ fun BookmarksScreen(
                 trailingIcon = {
                     if (query.isNotEmpty()) {
                         IconButton(onClick = { query = "" }) {
-                            Icon(Icons.Filled.Close, contentDescription = "Limpar busca", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.bookmarks_clear_search), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 },
@@ -250,10 +253,14 @@ fun BookmarksScreen(
         pendingDelete?.let { item ->
             androidx.compose.material3.AlertDialog(
                 onDismissRequest = { pendingDelete = null },
-                title = { Text("Excluir marcador?", color = MaterialTheme.colorScheme.onSurface) },
+                title = { Text(stringResource(R.string.bookmarks_delete_title), color = MaterialTheme.colorScheme.onSurface) },
                 text = {
                     Text(
-                        "Deseja remover o marcador da Página ${item.pageIndex + 1} de \"${item.publicationTitle}\"?",
+                        stringResource(
+                            R.string.bookmarks_delete_confirmation,
+                            item.pageIndex + 1,
+                            item.publicationTitle,
+                        ),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 },
@@ -268,15 +275,15 @@ fun BookmarksScreen(
                                         db.removeBookmark(toDelete.publicationId, toDelete.pageId)
                                     }
                                     refreshBookmarks()
-                                    notice = "Marcador removido."
+                                    notice = bookmarkRemovedNotice
                                 }
                             }
                         },
-                    ) { Text("Excluir", color = MaterialTheme.colorScheme.error) }
+                    ) { Text(stringResource(R.string.bookmarks_delete_action), color = MaterialTheme.colorScheme.error) }
                 },
                 dismissButton = {
                     TextButton(onClick = { pendingDelete = null }) {
-                        Text("Cancelar", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.action_cancel), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
             )
@@ -286,7 +293,7 @@ fun BookmarksScreen(
         when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    "Carregando marcadores…",
+                    stringResource(R.string.bookmarks_loading),
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -306,14 +313,14 @@ fun BookmarksScreen(
                     )
                     Spacer(Modifier.height(12.dp))
                     Text(
-                        "Nenhum marcador salvo ainda",
+                        stringResource(R.string.bookmarks_empty_title),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "Durante a leitura, toque no ícone de estrela na barra superior para marcar qualquer página importante.",
+                        stringResource(R.string.bookmarks_empty_description),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 16.dp),
@@ -322,7 +329,7 @@ fun BookmarksScreen(
             }
             filtered.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    "Nenhum marcador encontrado para \"$query\".",
+                    stringResource(R.string.bookmarks_search_empty, query),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -355,7 +362,7 @@ fun BookmarksScreen(
                                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
                                 ) {
                                     Text(
-                                        text = "PÁG. ${item.pageIndex + 1}",
+                                        text = stringResource(R.string.bookmarks_page_badge, item.pageIndex + 1),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.primary,
@@ -388,7 +395,10 @@ fun BookmarksScreen(
                                 ) {
                                     Icon(
                                         Icons.Filled.Close,
-                                        contentDescription = "Remover marcador da página ${item.pageIndex + 1}",
+                                        contentDescription = stringResource(
+                                            R.string.bookmarks_remove_content_description,
+                                            item.pageIndex + 1,
+                                        ),
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }

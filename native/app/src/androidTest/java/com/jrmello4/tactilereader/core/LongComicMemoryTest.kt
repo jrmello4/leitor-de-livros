@@ -46,7 +46,7 @@ class LongComicMemoryTest {
         }
         val outcome = db.importPaths(listOf(pagesDir.absolutePath))
         assertTrue("diagnostics: ${outcome.diagnostics}", outcome.diagnostics.isEmpty())
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         assertEquals(pageCount, pub.pageCount)
         val pages = db.listPages(pub.id)
 

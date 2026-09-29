@@ -15,7 +15,7 @@ internal object PdfPublicationImporter {
             size,
             opener.lastModifiedMillis(source.reference),
         )
-        db.findPublicationBySourcePath(sourceKey)?.let { return it }
+        db.publications.findBySourcePath(sourceKey)?.let { return it }
 
         val pageDimensions = withDescriptor(db, source.reference) { PdfImporter.inspect(it) }
         if (pageDimensions.isEmpty() || pageDimensions.size > MAX_PAGE_COUNT) {
@@ -23,7 +23,7 @@ internal object PdfPublicationImporter {
         }
         val publicationId = digestId("publication", sourceKey.toByteArray())
         val pages = pageDimensions.mapIndexed { index, dimensions ->
-            LibraryDb.NewPage(
+            PublicationRepository.NewPage(
                 id = "$publicationId-page-%04d".format(index),
                 index = index,
                 name = "page-%04d.pdf".format(index + 1),
@@ -35,7 +35,7 @@ internal object PdfPublicationImporter {
         }
         return Importer.persist(
             db,
-            LibraryDb.NewPublication(
+            PublicationRepository.NewPublication(
                 id = publicationId,
                 title = Importer.stemOf(source.name(opener)).ifBlank { "Imported PDF" },
                 sourceLabel = source.name(opener),

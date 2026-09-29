@@ -58,10 +58,10 @@ class BackupManagerTest {
         val db = LibraryDb.open(File(root, "lib"), File(root, "imports"))
         val comic = File(root, "HQ.cbz").apply { cbz(this) }
         db.importPaths(listOf(comic.absolutePath))
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         val pages = db.listPages(pub.id)
 
-        db.setFavorite(pub.id, true)
+        db.publications.setFavorite(pub.id, true)
         db.saveReaderState(pub.id, pages[2].id, 0.66)
         db.upsertBookmark(pub.id, pages[1].id, "marcado")
 
@@ -74,7 +74,7 @@ class BackupManagerTest {
         )
 
         // Muda tudo de propósito para provar a restauração.
-        db.setFavorite(pub.id, false)
+        db.publications.setFavorite(pub.id, false)
         db.markRead(pub.id, 0)
         db.removeBookmark(pub.id, pages[1].id)
 
@@ -83,7 +83,7 @@ class BackupManagerTest {
         assertEquals(1, summary.progress)
         assertEquals(1, summary.bookmarks)
 
-        val restored = db.listPublications().single()
+        val restored = db.publications.list().single()
         assertTrue("favorito restaurado", restored.isFavorite)
         val state = db.loadReaderState(pub.id)
         assertEquals(pages[2].id, state?.pageId)
@@ -118,9 +118,9 @@ class BackupManagerTest {
             cbz(this)
         }
         db.importPaths(listOf(original.absolutePath))
-        val previous = db.listPublications().single()
+        val previous = db.publications.list().single()
         val oldPages = db.listPages(previous.id)
-        db.setFavorite(previous.id, true)
+        db.publications.setFavorite(previous.id, true)
         db.saveReaderState(previous.id, oldPages[2].id, 0.54)
         db.upsertBookmark(previous.id, oldPages[1].id, "retomar daqui")
         val backup = BackupManager.export(db, File(root, "backup.json"))
@@ -131,14 +131,14 @@ class BackupManagerTest {
             original.copyTo(this)
         }
         db.importPaths(listOf(reimported.absolutePath))
-        val current = db.listPublications().single()
+        val current = db.publications.list().single()
         assertTrue("reimport deve ganhar outra identidade interna", current.id != previous.id)
 
         val summary = BackupManager.import(db, backup)
         assertEquals(1, summary.favorites)
         assertEquals(1, summary.progress)
         assertEquals(1, summary.bookmarks)
-        assertTrue(db.listPublications().single().isFavorite)
+        assertTrue(db.publications.list().single().isFavorite)
         val newPages = db.listPages(current.id)
         val restored = db.loadReaderState(current.id)
         assertEquals(newPages[2].id, restored?.pageId)
@@ -156,8 +156,8 @@ class BackupManagerTest {
             cbz(this)
         }
         db.importPaths(listOf(original.absolutePath))
-        val previous = db.listPublications().single()
-        db.setFavorite(previous.id, true)
+        val previous = db.publications.list().single()
+        db.publications.setFavorite(previous.id, true)
         val backup = BackupManager.export(db, File(root, "backup.json"))
         db.deletePublication(previous.id)
 
@@ -170,7 +170,7 @@ class BackupManagerTest {
         db.importPaths(candidates.map { it.absolutePath })
         val summary = BackupManager.import(db, backup)
         assertEquals(0, summary.favorites)
-        assertTrue(db.listPublications().none { it.isFavorite })
+        assertTrue(db.publications.list().none { it.isFavorite })
     }
 
     @Test
@@ -183,8 +183,8 @@ class BackupManagerTest {
             cbz(this)
         }
         db.importPaths(listOf(original.absolutePath))
-        val previous = db.listPublications().single()
-        db.setFavorite(previous.id, true)
+        val previous = db.publications.list().single()
+        db.publications.setFavorite(previous.id, true)
         val backup = BackupManager.export(db, File(root, "backup.json"))
         db.deletePublication(previous.id)
 
@@ -193,13 +193,13 @@ class BackupManagerTest {
             cbz(this, listOf("cover.png", "middle.png", "last.png"))
         }
         db.importPaths(listOf(replacement.absolutePath))
-        assertEquals("HQ", db.listPublications().single().title)
-        assertEquals(3, db.listPublications().single().pageCount)
+        assertEquals("HQ", db.publications.list().single().title)
+        assertEquals(3, db.publications.list().single().pageCount)
 
         val summary = BackupManager.import(db, backup)
 
         assertEquals(0, summary.favorites)
-        assertTrue(db.listPublications().none { it.isFavorite })
+        assertTrue(db.publications.list().none { it.isFavorite })
     }
 
     @Test
@@ -209,17 +209,17 @@ class BackupManagerTest {
         val db = LibraryDb.open(File(root, "lib"), File(root, "imports"))
         val comic = File(root, "HQ.cbz").apply { cbz(this) }
         db.importPaths(listOf(comic.absolutePath))
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         val firstPage = db.listPages(pub.id).first()
         db.saveReaderState(pub.id, firstPage.id, 0.75)
         db.clearReadingProgress(pub.id)
         val backup = BackupManager.export(db, File(root, "backup.json"))
 
         db.saveReaderState(pub.id, firstPage.id, 0.25)
-        assertEquals(1, db.listPublications().single().readingStatus.databaseValue)
+        assertEquals(1, db.publications.list().single().readingStatus.databaseValue)
         BackupManager.import(db, backup)
 
-        val restored = db.listPublications().single()
+        val restored = db.publications.list().single()
         assertEquals(0, restored.readingStatus.databaseValue)
         assertEquals(0.0, restored.progress, 0.0)
         assertEquals(null, db.loadReaderState(pub.id))
@@ -232,7 +232,7 @@ class BackupManagerTest {
         val db = LibraryDb.open(File(root, "lib"), File(root, "imports"))
         val comic = File(root, "HQ.cbz").apply { cbz(this) }
         db.importPaths(listOf(comic.absolutePath))
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
 
         db.markFinished(pub.id)
         assertEquals(null, db.loadReaderState(pub.id))
@@ -242,7 +242,7 @@ class BackupManagerTest {
         val summary = BackupManager.import(db, backup)
 
         assertEquals(1, summary.progress)
-        assertEquals(com.jrmello4.tactilereader.core.ReadingStatus.FINISHED, db.listPublications().single().readingStatus)
+        assertEquals(com.jrmello4.tactilereader.core.ReadingStatus.FINISHED, db.publications.list().single().readingStatus)
         assertEquals(null, db.loadReaderState(pub.id))
     }
 
@@ -255,7 +255,7 @@ class BackupManagerTest {
             cbz(this, (1..20).map { "%03d.png".format(it) })
         }
         db.importPaths(listOf(comic.absolutePath))
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         val pageFifteen = db.listPages(pub.id)[14]
         db.saveReaderState(pub.id, pageFifteen.id, 0.73)
         val backup = BackupManager.export(db, File(root, "reading.json"))
@@ -264,7 +264,7 @@ class BackupManagerTest {
         val summary = BackupManager.import(db, backup)
 
         assertEquals(1, summary.progress)
-        assertEquals(com.jrmello4.tactilereader.core.ReadingStatus.READING, db.listPublications().single().readingStatus)
+        assertEquals(com.jrmello4.tactilereader.core.ReadingStatus.READING, db.publications.list().single().readingStatus)
         assertEquals(pageFifteen.id, db.loadReaderState(pub.id)?.pageId)
         assertEquals(0.73, db.loadReaderState(pub.id)?.scrollRatio ?: 0.0, 0.0001)
     }
@@ -276,7 +276,7 @@ class BackupManagerTest {
         val db = LibraryDb.open(File(root, "lib"), File(root, "imports"))
         val comic = File(root, "HQ.cbz").apply { cbz(this) }
         db.importPaths(listOf(comic.absolutePath))
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
 
         db.markRead(pub.id, 1)
         val backup = BackupManager.export(db, File(root, "mark-read.json"))
@@ -284,7 +284,7 @@ class BackupManagerTest {
 
         BackupManager.import(db, backup)
 
-        assertEquals(com.jrmello4.tactilereader.core.ReadingStatus.READING, db.listPublications().single().readingStatus)
+        assertEquals(com.jrmello4.tactilereader.core.ReadingStatus.READING, db.publications.list().single().readingStatus)
         assertEquals(db.listPages(pub.id)[1].id, db.loadReaderState(pub.id)?.pageId)
         assertEquals(0.0, db.loadReaderState(pub.id)?.scrollRatio ?: -1.0, 0.0)
     }

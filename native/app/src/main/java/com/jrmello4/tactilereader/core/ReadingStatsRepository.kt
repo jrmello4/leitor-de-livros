@@ -65,7 +65,7 @@ internal class ReadingStatsRepository(private val db: LibraryDb) {
         var totalSessions = 0
         val pubStats = mutableListOf<PublicationReadingStat>()
 
-        for (pub in db.listPublications()) {
+        for (pub in db.publications.list()) {
             val stats = db.loadReadingStats(pub.id)
             if (stats != null && (stats.totalMillis > 0L || stats.pagesRead > 0)) {
                 totalMillis = saturatingAdd(totalMillis, stats.totalMillis)

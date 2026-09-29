@@ -146,7 +146,7 @@
     <string name="activity_import_unsupported_file">Nenhum arquivo suportado foi selecionado.</string>
     <string name="activity_folder_scanning">Lendo a pasta escolhida…</string>
     <string name="activity_folder_truncated">Pasta grande: importamos os primeiros 500 arquivos. Repita em subpastas para o resto.</string>
-    <string name="activity_folder_access_denied">Sem acesso a essa pasta. Se for raiz do armazenamento ou Downloads, escolha uma subpasta ou use &quot;+ HQ&quot;.</string>
+    <string name="activity_folder_access_denied">Sem acesso a essa pasta. Se for raiz do armazenamento ou Downloads, escolha uma subpasta ou use a opção &quot;HQ ou arquivo&quot;.</string>
     <string name="activity_import_cancelled">Importação cancelada.</string>
     <string name="activity_folder_empty">Nenhum arquivo suportado foi encontrado nessa pasta (nem nas subpastas).</string>
     <string name="activity_backup_exporting">Exportando backup…</string>
@@ -155,4 +155,52 @@
     <string name="activity_rescanning">Revarrendo origens…</string>
     <string name="activity_backup_applied">Backup aplicado: %1$d favoritos, %2$d progressos, %3$d marcadores.</string>
     <string name="activity_backup_apply_failed">Falha no backup: %1$s</string>
+
+    <string name="library_selected_count">%1$d selecionado(s)</string>
+    <string name="library_no_pages_available">Sem páginas disponíveis</string>
+    <string name="library_page_progress">Página %1$d de %2$d</string>
+    <string name="library_progress_summary">%1$s • %2$s</string>
+    <string name="library_progress_complete">Concluído</string>
+    <string name="library_progress_remaining_time">Faltam aprox. %1$d min</string>
+    <string name="library_progress_last_page">%1$s • Última página</string>
+    <string name="library_progress_remaining_pages">%1$s • Faltam aprox. %2$d páginas</string>
+    <string name="library_edition_count">%1$d edições</string>
+    <string name="library_edition_all_read">%1$d edições · todas lidas</string>
+    <string name="library_edition_read_count">%1$d edições · %2$d lidas</string>
+
+    <string name="bookmarks_title">Marcadores</string>
+    <string name="bookmarks_subtitle">Índice de páginas marcadas na sua coleção</string>
+    <string name="bookmarks_search_hint">Buscar marcador ou título de HQ…</string>
+    <string name="bookmarks_clear_search">Limpar busca</string>
+    <string name="bookmarks_delete_title">Excluir marcador?</string>
+    <string name="bookmarks_delete_confirmation">Deseja remover o marcador da Página %1$d de &quot;%2$s&quot;?</string>
+    <string name="bookmarks_delete_action">Excluir</string>
+    <string name="bookmarks_removed_notice">Marcador removido.</string>
+    <string name="bookmarks_loading">Carregando marcadores…</string>
+    <string name="bookmarks_empty_title">Nenhum marcador salvo ainda</string>
+    <string name="bookmarks_empty_description">Durante a leitura, toque no ícone de estrela na barra superior para marcar qualquer página importante.</string>
+    <string name="bookmarks_search_empty">Nenhum marcador encontrado para &quot;%1$s&quot;.</string>
+    <string name="bookmarks_page_badge">PÁG. %1$d</string>
+    <string name="bookmarks_remove_content_description">Remover marcador da página %1$d</string>
+
+    <string name="reading_stats_title">Minha leitura</string>
+    <string name="reading_stats_loading">Calculando estatísticas locais…</string>
+    <string name="reading_stats_empty_title">Ainda não há sessões de leitura</string>
+    <string name="reading_stats_empty_description">Leia algumas páginas para ver seu ritmo médio e estimativas de tempo restante.</string>
+    <string name="reading_stats_overview_heading">RESUMO GERAL</string>
+    <string name="reading_stats_history_heading">HISTÓRICO POR HQ</string>
+    <string name="reading_stats_total_time">Tempo total</string>
+    <string name="reading_stats_pages_read">Páginas lidas</string>
+    <string name="reading_stats_sessions">Sessões</string>
+    <string name="reading_stats_average_pace">Velocidade média</string>
+    <string name="reading_stats_pace_value">%1$s págs/min</string>
+    <string name="reading_stats_local_metrics">Métricas 100% locais no dispositivo · sem telemetria, contas ou nuvem.</string>
+    <string name="reading_stats_publication_summary">%1$d págs lidas • %2$s</string>
+    <string name="reading_stats_pace_suffix"> • %1$s págs/min</string>
+    <string name="reading_stats_remaining_suffix"> • Faltam aprox. %1$d min</string>
+    <string name="reading_stats_complete_suffix"> • Concluído</string>
+    <string name="reading_stats_duration_hours_minutes">%1$dh %2$dmin</string>
+    <string name="reading_stats_duration_hours">%1$dh</string>
+    <string name="reading_stats_duration_minutes">%1$d min</string>
+    <string name="reading_stats_duration_under_minute">&lt; 1 min</string>
 </resources>

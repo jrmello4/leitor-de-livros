@@ -49,7 +49,7 @@ class Rar5FixtureTest {
         assertEquals("diagnostics: ${outcome.diagnostics}", 0, outcome.diagnostics.size)
         assertEquals(1, outcome.importedCount)
 
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         assertEquals("cbr", pub.format)
         assertEquals("fixture", pub.title)
         assertEquals(3, pub.pageCount)

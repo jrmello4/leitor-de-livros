@@ -105,15 +105,15 @@ class LibraryDbTest {
             repeat(targetCount) { index ->
                 val publicationId = "publication-$index"
                 val pageId = "$publicationId-page-0000"
-                db.insertPublication(
-                    LibraryDb.NewPublication(
+                db.publications.insert(
+                    PublicationRepository.NewPublication(
                         id = publicationId,
                         title = "HQ $index",
                         sourceLabel = "HQ $index.cbz",
                         sourcePath = "archive:${File(root, "$index.cbz").absolutePath}",
                         format = "cbz",
                         pages = listOf(
-                            LibraryDb.NewPage(
+                            PublicationRepository.NewPage(
                                 id = pageId,
                                 index = 0,
                                 name = "1.png",
@@ -132,7 +132,7 @@ class LibraryDbTest {
 
             var queryCount = 0
             db.queryObserverForTests = { queryCount++ }
-            val publications = db.listPublications()
+            val publications = db.publications.list()
             db.queryObserverForTests = null
 
             assertEquals("$targetCount publications returned", targetCount, publications.size)
@@ -152,7 +152,7 @@ class LibraryDbTest {
         assertEquals("diagnostics: ${outcome.diagnostics}", 0, outcome.diagnostics.size)
         assertEquals(1, outcome.importedCount)
 
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         assertEquals("HQ", pub.title)
         assertEquals("cbz", pub.format)
         assertEquals(3, pub.pageCount)
@@ -160,7 +160,7 @@ class LibraryDbTest {
 
         // Reimportar o mesmo caminho não duplica (mesmo source key → mesmo id).
         assertEquals(1, db.importPaths(listOf(comic.absolutePath)).importedCount)
-        assertEquals(1, db.listPublications().size)
+        assertEquals(1, db.publications.list().size)
     }
 
     @Test
@@ -170,7 +170,7 @@ class LibraryDbTest {
         val xml = "<ComicInfo><Series>Arqueiro Verde</Series><Number>7</Number></ComicInfo>"
         val comic = File(root, "sem-nome-bom.cbz").apply { writeBytes(cbzBytes(2, xml)) }
         db.importPaths(listOf(comic.absolutePath))
-        assertEquals("Arqueiro Verde #7", db.listPublications().single().title)
+        assertEquals("Arqueiro Verde #7", db.publications.list().single().title)
     }
 
     @Test
@@ -181,7 +181,7 @@ class LibraryDbTest {
         val originalBytes = comic.readBytes()
         db.importPaths(listOf(comic.absolutePath))
 
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         val pages = db.listPages(pub.id)
         assertEquals(2, pages.size)
         assertNull(pages[0].cachePath)
@@ -217,7 +217,7 @@ class LibraryDbTest {
         }
         val db = LibraryDb.open(File(root, "lib"), File(root, "imports"), opener)
         val pages = listOf("one", "two").mapIndexed { index, name ->
-            LibraryDb.NewPage(
+            PublicationRepository.NewPage(
                 id = "page-$name",
                 index = index,
                 name = "$name.png",
@@ -227,7 +227,7 @@ class LibraryDbTest {
                 height = 12,
             )
         }
-        val publication = LibraryDb.NewPublication(
+        val publication = PublicationRepository.NewPublication(
             id = "parallel-publication",
             title = "Parallel",
             sourceLabel = "parallel-images",
@@ -238,7 +238,7 @@ class LibraryDbTest {
             addedAt = "1",
             updatedAt = "1",
         )
-        db.insertPublication(publication)
+        db.publications.insert(publication)
 
         val pool = Executors.newFixedThreadPool(2)
         try {
@@ -259,7 +259,7 @@ class LibraryDbTest {
         val db = openDb(root)
         val comic = File(root, "HQ.cbz").apply { writeBytes(cbzBytes(3)) }
         db.importPaths(listOf(comic.absolutePath))
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         val pages = db.listPages(pub.id)
 
         assertNull(db.loadReaderState(pub.id))
@@ -273,8 +273,8 @@ class LibraryDbTest {
         db.removeBookmark(pub.id, pages[0].id)
         assertTrue(db.listBookmarks(pub.id).isEmpty())
 
-        db.setFavorite(pub.id, true)
-        assertTrue(db.listPublications().single().isFavorite)
+        db.publications.setFavorite(pub.id, true)
+        assertTrue(db.publications.list().single().isFavorite)
     }
 
     @Test
@@ -283,23 +283,23 @@ class LibraryDbTest {
         val db = openDb(root)
         val comic = File(root, "HQ.cbz").apply { writeBytes(cbzBytes(4)) }
         db.importPaths(listOf(comic.absolutePath))
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         assertEquals(ReadingStatus.NOT_STARTED, pub.readingStatus)
         assertEquals(0.0, pub.progress, 0.0001)
 
         db.markRead(pub.id, 0)
-        val firstPage = db.listPublications().single()
+        val firstPage = db.publications.list().single()
         assertEquals(ReadingStatus.READING, firstPage.readingStatus)
         assertEquals(0.25, firstPage.progress, 0.0001)
         assertTrue(firstPage.isContinueCandidate())
 
         db.markRead(pub.id, pub.pageCount - 1)
-        val finished = db.listPublications().single()
+        val finished = db.publications.list().single()
         assertEquals(ReadingStatus.FINISHED, finished.readingStatus)
         assertEquals(1.0, finished.progress, 0.0001)
 
         db.clearReadingProgress(pub.id)
-        val cleared = db.listPublications().single()
+        val cleared = db.publications.list().single()
         assertEquals(ReadingStatus.NOT_STARTED, cleared.readingStatus)
         assertEquals(0.0, cleared.progress, 0.0001)
         assertNull(db.loadReaderState(pub.id))
@@ -314,20 +314,20 @@ class LibraryDbTest {
             writeBytes(cbzBytesWithNames(listOf("only.png")))
         }
         db.importPaths(listOf(comic.absolutePath))
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         val onlyPage = db.listPages(pub.id).single()
 
         assertEquals(ReadingStatus.NOT_STARTED, pub.readingStatus)
 
         db.saveReaderState(pub.id, onlyPage.id, 0.4)
-        assertEquals(ReadingStatus.FINISHED, db.listPublications().single().readingStatus)
+        assertEquals(ReadingStatus.FINISHED, db.publications.list().single().readingStatus)
 
         db.clearReadingProgress(pub.id)
-        assertEquals(ReadingStatus.NOT_STARTED, db.listPublications().single().readingStatus)
+        assertEquals(ReadingStatus.NOT_STARTED, db.publications.list().single().readingStatus)
         assertNull(db.loadReaderState(pub.id))
 
         db.markRead(pub.id, 0)
-        assertEquals(ReadingStatus.FINISHED, db.listPublications().single().readingStatus)
+        assertEquals(ReadingStatus.FINISHED, db.publications.list().single().readingStatus)
     }
 
     @Test
@@ -336,14 +336,14 @@ class LibraryDbTest {
         val db = openDb(root)
         val comic = File(root, "two-pages.cbz").apply { writeBytes(cbzBytes(2)) }
         db.importPaths(listOf(comic.absolutePath))
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         val pages = db.listPages(pub.id)
 
         db.saveReaderState(pub.id, pages[0].id, 0.2)
-        assertEquals(ReadingStatus.READING, db.listPublications().single().readingStatus)
+        assertEquals(ReadingStatus.READING, db.publications.list().single().readingStatus)
 
         db.saveReaderState(pub.id, pages[1].id, 0.0)
-        assertEquals(ReadingStatus.FINISHED, db.listPublications().single().readingStatus)
+        assertEquals(ReadingStatus.FINISHED, db.publications.list().single().readingStatus)
     }
 
     @Test
@@ -357,7 +357,7 @@ class LibraryDbTest {
         val comic = File(root, "natural.cbz").apply { writeBytes(cbzBytesWithNames(names)) }
         db.importPaths(listOf(comic.absolutePath))
 
-        val cbzNames = db.listPages(db.listPublications().single().id).map { it.name }
+        val cbzNames = db.listPages(db.publications.list().single().id).map { it.name }
         assertEquals(
             listOf("001.jpg", "002.jpg", "010.jpg", "page1.jpg", "page2.jpg", "page9.jpg", "page10.jpg", "page11.jpg", "page20.jpg"),
             cbzNames,
@@ -368,7 +368,7 @@ class LibraryDbTest {
         val folder = File(root, "images").apply { mkdirs() }
         val imageFiles = names.map { File(folder, it).apply { writeBytes(pngBytes()) } }
         folderDb.importPaths(imageFiles.map { it.absolutePath })
-        val imageNames = folderDb.listPages(folderDb.listPublications().single().id).map { it.name }
+        val imageNames = folderDb.listPages(folderDb.publications.list().single().id).map { it.name }
         assertEquals(cbzNames, imageNames)
     }
 
@@ -381,7 +381,7 @@ class LibraryDbTest {
 
         val result = db.importPaths(listOf(archive.absolutePath))
         assertEquals("7z import diagnostics: ${result.diagnostics}", 0, result.diagnostics.size)
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         assertEquals("7z", pub.format)
         assertEquals(listOf("page1.png", "page2.png", "page10.png"), db.listPages(pub.id).map { it.name })
         assertTrue("não mantém pasta de extração integral", !File(db.dataDir, "7z-${pub.id}").exists())
@@ -413,7 +413,7 @@ class LibraryDbTest {
             val db = openDb(caseRoot)
             val outcome = db.importPaths(listOf(archive.absolutePath))
             assertEquals(outcome.diagnostics.toString(), 0, outcome.diagnostics.size)
-            val publication = db.listPublications().single()
+            val publication = db.publications.list().single()
             val pages = db.listPages(publication.id)
             assertEquals(pageCount, pages.size)
 
@@ -438,12 +438,12 @@ class LibraryDbTest {
         val db = openDb(root)
         val comic = File(root, "HQ.cbz").apply { writeBytes(cbzBytes(4)) }
         db.importPaths(listOf(comic.absolutePath))
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         val firstPage = db.listPages(pub.id).first()
 
         db.saveReaderState(pub.id, firstPage.id, 0.35)
 
-        val updated = db.listPublications().single()
+        val updated = db.publications.list().single()
         assertEquals(ReadingStatus.READING, updated.readingStatus)
         assertTrue("primeira página tem progresso positivo", updated.progress > 0.0)
         assertTrue(updated.isContinueCandidate())
@@ -458,13 +458,13 @@ class LibraryDbTest {
         val comic = File(root, "HQ.cbz").apply { writeBytes(cbzBytes(2)) }
         val originalBytes = comic.readBytes()
         db.importPaths(listOf(comic.absolutePath))
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         val page = db.listPages(pub.id).first()
         val cacheFile = File(db.ensurePage(pub.id, page.id).cachePath ?: "")
 
         db.deletePublication(pub.id)
 
-        assertTrue(db.listPublications().isEmpty())
+        assertTrue(db.publications.list().isEmpty())
         assertTrue("cache derivado removido", !cacheFile.exists())
         assertTrue("original preservado", originalBytes.contentEquals(comic.readBytes()))
     }
@@ -475,7 +475,7 @@ class LibraryDbTest {
         val db = openDb(root)
         val comic = File(root, "HQ.cbz").apply { writeBytes(cbzBytes(2)) }
         db.importPaths(listOf(comic.absolutePath))
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         db.ensurePage(pub.id, db.listPages(pub.id).first().id)
 
         val info = db.cacheInfo()
@@ -493,7 +493,7 @@ class LibraryDbTest {
         val db = openDb(root)
         val comic = File(root, "HQ.cbz").apply { writeBytes(cbzBytes(2)) }
         db.importPaths(listOf(comic.absolutePath))
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         val page = db.listPages(pub.id).first()
         db.saveReaderState(pub.id, page.id, 0.75)
 
@@ -510,7 +510,7 @@ class LibraryDbTest {
         val outcome = db.importPaths(listOf(bad.absolutePath))
         assertEquals(0, outcome.importedCount)
         assertTrue(outcome.diagnostics.isNotEmpty())
-        assertTrue(db.listPublications().isEmpty())
+        assertTrue(db.publications.list().isEmpty())
     }
 
     @Test
@@ -532,7 +532,7 @@ class LibraryDbTest {
         )
 
         assertTrue("cancelamento sinalizado", outcome.cancelled)
-        assertTrue("o primeiro arquivo ficou", db.listPublications().isNotEmpty())
+        assertTrue("o primeiro arquivo ficou", db.publications.list().isNotEmpty())
         assertTrue("progresso reportado", progress.any { it.total == 2 })
         assertTrue(outcome.diagnostics.any { it.contains("cancelada", ignoreCase = true) })
     }
@@ -543,14 +543,14 @@ class LibraryDbTest {
         val db = openDb(root)
         val comic = File(root, "HQ.cbz").apply { writeBytes(cbzBytes(3)) }
         db.importPaths(listOf(comic.absolutePath))
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         val page = db.listPages(pub.id)[1]
         db.saveReaderState(pub.id, page.id, 0.5)
-        db.setFavorite(pub.id, true)
+        db.publications.setFavorite(pub.id, true)
 
         LibraryDb.closeAll()
         val reopened = LibraryDb.open(File(root, "lib"), File(root, "imports"))
-        val restored = reopened.listPublications().single()
+        val restored = reopened.publications.list().single()
         assertEquals(pub.id, restored.id)
         assertEquals(3, restored.pageCount)
         assertTrue(restored.isFavorite)
@@ -563,12 +563,12 @@ class LibraryDbTest {
         val db = openDb(root)
         val comic = File(root, "HQ.cbz").apply { writeBytes(cbzBytes(4)) }
         db.importPaths(listOf(comic.absolutePath))
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         val page = db.listPages(pub.id)[2]
 
         db.saveReaderState(pub.id, page.id, 0.42)
 
-        assertEquals(0.75, db.listPublications().single().progress, 0.0001)
+        assertEquals(0.75, db.publications.list().single().progress, 0.0001)
         assertEquals(0.42, db.loadReaderState(pub.id)?.scrollRatio ?: 0.0, 0.0001)
     }
 
@@ -578,12 +578,12 @@ class LibraryDbTest {
         val db = openDb(root)
         val comic = File(root, "HQ.cbz").apply { writeBytes(cbzBytes(4)) }
         db.importPaths(listOf(comic.absolutePath))
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
 
         val speed = db.recordReadingSession(pub.id, durationMillis = 120_000, pagesRead = 4)
 
         assertEquals(2.0, speed?.pagesPerMinute ?: 0.0, 0.0001)
-        assertEquals(2.0, db.listPublications().single().readingPagesPerMinute ?: 0.0, 0.0001)
+        assertEquals(2.0, db.publications.list().single().readingPagesPerMinute ?: 0.0, 0.0001)
         assertEquals(120_000L, db.loadReadingStats(pub.id)?.totalMillis)
         assertEquals(4, db.loadReadingStats(pub.id)?.pagesRead)
         assertEquals(1, db.loadReadingStats(pub.id)?.sessions)

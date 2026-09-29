@@ -67,13 +67,13 @@ class ContentSourceTest {
 
         val outcome = db.importSources(listOf(ImportSource(uri, "HQ.cbz")))
         assertEquals("diagnostics: ${outcome.diagnostics}", 0, outcome.diagnostics.size)
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         assertEquals("cbz", pub.format)
         assertEquals(3, pub.pageCount)
 
         // Reimportar a mesma URI não duplica.
         db.importSources(listOf(ImportSource(uri, "HQ.cbz")))
-        assertEquals(1, db.listPublications().size)
+        assertEquals(1, db.publications.list().size)
 
         // Nada foi copiado para o sandbox: imports/ continua vazio.
         assertEquals(0, File(root, "imports").listFiles()?.size ?: 0)
@@ -96,7 +96,7 @@ class ContentSourceTest {
 
         val outcome = db.importSources(listOf(ImportSource(uri, "fixture.cbr")))
         assertEquals("diagnostics: ${outcome.diagnostics}", 0, outcome.diagnostics.size)
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         assertEquals("cbr", pub.format)
         assertEquals(3, pub.pageCount)
 
@@ -114,6 +114,6 @@ class ContentSourceTest {
         val outcome = db.importSources(listOf(ImportSource("content://x/y", "sumiu.cbz")))
         assertEquals(0, outcome.importedCount)
         assertTrue(outcome.diagnostics.isNotEmpty())
-        assertNull(db.listPublications().firstOrNull())
+        assertNull(db.publications.list().firstOrNull())
     }
 }

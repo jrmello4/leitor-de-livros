@@ -36,7 +36,7 @@ class ReaderSessionRestoreTest {
         val outcome = db.importPaths(listOf(comicFile.absolutePath))
         assertTrue("Importação com sucesso", outcome.importedCount == 1)
 
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         val pages = db.listPages(pub.id)
         assertTrue("Houve páginas geradas", pages.size >= 2)
 

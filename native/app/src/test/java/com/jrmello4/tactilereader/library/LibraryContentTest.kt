@@ -2,6 +2,7 @@ package com.jrmello4.tactilereader.library
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.Column
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -20,7 +21,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Prova na JVM (Robolectric) que a estante renderiza por estado e que o
- * botão "+ HQ" dispara o seletor — sem aparelho, sem JNI.
+ * opção "HQ ou arquivo" dispara o seletor — sem aparelho, sem JNI.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -155,14 +156,16 @@ class LibraryContentTest {
 
     @Test
     fun readingProgressSummaryClampsInvalidProgress() {
-        assertEquals(
-            "Página 1 de 4 • Faltam aprox. 3 páginas",
-            readingProgressSummary(Pub("low", "low", "cbz", 4, -2.0, false)),
-        )
-        assertEquals(
-            "Página 4 de 4 • Última página",
-            readingProgressSummary(Pub("high", "high", "cbz", 4, 2.0, false)),
-        )
+        compose.setContent {
+            MaterialTheme {
+                Column {
+                    Text(readingProgressSummary(Pub("low", "low", "cbz", 4, -2.0, false)))
+                    Text(readingProgressSummary(Pub("high", "high", "cbz", 4, 2.0, false)))
+                }
+            }
+        }
+        compose.onNodeWithText("Página 1 de 4 • Faltam aprox. 3 páginas").assertIsDisplayed()
+        compose.onNodeWithText("Página 4 de 4 • Última página").assertIsDisplayed()
     }
 
     @Test
@@ -177,10 +180,10 @@ class LibraryContentTest {
             readingPagesPerMinute = 2.0,
         )
 
-        assertEquals(
-            "Página 10 de 40 • Faltam aprox. 15 min",
-            readingProgressSummary(pub),
-        )
+        compose.setContent {
+            MaterialTheme { Text(readingProgressSummary(pub)) }
+        }
+        compose.onNodeWithText("Página 10 de 40 • Faltam aprox. 15 min").assertIsDisplayed()
     }
 
     @Test

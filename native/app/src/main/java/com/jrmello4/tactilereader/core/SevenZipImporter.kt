@@ -20,7 +20,7 @@ internal object SevenZipImporter {
         shouldCancel: () -> Boolean,
     ): Pub {
         val sourceKey = "7z:${source.reference}"
-        db.findPublicationBySourcePath(sourceKey)?.let { return it }
+        db.publications.findBySourcePath(sourceKey)?.let { return it }
         val opener = db.opener
         if (opener.sizeBytes(source.reference) > MAX_ARCHIVE_BYTES) {
             error("7z exceeds the archive size safety limit")
@@ -90,7 +90,7 @@ internal object SevenZipImporter {
                 ?: left.archiveIndex.compareTo(right.archiveIndex)
         }
         val pages = ordered.mapIndexed { index, page ->
-            LibraryDb.NewPage(
+            PublicationRepository.NewPage(
                 id = "$publicationId-page-%04d".format(index),
                 index = index,
                 name = page.name,
@@ -102,7 +102,7 @@ internal object SevenZipImporter {
         }
         return Importer.persist(
             db,
-            LibraryDb.NewPublication(
+            PublicationRepository.NewPublication(
                 id = publicationId,
                 title = Importer.stemOf(source.name(opener)).ifBlank { "Imported 7z" },
                 sourceLabel = source.name(opener),

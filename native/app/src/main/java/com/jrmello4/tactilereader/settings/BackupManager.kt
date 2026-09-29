@@ -32,7 +32,7 @@ object BackupManager {
     }
 
     fun export(db: LibraryDb, target: File): File {
-        val publications = db.listPublications()
+        val publications = db.publications.list()
         val snapshot = db.backupSnapshot()
         val root = JSONObject()
             .put("app", APP)
@@ -86,7 +86,7 @@ object BackupManager {
         if (root.optString("app") != APP) {
             throw IllegalStateException("Arquivo não é um backup do Tactile Reader.")
         }
-        val current = db.listPublications()
+        val current = db.publications.list()
         val snapshot = db.backupSnapshot()
         val byId = current.associateBy { it.id }
         val byFingerprint = current.groupBy { publicationFingerprint(it, snapshot[it.id]?.pageManifestFingerprint) }
@@ -116,7 +116,7 @@ object BackupManager {
                 ?: continue
 
             if (item.has("isFavorite")) {
-                db.setFavorite(target.id, item.optBoolean("isFavorite"))
+                db.publications.setFavorite(target.id, item.optBoolean("isFavorite"))
                 favorites++
             }
 

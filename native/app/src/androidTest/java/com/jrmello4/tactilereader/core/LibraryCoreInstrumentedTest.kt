@@ -29,10 +29,10 @@ class LibraryCoreInstrumentedTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val root = File(context.cacheDir, "core-proof-${UUID.randomUUID()}")
         val first = freshDb(root)
-        assertTrue(first.listPublications().isEmpty())
+        assertTrue(first.publications.list().isEmpty())
         LibraryDb.closeAll()
         val second = LibraryDb.open(File(root, "lib"), File(root, "imports"))
-        assertTrue(second.listPublications().isEmpty())
+        assertTrue(second.publications.list().isEmpty())
     }
 
     @Test
@@ -46,7 +46,7 @@ class LibraryCoreInstrumentedTest {
         assertTrue("diagnostics: ${outcome.diagnostics}", outcome.diagnostics.isEmpty())
         assertTrue("expected one import, got ${outcome.importedCount}", outcome.importedCount == 1)
 
-        val pubs = db.listPublications()
+        val pubs = db.publications.list()
         assertTrue("expected one listed pub", pubs.size == 1)
         val pub = pubs.single()
         assertTrue("expected cbz, got ${pub.format}", pub.format == "cbz")
@@ -64,14 +64,14 @@ class LibraryCoreInstrumentedTest {
         db.importPaths(listOf(comic.absolutePath))
 
         // Import novo indexa sem bytes derivados: a listagem chega sem capa.
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         assertNull("expected no cover before ensure", pub.coverSrc)
         assertTrue("expected cover page id", pub.coverPageId.isNotBlank())
 
         val ensured = db.ensurePage(pub.id, pub.coverPageId)
         assertTrue("expected cover file", File(ensured.cachePath ?: "").isFile)
 
-        val relisted = db.listPublications().single()
+        val relisted = db.publications.list().single()
         assertTrue("expected cover after ensure", !relisted.coverSrc.isNullOrBlank())
     }
 
@@ -83,7 +83,7 @@ class LibraryCoreInstrumentedTest {
 
         val comic = TestComic.generate(File(root, "seed"))
         db.importPaths(listOf(comic.absolutePath))
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
 
         assertNull("expected null state", db.loadReaderState(pub.id))
 
@@ -117,7 +117,7 @@ class LibraryCoreInstrumentedTest {
 
         val outcome = db.importPaths(listOf(archive.absolutePath))
         assertTrue("diagnostics: ${outcome.diagnostics}", outcome.diagnostics.isEmpty())
-        val pub = db.listPublications().single()
+        val pub = db.publications.list().single()
         assertEquals("cbr", pub.format)
         assertEquals(3, pub.pageCount)
 

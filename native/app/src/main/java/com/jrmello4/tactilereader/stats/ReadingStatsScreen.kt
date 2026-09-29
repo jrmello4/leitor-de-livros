@@ -42,6 +42,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -54,6 +55,7 @@ import com.jrmello4.tactilereader.core.PublicationReadingStat
 import com.jrmello4.tactilereader.core.ReadingStatus
 import com.jrmello4.tactilereader.core.ReadingMetrics
 import com.jrmello4.tactilereader.scaffold.AppSources
+import com.jrmello4.tactilereader.scaffold.R
 import com.jrmello4.tactilereader.ui.theme.DarkGraphite750
 import com.jrmello4.tactilereader.ui.theme.DarkGraphite800
 import com.jrmello4.tactilereader.ui.theme.DarkGraphite850
@@ -122,14 +124,14 @@ fun ReadingStatsScreen(
                 ) {
                     Icon(
                         Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Voltar para a estante",
+                        contentDescription = stringResource(R.string.settings_back_to_shelf),
                         tint = Paper50,
                     )
                     Spacer(Modifier.width(4.dp))
-                    Text("Estante", color = Paper50, style = MaterialTheme.typography.labelLarge)
+                    Text(stringResource(R.string.navigation_shelf), color = Paper50, style = MaterialTheme.typography.labelLarge)
                 }
                 Text(
-                    text = "Minha leitura",
+                    text = stringResource(R.string.reading_stats_title),
                     style = MaterialTheme.typography.titleLarge,
                     color = Paper50,
                     modifier = Modifier
@@ -143,7 +145,7 @@ fun ReadingStatsScreen(
         when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    "Calculando estatísticas locais…",
+                    stringResource(R.string.reading_stats_loading),
                     style = MaterialTheme.typography.bodyMedium,
                     color = Paper300,
                 )
@@ -172,13 +174,13 @@ fun ReadingStatsScreen(
                             )
                             Spacer(Modifier.height(16.dp))
                             Text(
-                                "Ainda não há sessões de leitura",
+                                stringResource(R.string.reading_stats_empty_title),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = Paper50,
                             )
                             Spacer(Modifier.height(8.dp))
                             Text(
-                                "Leia algumas páginas para ver seu ritmo médio e estimativas de tempo restante.",
+                                stringResource(R.string.reading_stats_empty_description),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Paper300,
                             )
@@ -197,7 +199,7 @@ fun ReadingStatsScreen(
                         // Painel resumo geral editorial
                         Column(modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                "RESUMO GERAL",
+                                stringResource(R.string.reading_stats_overview_heading),
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     letterSpacing = 1.sp,
                                     fontWeight = FontWeight.Bold,
@@ -225,20 +227,23 @@ fun ReadingStatsScreen(
                                             .horizontalScroll(rememberScrollState()),
                                         horizontalArrangement = Arrangement.spacedBy(24.dp),
                                     ) {
-                                        StatItem("Tempo total", formatDuration(currentStats.totalMillis))
-                                        StatItem("Páginas lidas", "${currentStats.totalPagesRead}")
-                                        StatItem("Sessões", "${currentStats.totalSessions}")
+                                        StatItem(stringResource(R.string.reading_stats_total_time), formatDuration(currentStats.totalMillis))
+                                        StatItem(stringResource(R.string.reading_stats_pages_read), "${currentStats.totalPagesRead}")
+                                        StatItem(stringResource(R.string.reading_stats_sessions), "${currentStats.totalSessions}")
                                         if (currentStats.averagePpm > 0.0) {
                                             StatItem(
-                                                "Velocidade média",
-                                                "%.1f págs/min".format(Locale.US, currentStats.averagePpm),
+                                                stringResource(R.string.reading_stats_average_pace),
+                                                stringResource(
+                                                    R.string.reading_stats_pace_value,
+                                                    String.format(Locale.US, "%.1f", currentStats.averagePpm),
+                                                ),
                                             )
                                         }
                                     }
 
                                     Spacer(Modifier.height(16.dp))
                                     Text(
-                                        text = "Métricas 100% locais no dispositivo · sem telemetria, contas ou nuvem.",
+                                        text = stringResource(R.string.reading_stats_local_metrics),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = Paper500,
                                     )
@@ -250,7 +255,7 @@ fun ReadingStatsScreen(
                     if (currentStats.publications.isNotEmpty()) {
                         item {
                             Text(
-                                "HISTÓRICO POR HQ",
+                                stringResource(R.string.reading_stats_history_heading),
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     letterSpacing = 1.sp,
                                     fontWeight = FontWeight.Bold,
@@ -316,13 +321,25 @@ private fun PubStatCard(
             val remainingPages = ((1.0 - pub.progress.coerceIn(0.0, 1.0)) * pub.pageCount).toInt()
             val remainingText = if (pub.pagesPerMinute != null && remainingPages > 0) {
                 val mins = ReadingMetrics.estimateRemainingMinutes(remainingPages, pub.pagesPerMinute)
-                ReadingMetrics.formatRemainingTime(mins)?.let { " • $it" }.orEmpty()
+                when {
+                    mins == null -> ""
+                    mins <= 0 -> stringResource(R.string.reading_stats_complete_suffix)
+                    else -> stringResource(R.string.reading_stats_remaining_suffix, mins)
+                }
+            } else ""
+            val paceText = if (pub.pagesPerMinute != null) {
+                stringResource(
+                    R.string.reading_stats_pace_suffix,
+                    String.format(Locale.US, "%.1f", pub.pagesPerMinute),
+                )
             } else ""
 
             Text(
-                text = "${pub.pagesRead} págs lidas • ${formatDuration(pub.totalMillis)}" +
-                    (pub.pagesPerMinute?.let { " • %.1f págs/min".format(Locale.US, it) } ?: "") +
-                    remainingText,
+                text = stringResource(
+                    R.string.reading_stats_publication_summary,
+                    pub.pagesRead,
+                    formatDuration(pub.totalMillis),
+                ) + paceText + remainingText,
                 style = MaterialTheme.typography.bodySmall,
                 color = Paper300,
                 modifier = Modifier.padding(top = 4.dp),
@@ -353,22 +370,23 @@ private fun PubStatCard(
                     border = BorderStroke(1.dp, SeamSubtle),
                     modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                 ) {
-                    Text("Continuar lendo", style = MaterialTheme.typography.labelLarge)
+                    Text(stringResource(R.string.library_continue_reading), style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
     }
 }
 
+@Composable
 private fun formatDuration(millis: Long): String {
     val totalSeconds = (millis / 1000).coerceAtLeast(0)
     val totalMinutes = totalSeconds / 60
     val hours = totalMinutes / 60
     val minutes = totalMinutes % 60
     return when {
-        hours > 0 && minutes > 0 -> "${hours}h ${minutes}min"
-        hours > 0 -> "${hours}h"
-        minutes > 0 -> "${minutes} min"
-        else -> "< 1 min"
+        hours > 0 && minutes > 0 -> stringResource(R.string.reading_stats_duration_hours_minutes, hours, minutes)
+        hours > 0 -> stringResource(R.string.reading_stats_duration_hours, hours)
+        minutes > 0 -> stringResource(R.string.reading_stats_duration_minutes, minutes)
+        else -> stringResource(R.string.reading_stats_duration_under_minute)
     }
 }

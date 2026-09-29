@@ -116,7 +116,7 @@ internal class PageCacheManager(private val db: LibraryDb) {
                 db.execInsert("UPDATE pages SET cache_path = '' WHERE id = ?", arrayOf(pageId))
             }
             for (publicationId in affected) {
-                db.appendDiagnostic(publicationId, CACHE_MISSING_DIAGNOSTIC)
+                db.publications.appendDiagnostic(publicationId, CACHE_MISSING_DIAGNOSTIC)
             }
             db.database.setTransactionSuccessful()
         } finally {
@@ -153,7 +153,7 @@ internal class PageCacheManager(private val db: LibraryDb) {
                     db.execInsert("DELETE FROM cache_entries WHERE page_id = ?", arrayOf(pageId))
                     db.execInsert("UPDATE pages SET cache_path = '' WHERE id = ?", arrayOf(pageId))
                     if (path.isNotBlank()) {
-                        db.appendDiagnostic(publicationId, CACHE_MISSING_DIAGNOSTIC)
+                        db.publications.appendDiagnostic(publicationId, CACHE_MISSING_DIAGNOSTIC)
                     }
                 }
             }
@@ -248,7 +248,7 @@ internal class PageCacheManager(private val db: LibraryDb) {
             if (file.isFile && db.isInside(db.cacheDir, file)) file.delete()
             db.execInsert("DELETE FROM cache_entries WHERE page_id = ?", arrayOf(candidate.pageId))
             db.execInsert("UPDATE pages SET cache_path = '' WHERE id = ?", arrayOf(candidate.pageId))
-            db.appendDiagnostic(candidate.publicationId, CACHE_MISSING_DIAGNOSTIC)
+            db.publications.appendDiagnostic(candidate.publicationId, CACHE_MISSING_DIAGNOSTIC)
             remaining -= candidate.byteSize.coerceAtLeast(0)
         }
     }
@@ -292,7 +292,7 @@ internal class PageCacheManager(private val db: LibraryDb) {
         }
         db.rawQuery("SELECT source_path FROM publications", emptyArray()).use { cursor ->
             while (cursor.moveToNext()) {
-                db.legacyOriginPath(cursor.getString(0))?.let { path ->
+                db.publications.legacyOriginPath(cursor.getString(0))?.let { path ->
                     File(path).canonicalPathOrNull()?.let(out::add)
                 }
             }

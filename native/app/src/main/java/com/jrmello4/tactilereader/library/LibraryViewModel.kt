@@ -82,7 +82,7 @@ class LibraryViewModel(private val filesDir: File) : ViewModel() {
     }
 
     /** Lista a estante; a importação entra por SAF/OPDS, nunca sozinha. */
-    private fun loadOrSeed(): List<Pub> = db.listPublications()
+    private fun loadOrSeed(): List<Pub> = db.publications.list()
 
     /** Importa um arquivo já copiado para o armazenamento do app e recarrega. */
     fun importFile(path: String) {
@@ -121,7 +121,7 @@ class LibraryViewModel(private val filesDir: File) : ViewModel() {
                     )
                 }
                 val notice = outcome.diagnostics.joinToString(" ").ifBlank { null }
-                val pubs = withContext(Dispatchers.IO) { db.listPublications() }
+                val pubs = withContext(Dispatchers.IO) { db.publications.list() }
                 withContext(Dispatchers.IO) { primeImmediateCovers(pubs) }
                 val report = ImportReport(
                     total = sources.size,
@@ -176,7 +176,7 @@ class LibraryViewModel(private val filesDir: File) : ViewModel() {
         _state.value = _state.value.copy(pubs = updated)
         viewModelScope.launch {
             try {
-                withContext(Dispatchers.IO) { db.setFavorite(pub.id, !pub.isFavorite) }
+                withContext(Dispatchers.IO) { db.publications.setFavorite(pub.id, !pub.isFavorite) }
             } catch (_: Exception) {
                 _state.value = _state.value.copy(pubs = current)
             }
@@ -207,7 +207,7 @@ class LibraryViewModel(private val filesDir: File) : ViewModel() {
                 withContext(Dispatchers.IO) {
                     if (read) db.markFinished(pub.id) else db.clearReadingProgress(pub.id)
                 }
-                val pubs = withContext(Dispatchers.IO) { db.listPublications() }
+                val pubs = withContext(Dispatchers.IO) { db.publications.list() }
                 _state.value = _state.value.copy(pubs = pubs)
             } catch (error: Exception) {
                 _state.value = _state.value.copy(error = error.message ?: "falha ao atualizar o progresso")

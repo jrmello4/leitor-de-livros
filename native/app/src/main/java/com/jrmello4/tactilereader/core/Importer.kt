@@ -264,13 +264,13 @@ internal object Importer {
         source: ImportSource,
         shouldCancel: () -> Boolean = { false },
     ): Pub {
-        db.findPublicationBySourcePath(sourceKey)?.let { return it }
+        db.publications.findBySourcePath(sourceKey)?.let { return it }
         val opener = db.opener
         if (opener.sizeBytes(source.reference) > MAX_ARCHIVE_BYTES) {
             error("CBZ exceeds the archive size safety limit")
         }
         val publicationId = digestId("publication", sourceKey.toByteArray())
-        val pages = mutableListOf<LibraryDb.NewPage>()
+        val pages = mutableListOf<PublicationRepository.NewPage>()
         var totalBytes = 0L
         var comicInfoTitle: String? = null
         val local = opener.localPath(source.reference)
@@ -305,7 +305,7 @@ internal object Importer {
                 }
                 val (width, height) = validateImageDimensions(bytes, normalized)
                 pages.add(
-                    LibraryDb.NewPage(
+                    PublicationRepository.NewPage(
                         id = "$publicationId-page-%04d".format(pages.size),
                         index = pages.size,
                         name = fileNameOf(normalized),
@@ -330,7 +330,7 @@ internal object Importer {
             ?: stemOf(source.name(opener)).ifBlank { "Imported CBZ" }
         return persist(
             db,
-            LibraryDb.NewPublication(
+            PublicationRepository.NewPublication(
                 id = publicationId,
                 title = title,
                 sourceLabel = source.name(opener),
@@ -352,13 +352,13 @@ internal object Importer {
         source: ImportSource,
         shouldCancel: () -> Boolean = { false },
     ): Pub {
-        db.findPublicationBySourcePath(sourceKey)?.let { return it }
+        db.publications.findBySourcePath(sourceKey)?.let { return it }
         val opener = db.opener
         if (opener.sizeBytes(source.reference) > MAX_ARCHIVE_BYTES) {
             error("CBR exceeds the ${MAX_ARCHIVE_BYTES / 1024 / 1024 / 1024} GiB document size safety limit")
         }
         val publicationId = digestId("publication", sourceKey.toByteArray())
-        val pages = mutableListOf<LibraryDb.NewPage>()
+        val pages = mutableListOf<PublicationRepository.NewPage>()
         val seenNames = mutableSetOf<String>()
         var totalBytes = 0L
         val local = opener.localPath(source.reference)
@@ -410,7 +410,7 @@ internal object Importer {
                 }
                 val (width, height) = validateImageDimensions(bytes, normalized)
                 pages.add(
-                    LibraryDb.NewPage(
+                    PublicationRepository.NewPage(
                         id = "$publicationId-page-%04d".format(pages.size),
                         index = pages.size,
                         name = fileNameOf(normalized),
@@ -431,7 +431,7 @@ internal object Importer {
         }
         return persist(
             db,
-            LibraryDb.NewPublication(
+            PublicationRepository.NewPublication(
                 id = publicationId,
                 title = stemOf(source.name(opener)).ifBlank { "Imported CBR" },
                 sourceLabel = source.name(opener),
@@ -453,7 +453,7 @@ internal object Importer {
         paths: List<ImportSource>,
         title: String? = null,
     ): Pub {
-        db.findPublicationBySourcePath(sourceKey)?.let { return it }
+        db.publications.findBySourcePath(sourceKey)?.let { return it }
         val opener = db.opener
         val sorted = paths.distinctBy { it.reference }.sortedWith { left, right ->
             naturalCompare(left.name(opener), right.name(opener)).takeIf { it != 0 }
@@ -463,7 +463,7 @@ internal object Importer {
             error("image set exceeds the $MAX_PAGE_COUNT page safety limit")
         }
         val publicationId = digestId("publication", sourceKey.toByteArray())
-        val pages = mutableListOf<LibraryDb.NewPage>()
+        val pages = mutableListOf<PublicationRepository.NewPage>()
         var totalBytes = 0L
         for ((index, source) in sorted.withIndex()) {
             val size = opener.sizeBytes(source.reference)
@@ -478,7 +478,7 @@ internal object Importer {
             val label = source.name(opener)
             val (width, height) = validateImageDimensions(bytes, label)
             pages.add(
-                LibraryDb.NewPage(
+                PublicationRepository.NewPage(
                     id = "$publicationId-page-%04d".format(index),
                     index = index,
                     name = label,
@@ -499,7 +499,7 @@ internal object Importer {
         }
         return persist(
             db,
-            LibraryDb.NewPublication(
+            PublicationRepository.NewPublication(
                 id = publicationId,
                 title = derivedTitle,
                 sourceLabel = sourceLabel,
@@ -699,10 +699,10 @@ internal object Importer {
 
     // ------------------------------------------------------------- helpers
 
-    internal fun persist(db: LibraryDb, publication: LibraryDb.NewPublication): Pub {
-        val existing = db.findPublicationBySourcePath(publication.sourcePath)
+    internal fun persist(db: LibraryDb, publication: PublicationRepository.NewPublication): Pub {
+        val existing = db.publications.findBySourcePath(publication.sourcePath)
         if (existing != null) return existing
-        return db.insertPublication(publication)
+        return db.publications.insert(publication)
     }
 
     private fun sourceKey(prefix: String, values: List<String>): String {
