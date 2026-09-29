@@ -200,18 +200,17 @@ class LibraryViewModel(private val filesDir: File) : ViewModel() {
         }
     }
 
-    /** Marca como lido (última página) ou limpa o progresso (0). */
+    /** Marca como concluído ou limpa posição e estado de leitura. */
     fun setRead(pub: Pub, read: Boolean) {
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    val target = if (read) (pub.pageCount - 1).coerceAtLeast(0) else 0
-                    db.markRead(pub.id, target)
+                    if (read) db.markFinished(pub.id) else db.clearReadingProgress(pub.id)
                 }
                 val pubs = withContext(Dispatchers.IO) { db.listPublications() }
                 _state.value = _state.value.copy(pubs = pubs)
-            } catch (_: Exception) {
-                // Melhor-esforço: a estante segue legível.
+            } catch (error: Exception) {
+                _state.value = _state.value.copy(error = error.message ?: "falha ao atualizar o progresso")
             }
         }
     }

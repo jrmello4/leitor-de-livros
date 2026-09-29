@@ -10,12 +10,14 @@ antigo neste repositório.
 
 ## Estado
 
-Estante Compose validada no Moto G34 5G; lote 0.3.0 no host (aparelho
-pendente):
+App nativo Kotlin + Compose. O histórico de validações de host e dispositivo
+fica em [`docs/android-status.md`](docs/android-status.md); as mudanças desta
+revisão foram verificadas no host, e o reteste manual no aparelho permanece
+pendente.
 
 - faixa de leitura com zoom, marcadores, volume físico, binge com Cancelar
 - séries + busca/filtros/seleção em lote/favoritos, pastas com revarredura
-- PDF via `PdfRenderer`, backup local JSON, OPDS/Komga/Kavita, ComicInfo
+- PDF com renderização sob demanda via `PdfRenderer`, backup local JSON, OPDS/Komga/Kavita, ComicInfo
 - CBZ / CBR (RAR4/RAR5 via `junrar`) / 7z (commons-compress) / pastas de
   imagens, originais nunca alterados
 
@@ -25,7 +27,7 @@ Ver [`docs/roadmap-melhorias.md`](docs/roadmap-melhorias.md) e
 ## Estrutura
 
 - `native/` — o produto: app Android (AGP + Compose). O núcleo vive em
-  `app/.../tactilereader/core/` (SQLite schema v6, importadores, cache).
+  `app/.../tactilereader/core/` (SQLite schema v8, importadores, cache).
 - `docs/` — estado, roadmap, spec do produto. `DESIGN.md` — direção visual
   Paper Atelier.
 
@@ -33,7 +35,7 @@ Ver [`docs/roadmap-melhorias.md`](docs/roadmap-melhorias.md) e
 
 ```bat
 :: Dentro de native/
-gradlew.bat testDebugUnitTest assembleDebug
+gradlew.bat testDebugUnitTest lintRelease assembleDebug
 gradlew.bat connectedDebugAndroidTest
 ```
 

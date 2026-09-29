@@ -2,6 +2,19 @@
 
 A especificação de 08/09/2026 está em `docs/superpowers/specs/2026-09-08-mobile-android-comic-reader-design.md`.
 
+## Snapshot do código — 29/09/2026
+
+- O produto atual é o app nativo Kotlin + Jetpack Compose em `native/`, com SQLite no núcleo Kotlin; schema v8 preserva bancos anteriores por migração incremental.
+- A implementação atual indexa CBZ, CBR/RAR4/RAR5, 7z, coleções ZIP, PDFs e pastas de imagens. Páginas 7z e PDF são reconstruídas sob demanda no cache gerenciado; os originais permanecem intactos.
+- Progresso usa estado explícito `NOT_STARTED`, `READING` ou `FINISHED`; a página atual e o scroll relativo são guardados separadamente.
+- OPDS/Komga/Kavita e atualizador estão no app nativo. Credenciais OPDS são cifradas pelo Android Keystore e excluídas do backup automático do Android.
+- Backup JSON v2 usa índices de página e fingerprint de metadados mais manifesto ordenado das páginas; o restore só escolhe uma correspondência única e compatível, mantendo leitura de backups antigos por ID.
+- Validação desta revisão no host (29/09): 117 testes JVM, `lintRelease`, `assembleDebug` e `compileDebugAndroidTestSources` passaram. Os testes instrumentados não foram executados e o reteste manual no aparelho permanece pendente; os registros históricos abaixo não certificam o código atual.
+
+## Histórico de implementação
+
+As entradas a seguir preservam o diário cronológico, inclusive protótipos Tauri/WebView e JNI que foram aposentados. Para capacidades atuais, use o snapshot acima e compare com o código em `native/`.
+
 ## Base disponível
 
 O projeto existente usa React 19, TypeScript e Tauri 2, com biblioteca local,

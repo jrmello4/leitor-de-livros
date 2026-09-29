@@ -1,6 +1,5 @@
 package com.jrmello4.tactilereader.opds
 
-import android.util.Base64
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
@@ -36,20 +35,62 @@ object OpdsClient {
 
     const val MAX_FEED_ENTRIES = 500
     const val MAX_DOWNLOAD_BYTES = 500L * 1024 * 1024 // 500 MB
+    private const val MAX_REDIRECTS = 5
 
     private fun authHeader(server: OpdsServer): String? {
         if (server.user.isBlank()) return null
         val token = "${server.user}:${server.pass}"
-        return "Basic " + Base64.encodeToString(token.toByteArray(), Base64.NO_WRAP)
+        return "Basic " + java.util.Base64.getEncoder().encodeToString(token.toByteArray(Charsets.UTF_8))
     }
 
-    private fun open(url: String, server: OpdsServer, timeout: Int = 12000): HttpURLConnection {
-        val connection = URL(url).openConnection() as HttpURLConnection
-        connection.connectTimeout = timeout
-        connection.readTimeout = timeout
-        connection.instanceFollowRedirects = true
-        authHeader(server)?.let { connection.setRequestProperty("Authorization", it) }
-        return connection
+    internal fun open(
+        url: String,
+        server: OpdsServer,
+        timeout: Int = 12000,
+        requestHeaders: Map<String, String> = emptyMap(),
+    ): HttpURLConnection {
+        val credentialOrigin = URL(server.url)
+        var current = URL(url)
+        require(current.protocol == "http" || current.protocol == "https") { "Unsupported OPDS URL scheme" }
+        for (redirect in 0..MAX_REDIRECTS) {
+            val connection = current.openConnection() as HttpURLConnection
+            connection.connectTimeout = timeout
+            connection.readTimeout = timeout
+            connection.instanceFollowRedirects = false
+            requestHeaders.forEach { (name, value) -> connection.setRequestProperty(name, value) }
+            if (sameOrigin(current, credentialOrigin)) {
+                authHeader(server)?.let { connection.setRequestProperty("Authorization", it) }
+            }
+            val status = connection.responseCode
+            if (status !in REDIRECT_CODES) return connection
+            val location = connection.getHeaderField("Location")
+            if (location.isNullOrBlank()) return connection
+            if (redirect == MAX_REDIRECTS) {
+                connection.disconnect()
+                throw IllegalStateException("OPDS redirect limit exceeded")
+            }
+            val next = URL(current, location)
+            if (next.protocol != "http" && next.protocol != "https") {
+                connection.disconnect()
+                throw IllegalStateException("Unsupported OPDS redirect scheme")
+            }
+            connection.disconnect()
+            current = next
+        }
+        error("Unreachable redirect state")
+    }
+
+    private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
+
+    private fun sameOrigin(first: URL, second: URL): Boolean =
+        first.protocol.equals(second.protocol, ignoreCase = true) &&
+            first.host.equals(second.host, ignoreCase = true) &&
+            effectivePort(first) == effectivePort(second)
+
+    private fun effectivePort(url: URL): Int = when {
+        url.port >= 0 -> url.port
+        url.protocol.equals("https", ignoreCase = true) -> 443
+        else -> 80
     }
 
     fun resolve(base: String, href: String): String {
@@ -134,8 +175,7 @@ object OpdsClient {
     fun komgaSeries(server: OpdsServer, page: Int = 0, size: Int = 50): List<Entry> {
         val base = server.url.trimEnd('/')
         val url = "$base/api/v2/series?page=$page&size=$size&sort=name,asc"
-        val connection = open(url, server)
-        connection.setRequestProperty("Accept", "application/json")
+        val connection = open(url, server, requestHeaders = mapOf("Accept" to "application/json"))
         if (connection.responseCode !in 200..299) {
             throw IllegalStateException("Komga respondeu ${connection.responseCode}")
         }
@@ -159,8 +199,7 @@ object OpdsClient {
     fun komgaBooks(server: OpdsServer, seriesId: String): List<Entry> {
         val base = server.url.trimEnd('/')
         val url = "$base/api/v2/series/$seriesId/books?sort=metadata.numberSort,asc"
-        val connection = open(url, server)
-        connection.setRequestProperty("Accept", "application/json")
+        val connection = open(url, server, requestHeaders = mapOf("Accept" to "application/json"))
         if (connection.responseCode !in 200..299) {
             throw IllegalStateException("Komga respondeu ${connection.responseCode}")
         }

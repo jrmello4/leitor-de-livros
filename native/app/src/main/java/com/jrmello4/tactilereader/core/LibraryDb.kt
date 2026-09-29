@@ -4,14 +4,15 @@ import android.content.ContentValues
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import java.io.File
+import java.security.MessageDigest
 
 /**
- * Banco da biblioteca em Kotlin puro (SQLite do Android), com o MESMO
- * schema v6 e os MESMOS identificadores do núcleo Rust anterior — bancos
- * existentes no aparelho continuam válidos.
+ * Banco da biblioteca em Kotlin puro (SQLite do Android), com migrações
+ * incrementais desde o schema v6 e identificadores estáveis para os bancos
+ * existentes no aparelho.
  *
- * Uma instância por diretório (cache em processo); todos os métodos são
- * sincronizados porque o app chama de várias coroutines de IO.
+ * Uma instância por diretório (cache em processo); operações SQLite são
+ * serializadas por instância e reconstruções de página usam locks em faixas.
  */
 class LibraryDb private constructor(
     val dataDir: File,
@@ -21,8 +22,9 @@ class LibraryDb private constructor(
 ) {
     val cacheDir: File = File(dataDir, "cache/pages")
     private val database: SQLiteDatabase
-    private val lock = Any()
     private val importLock = java.util.concurrent.locks.ReentrantLock()
+    private val pageLockStripes = Array(64) { Any() }
+    @Volatile internal var queryObserverForTests: ((String) -> Unit)? = null
 
     init {
         dataDir.mkdirs()
@@ -249,6 +251,59 @@ class LibraryDb private constructor(
             )
             markMigration(7)
         }
+        if (current < 8) {
+            if (!columnExists("progress", "reading_status")) {
+                execBatch("ALTER TABLE progress ADD COLUMN reading_status INTEGER NOT NULL DEFAULT 0")
+            }
+            // A linha criada durante a importação não significa leitura iniciada.
+            // Recupera estados legados apenas quando a posição salva é posterior
+            // à primeira página ou o estado do leitor foi salvo depois do progresso.
+            execBatch(
+                """
+                UPDATE progress
+                   SET reading_status = CASE
+                       WHEN (
+                           SELECT COUNT(*) FROM pages
+                            WHERE pages.publication_id = progress.publication_id
+                       ) > 1
+                       AND (
+                           (
+                               (SELECT direction FROM publications
+                                 WHERE publications.id = progress.publication_id) = 'rtl'
+                               AND progress.current_page = 0
+                           )
+                           OR
+                           (
+                               (SELECT direction FROM publications
+                                 WHERE publications.id = progress.publication_id) <> 'rtl'
+                               AND progress.current_page >= (
+                                   SELECT COUNT(*) - 1 FROM pages
+                                    WHERE pages.publication_id = progress.publication_id
+                               )
+                           )
+                       )
+                       AND (
+                           progress.current_page > 0
+                           OR EXISTS (
+                               SELECT 1 FROM reader_states
+                                WHERE reader_states.publication_id = progress.publication_id
+                                  AND reader_states.page_id IS NOT NULL
+                                  AND reader_states.updated_at >= progress.updated_at
+                           )
+                       ) THEN 2
+                       WHEN progress.current_page > 0
+                         OR EXISTS (
+                             SELECT 1 FROM reader_states
+                              WHERE reader_states.publication_id = progress.publication_id
+                                AND reader_states.page_id IS NOT NULL
+                                AND reader_states.updated_at >= progress.updated_at
+                         ) THEN 1
+                       ELSE 0
+                   END
+                """.trimIndent(),
+            )
+            markMigration(8)
+        }
     }
 
     private fun backfillDeterministicSourceRefs() {
@@ -325,32 +380,53 @@ class LibraryDb private constructor(
 
     // ------------------------------------------------------------ public API
 
-    /** Resumo da estante: uma consulta leve, sem materializar páginas. */
+    /** Resumo completo da estante em uma consulta, sem materializar páginas. */
     @Synchronized
     fun listPublications(): List<Pub> {
-        val rows = mutableListOf<PublicationRow>()
+        val publications = mutableListOf<Pub>()
         rawQuery(
             """
-            SELECT id, title, source_label, format, cover_page_id,
-                   added_at, updated_at, is_favorite, diagnostic,
-                   custom_cover_cache, custom_cover_name, source_path, direction,
-                   author, year, genre, series_name,
-                   (SELECT last_read_at FROM reading_stats WHERE publication_id = publications.id),
-                   (SELECT CASE
-                       WHEN total_millis > 0 AND pages_read > 0
-                       THEN pages_read * 60000.0 / total_millis
-                       ELSE NULL
-                    END FROM reading_stats WHERE publication_id = publications.id)
-              FROM publications
-             ORDER BY updated_at DESC, title COLLATE NOCASE ASC
+            SELECT p.id, p.title, p.source_label, p.format, p.cover_page_id,
+                   p.added_at, p.updated_at, p.is_favorite, p.diagnostic,
+                   p.custom_cover_cache, p.custom_cover_name, p.source_path, p.direction,
+                   p.author, p.year, p.genre, p.series_name,
+                   rs.last_read_at,
+                   CASE WHEN rs.total_millis > 0 AND rs.pages_read > 0
+                        THEN rs.pages_read * 60000.0 / rs.total_millis ELSE NULL END,
+                   COALESCE(page_summary.page_count, 0),
+                   COALESCE(pr.current_page, 0),
+                   COALESCE(pr.reading_status, 0),
+                   COALESCE(page_summary.first_page_id, ''),
+                   page_summary.cover_src,
+                   current_read_page.id
+              FROM publications AS p
+              LEFT JOIN reading_stats AS rs ON rs.publication_id = p.id
+              LEFT JOIN progress AS pr ON pr.publication_id = p.id
+              LEFT JOIN (
+                    SELECT publication_id,
+                           COUNT(*) AS page_count,
+                           MAX(CASE WHEN page_index = 0 THEN id END) AS first_page_id,
+                           MAX(CASE WHEN page_index = 0 THEN NULLIF(cache_path, '') END) AS cover_src
+                      FROM pages
+                     GROUP BY publication_id
+              ) AS page_summary ON page_summary.publication_id = p.id
+              LEFT JOIN pages AS current_read_page
+                ON current_read_page.publication_id = p.id
+               AND current_read_page.page_index = CASE
+                    WHEN COALESCE(pr.current_page, 0) < 0 THEN 0
+                    WHEN COALESCE(pr.current_page, 0) >= COALESCE(page_summary.page_count, 0)
+                    THEN MAX(COALESCE(page_summary.page_count, 0) - 1, 0)
+                    ELSE COALESCE(pr.current_page, 0)
+               END
+             ORDER BY p.updated_at DESC, p.title COLLATE NOCASE ASC
             """.trimIndent(),
             emptyArray(),
         ).use { cursor ->
             while (cursor.moveToNext()) {
-                rows.add(cursor.toPublicationRow())
+                publications.add(cursor.toShelfPublication())
             }
         }
-        return rows.map { readPublicationSummary(it) }
+        return publications
     }
 
     @Synchronized
@@ -404,59 +480,82 @@ class LibraryDb private constructor(
      * Garante os bytes derivados de uma página (reconstruindo do original
      * somente-leitura quando preciso) e devolve o caminho de cache.
      */
-    @Synchronized
     fun ensurePage(publicationId: String, pageId: String): ReaderPage {
-        val data = rawQuery(
-            """
-            SELECT p.id, p.page_index, p.name, p.cache_path, p.source_ref,
-                   p.width, p.height, publications.format
-              FROM pages p
-              JOIN publications ON publications.id = p.publication_id
-             WHERE p.publication_id = ? AND p.id = ?
-            """.trimIndent(),
-            arrayOf(publicationId, pageId),
-        ).use { cursor ->
-            if (!cursor.moveToFirst()) error("page does not belong to the publication")
-            PageData(
-                id = cursor.getString(0),
-                index = cursor.getInt(1),
-                name = cursor.getString(2),
-                cachePath = cursor.getString(3),
-                sourceRef = PageSourceRef.fromJson(cursor.getString(4)),
-                width = cursor.getInt(5),
-                height = cursor.getInt(6),
-                format = cursor.getString(7),
-            )
+        val stripeIndex = (31 * publicationId.hashCode() + pageId.hashCode()) and (pageLockStripes.size - 1)
+        synchronized(pageLockStripes[stripeIndex]) {
+            val (data, protectedIds) = synchronized(this) {
+                val pageData = rawQuery(
+                    """
+                    SELECT p.id, p.page_index, p.name, p.cache_path, p.source_ref,
+                           p.width, p.height, publications.format
+                      FROM pages p
+                      JOIN publications ON publications.id = p.publication_id
+                     WHERE p.publication_id = ? AND p.id = ?
+                    """.trimIndent(),
+                    arrayOf(publicationId, pageId),
+                ).use { cursor ->
+                    if (!cursor.moveToFirst()) error("page does not belong to the publication")
+                    PageData(
+                        id = cursor.getString(0),
+                        index = cursor.getInt(1),
+                        name = cursor.getString(2),
+                        cachePath = cursor.getString(3),
+                        sourceRef = PageSourceRef.fromJson(cursor.getString(4)),
+                        width = cursor.getInt(5),
+                        height = cursor.getInt(6),
+                        format = cursor.getString(7),
+                    )
+                }
+                pageData to protectedPageIds(publicationId, pageData.index)
+            }
+            val cacheFile = validCacheFile(data.cachePath)
+            if (cacheFile != null) {
+                val reused = synchronized(this) {
+                    if (!cacheFile.isFile) {
+                        false
+                    } else {
+                        touchCacheEntry(pageId, data.cachePath, cacheFile.length())
+                        enforceCacheLimit(protectedIds)
+                        true
+                    }
+                }
+                if (reused) return data.toReaderPage(cacheFile.path)
+            }
+
+            val sourceRef = data.sourceRef
+                ?: throw IllegalStateException(CACHE_MISSING_DIAGNOSTIC)
+            // Reopening archives, rendering, validating and writing happen without
+            // the database-wide monitor. Other pages can progress concurrently.
+            val rebuilt = Importer.rebuildPage(this, data.format, sourceRef)
+            val file = cachePage(publicationCacheDir(publicationId), pageId, rebuilt.extension, rebuilt.bytes)
+            val path = file.path
+            try {
+                synchronized(this) {
+                    val stillExists = queryLong(
+                        "SELECT COUNT(*) FROM pages WHERE publication_id = ? AND id = ?",
+                        arrayOf(publicationId, pageId),
+                    ) > 0
+                    if (!stillExists) error("page was deleted while its cache was being built")
+                    database.beginTransaction()
+                    try {
+                        execInsert(
+                            "UPDATE pages SET cache_path = ?, width = ?, height = ? WHERE publication_id = ? AND id = ?",
+                            arrayOf(path, rebuilt.width, rebuilt.height, publicationId, pageId),
+                        )
+                        touchCacheEntry(pageId, path, file.length())
+                        database.setTransactionSuccessful()
+                    } finally {
+                        database.endTransaction()
+                    }
+                    enforceCacheLimit(protectedIds)
+                }
+            } catch (error: Exception) {
+                file.delete()
+                throw error
+            }
+            return data.copy(cachePath = path, width = rebuilt.width, height = rebuilt.height)
+                .toReaderPage(path)
         }
-        val protectedIds = protectedPageIds(publicationId, data.index)
-        validCacheFile(data.cachePath)?.let { file ->
-            touchCacheEntry(pageId, data.cachePath, file.length())
-            enforceCacheLimit(protectedIds)
-            return data.toReaderPage(file.path)
-        }
-        val sourceRef = data.sourceRef
-            ?: throw IllegalStateException(CACHE_MISSING_DIAGNOSTIC)
-        val rebuilt = Importer.rebuildPage(this, data.format, sourceRef)
-        val publicationCacheDir = publicationCacheDir(publicationId)
-        val file = cachePage(publicationCacheDir, pageId, rebuilt.extension, rebuilt.bytes)
-        val path = file.path
-        database.beginTransaction()
-        try {
-            execInsert(
-                "UPDATE pages SET cache_path = ?, width = ?, height = ? WHERE publication_id = ? AND id = ?",
-                arrayOf(path, rebuilt.width, rebuilt.height, publicationId, pageId),
-            )
-            touchCacheEntry(pageId, path, file.length())
-            database.setTransactionSuccessful()
-        } catch (error: Exception) {
-            file.delete()
-            throw error
-        } finally {
-            database.endTransaction()
-        }
-        enforceCacheLimit(protectedIds)
-        return data.copy(cachePath = path, width = rebuilt.width, height = rebuilt.height)
-            .toReaderPage(path)
     }
 
     @Synchronized
@@ -476,12 +575,24 @@ class LibraryDb private constructor(
         if (publicationId.isBlank() || pageId.isBlank()) {
             error("publication id and page id must not be empty")
         }
-        val pageIndex = rawQuery(
-            "SELECT page_index FROM pages WHERE publication_id = ? AND id = ?",
+        val position = rawQuery(
+            """
+            SELECT pages.page_index,
+                   (SELECT COUNT(*) FROM pages AS all_pages
+                     WHERE all_pages.publication_id = pages.publication_id),
+                   publications.direction
+              FROM pages
+              JOIN publications ON publications.id = pages.publication_id
+             WHERE pages.publication_id = ? AND pages.id = ?
+            """.trimIndent(),
             arrayOf(publicationId, pageId),
         ).use { cursor ->
             if (!cursor.moveToFirst()) error("page does not belong to the publication")
-            cursor.getInt(0).coerceAtLeast(0)
+            ReadingPosition(
+                pageIndex = cursor.getInt(0).coerceAtLeast(0),
+                pageCount = cursor.getInt(1).coerceAtLeast(0),
+                direction = cursor.getString(2),
+            )
         }
         val ratio = if (scrollRatio.isNaN()) 0.0 else scrollRatio.coerceIn(0.0, 1.0)
         val now = timestampMillis()
@@ -504,9 +615,12 @@ class LibraryDb private constructor(
             }
             // A estante usa esta tabela leve para exibir o progresso sem
             // materializar o estado completo do leitor.
-            update(
-                "UPDATE progress SET current_page = ?, updated_at = ? WHERE publication_id = ?",
-                arrayOf(pageIndex, now, publicationId),
+            val isFinished = position.pageCount > 1 && position.isFinalPage
+            writeProgress(
+                publicationId = publicationId,
+                currentPage = position.pageIndex,
+                status = if (isFinished) ReadingStatus.FINISHED else ReadingStatus.READING,
+                updatedAt = now,
             )
             database.setTransactionSuccessful()
         } finally {
@@ -623,6 +737,7 @@ class LibraryDb private constructor(
                         sessions = stats.sessions,
                         pagesPerMinute = pub.readingPagesPerMinute,
                         lastReadAt = stats.lastReadAt,
+                        readingStatus = pub.readingStatus,
                     )
                 )
             }
@@ -657,6 +772,72 @@ class LibraryDb private constructor(
         return out
     }
 
+    /** Snapshot for portable backups; both queries are independent of shelf size. */
+    @Synchronized
+    internal fun backupSnapshot(): Map<String, PublicationBackupSnapshot> {
+        val positions = mutableMapOf<String, BackupPagePosition>()
+        rawQuery(
+            """
+            SELECT rs.publication_id, pg.page_index, rs.scroll_ratio
+              FROM reader_states rs
+              JOIN pages pg ON pg.publication_id = rs.publication_id AND pg.id = rs.page_id
+            """.trimIndent(),
+            emptyArray(),
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                positions[cursor.getString(0)] =
+                    BackupPagePosition(cursor.getInt(1), cursor.getDouble(2).coerceIn(0.0, 1.0))
+            }
+        }
+
+        val bookmarks = mutableMapOf<String, MutableList<BackupBookmarkPosition>>()
+        rawQuery(
+            """
+            SELECT b.publication_id, pg.page_index, b.page_id, b.label
+              FROM bookmarks b
+              JOIN pages pg ON pg.publication_id = b.publication_id AND pg.id = b.page_id
+             ORDER BY b.created_at ASC, b.page_id ASC
+            """.trimIndent(),
+            emptyArray(),
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                bookmarks.getOrPut(cursor.getString(0)) { mutableListOf() }.add(
+                    BackupBookmarkPosition(
+                        pageIndex = cursor.getInt(1),
+                        pageId = cursor.getString(2),
+                        label = cursor.getString(3) ?: "",
+                    ),
+                )
+            }
+        }
+
+        val pageDigests = mutableMapOf<String, MessageDigest>()
+        rawQuery(
+            "SELECT publication_id, page_index, name, width, height FROM pages ORDER BY publication_id, page_index",
+            emptyArray(),
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val publicationId = cursor.getString(0)
+                val name = cursor.getString(2) ?: ""
+                val digest = pageDigests.getOrPut(publicationId) { MessageDigest.getInstance("SHA-256") }
+                digest.update("${cursor.getInt(1)}:${cursor.getInt(3)}:${cursor.getInt(4)}:${name.length}:".toByteArray(Charsets.UTF_8))
+                digest.update(name.toByteArray(Charsets.UTF_8))
+                digest.update(0)
+            }
+        }
+        val manifestFingerprints = pageDigests.mapValues { (_, digest) ->
+            digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+        }
+
+        return (positions.keys + bookmarks.keys + manifestFingerprints.keys).associateWith { publicationId ->
+            PublicationBackupSnapshot(
+                position = positions[publicationId],
+                bookmarks = bookmarks[publicationId].orEmpty(),
+                pageManifestFingerprint = manifestFingerprints[publicationId],
+            )
+        }
+    }
+
     @Synchronized
     fun setFavorite(publicationId: String, favorite: Boolean) {
         execInsert(
@@ -665,27 +846,79 @@ class LibraryDb private constructor(
         )
     }
 
-    /** Marca como lido (última página) ou limpa o progresso (0). */
+    /** Define a página lida; use [clearReadingProgress] para voltar a NOT_STARTED. */
     @Synchronized
     fun markRead(publicationId: String, currentPage: Int) {
-        val page = currentPage.coerceAtLeast(0)
+        val pageCount = queryLong(
+            "SELECT COUNT(*) FROM pages WHERE publication_id = ?",
+            arrayOf(publicationId),
+        ).toInt()
+        val direction = rawQuery(
+            "SELECT direction FROM publications WHERE id = ?",
+            arrayOf(publicationId),
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else "ltr" }
+        val page = currentPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+        val finished = pageCount > 0 && (pageCount == 1 ||
+            (direction == "rtl" && page == 0) ||
+            (direction != "rtl" && page == pageCount - 1))
         val now = timestampMillis()
         database.beginTransaction()
         try {
-            val updated = update(
-                "UPDATE progress SET current_page = ?, updated_at = ? WHERE publication_id = ?",
-                arrayOf(page, now, publicationId),
+            writeProgress(
+                publicationId,
+                page,
+                if (finished) ReadingStatus.FINISHED else ReadingStatus.READING,
+                now,
             )
-            if (updated == 0) {
-                execInsert(
-                    "INSERT INTO progress (publication_id, current_page, updated_at) VALUES (?, ?, ?)",
-                    arrayOf(publicationId, page, now),
-                )
-            }
             execInsert(
                 "UPDATE publications SET updated_at = ? WHERE id = ?",
                 arrayOf(now, publicationId),
             )
+            database.setTransactionSuccessful()
+        } finally {
+            database.endTransaction()
+        }
+    }
+
+    @Synchronized
+    fun markFinished(publicationId: String) {
+        val position = rawQuery(
+            """
+            SELECT COUNT(*), direction FROM pages
+              JOIN publications ON publications.id = pages.publication_id
+             WHERE publications.id = ?
+            """.trimIndent(),
+            arrayOf(publicationId),
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return
+            cursor.getInt(0) to cursor.getString(1)
+        }
+        val pageCount = position.first
+        if (pageCount <= 0) return
+        val terminalPage = if (position.second == "rtl") 0 else pageCount - 1
+        val now = timestampMillis()
+        database.beginTransaction()
+        try {
+            writeProgress(publicationId, terminalPage, ReadingStatus.FINISHED, now)
+            execInsert("UPDATE publications SET updated_at = ? WHERE id = ?", arrayOf(now, publicationId))
+            database.setTransactionSuccessful()
+        } finally {
+            database.endTransaction()
+        }
+    }
+
+    @Synchronized
+    fun clearReadingProgress(publicationId: String) {
+        val now = timestampMillis()
+        database.beginTransaction()
+        try {
+            writeProgress(publicationId, 0, ReadingStatus.NOT_STARTED, now)
+            // Preserve zoom and pan settings while discarding the resumable position.
+            execInsert(
+                "UPDATE reader_states SET page_id = NULL, scroll_ratio = 0.0, updated_at = ? WHERE publication_id = ?",
+                arrayOf(now, publicationId),
+            )
+            execInsert("UPDATE publications SET updated_at = ? WHERE id = ?", arrayOf(now, publicationId))
             database.setTransactionSuccessful()
         } finally {
             database.endTransaction()
@@ -836,6 +1069,7 @@ class LibraryDb private constructor(
         val publicationOrigins = publicationOriginPaths(publicationId)
         val otherOrigins = allOtherOriginPaths(publicationId)
         val cachePublicationDir = publicationCacheDir(publicationId)
+        val legacySevenZipDir = File(dataDir, "7z-$publicationId")
         val staging = File(cacheDir, ".$publicationId.${System.nanoTime()}.delete")
         var staged = false
         if (cachePublicationDir.exists()) {
@@ -867,10 +1101,20 @@ class LibraryDb private constructor(
         if (staged) {
             staging.deleteRecursively()
         }
+        // Compatibilidade com publicações 7z da versão que mantinha uma
+        // extração completa fora do cache por publicação.
+        legacySevenZipDir.deleteRecursively()
         removeEmptyDirectories(cacheDir)
         for (origin in publicationOrigins) {
             if (otherOrigins.contains(origin)) continue
             val file = File(origin)
+            val legacyPdfRoot = File(dataDir.parentFile, "pdf-pages")
+            if (isInside(legacyPdfRoot, file)) {
+                val pdfDirectory = file.parentFile
+                if (pdfDirectory != null && otherOrigins.none { isInside(pdfDirectory, File(it)) }) {
+                    pdfDirectory.deleteRecursively()
+                }
+            }
             if (isInside(managedImportsDir, file) && file.isFile) {
                 file.delete()
             }
@@ -893,11 +1137,17 @@ class LibraryDb private constructor(
                 arrayOf(normalized.id),
             ).toInt()
         }
-        val currentPage = rawQuery(
-            "SELECT current_page FROM progress WHERE publication_id = ?",
+        val (currentPage, readingStatus) = rawQuery(
+            "SELECT current_page, reading_status FROM progress WHERE publication_id = ?",
             arrayOf(normalized.id),
-        ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0).coerceAtLeast(0) else 0 }
-            .coerceAtMost((pageCount - 1).coerceAtLeast(0))
+        ).use { cursor ->
+            if (cursor.moveToFirst()) {
+                cursor.getInt(0).coerceAtLeast(0) to ReadingStatus.fromDatabase(cursor.getInt(1))
+            } else {
+                0 to ReadingStatus.NOT_STARTED
+            }
+        }
+        val safeCurrentPage = currentPage.coerceAtMost((pageCount - 1).coerceAtLeast(0))
 
         val coverPageId = rawQuery(
             """
@@ -914,7 +1164,7 @@ class LibraryDb private constructor(
         }
         val currentPageId = rawQuery(
             "SELECT id FROM pages WHERE publication_id = ? ORDER BY page_index ASC LIMIT 1 OFFSET ?",
-            arrayOf(normalized.id, currentPage),
+            arrayOf(normalized.id, safeCurrentPage),
         ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
 
         var diagnostic = normalized.diagnostic
@@ -932,7 +1182,11 @@ class LibraryDb private constructor(
             title = normalized.title,
             format = normalized.format,
             pageCount = pageCount,
-            progress = calculateProgress(currentPage, pageCount, normalized.direction),
+            progress = when (readingStatus) {
+                ReadingStatus.NOT_STARTED -> 0.0
+                ReadingStatus.READING -> calculateProgress(safeCurrentPage, pageCount, normalized.direction)
+                ReadingStatus.FINISHED -> 1.0
+            },
             isFavorite = normalized.isFavorite,
             coverPageId = if (coverPageId.isBlank()) {
                 rawQuery(
@@ -952,6 +1206,8 @@ class LibraryDb private constructor(
             seriesName = normalized.seriesName,
             lastReadAt = normalized.lastReadAt,
             readingPagesPerMinute = normalized.readingPagesPerMinute,
+            readingStatus = readingStatus,
+            sourceName = normalized.sourceLabel,
         )
     }
 
@@ -972,6 +1228,24 @@ class LibraryDb private constructor(
         val safePage = currentPage.coerceIn(0, pageCount - 1)
         val logical = if (direction == "rtl") pageCount - 1 - safePage else safePage
         return (logical + 1).toDouble() / pageCount.toDouble()
+    }
+
+    private fun writeProgress(
+        publicationId: String,
+        currentPage: Int,
+        status: ReadingStatus,
+        updatedAt: String,
+    ) {
+        val updated = update(
+            "UPDATE progress SET current_page = ?, reading_status = ?, updated_at = ? WHERE publication_id = ?",
+            arrayOf(currentPage, status.databaseValue, updatedAt, publicationId),
+        )
+        if (updated == 0) {
+            execInsert(
+                "INSERT INTO progress (publication_id, current_page, reading_status, updated_at) VALUES (?, ?, ?, ?)",
+                arrayOf(publicationId, currentPage, status.databaseValue, updatedAt),
+            )
+        }
     }
 
     private fun validCustomCover(path: String): Boolean {
@@ -1164,7 +1438,7 @@ class LibraryDb private constructor(
     }
 
     private fun legacyOriginPath(sourcePath: String): String? =
-        listOf("archive:", "cbr:", "pdf:", "image:")
+        listOf("archive:", "cbr:", "7z:", "pdf:", "image:")
             .firstOrNull { sourcePath.startsWith(it) }
             ?.let { sourcePath.removePrefix(it) }
 
@@ -1224,8 +1498,10 @@ class LibraryDb private constructor(
 
     private class DatabaseLock
 
-    private fun rawQuery(sql: String, args: Array<Any?>): Cursor =
-        database.rawQuery(sql, args.map { it?.toString() }.toTypedArray())
+    private fun rawQuery(sql: String, args: Array<Any?>): Cursor {
+        queryObserverForTests?.invoke(sql)
+        return database.rawQuery(sql, args.map { it?.toString() }.toTypedArray())
+    }
 
     private fun queryLong(sql: String, args: Array<Any?>): Long =
         rawQuery(sql, args).use { cursor ->
@@ -1389,7 +1665,7 @@ class LibraryDb private constructor(
                 }
             }
             execInsert(
-                "INSERT INTO progress (publication_id, current_page, updated_at) VALUES (?, 0, ?)",
+                "INSERT INTO progress (publication_id, current_page, updated_at, reading_status) VALUES (?, 0, ?, 0)",
                 arrayOf(publication.id, publication.updatedAt),
             )
             database.setTransactionSuccessful()
@@ -1422,6 +1698,15 @@ class LibraryDb private constructor(
             height = height,
             cachePath = path?.ifBlank { null },
         )
+    }
+
+    private data class ReadingPosition(
+        val pageIndex: Int,
+        val pageCount: Int,
+        val direction: String,
+    ) {
+        val isFinalPage: Boolean
+            get() = if (direction == "rtl") pageIndex == 0 else pageIndex == pageCount - 1
     }
 
     private data class CacheCandidate(
@@ -1474,6 +1759,50 @@ class LibraryDb private constructor(
         lastReadAt = getString(17),
         readingPagesPerMinute = if (isNull(18)) null else getDouble(18),
     )
+
+    /** Colunas 0..18 são PublicationRow; as restantes são o agregado da estante. */
+    private fun Cursor.toShelfPublication(): Pub {
+        val row = normalizeImportNames(toPublicationRow())
+        val pageCount = getInt(19).coerceAtLeast(0)
+        val currentPage = getInt(20).coerceAtLeast(0).coerceAtMost((pageCount - 1).coerceAtLeast(0))
+        val readingStatus = ReadingStatus.fromDatabase(getInt(21))
+        val firstPageId = getString(22).orEmpty()
+        val coverSrc = getString(23)?.ifBlank { null }
+        val currentPageId = getString(24)?.ifBlank { null }
+        var diagnostic = row.diagnostic
+        val customCoverPath = row.customCoverCache?.takeIf { validCustomCover(it) }
+        if (row.customCoverCache != null && customCoverPath == null) {
+            diagnostic = diagnostic
+                ?.takeUnless { it.contains(CUSTOM_COVER_MISSING_DIAGNOSTIC) }
+                ?.plus(" ").plus(CUSTOM_COVER_MISSING_DIAGNOSTIC)
+                ?: CUSTOM_COVER_MISSING_DIAGNOSTIC
+        }
+        return Pub(
+            id = row.id,
+            title = row.title,
+            format = row.format,
+            pageCount = pageCount,
+            progress = when (readingStatus) {
+                ReadingStatus.NOT_STARTED -> 0.0
+                ReadingStatus.READING -> calculateProgress(currentPage, pageCount, row.direction)
+                ReadingStatus.FINISHED -> 1.0
+            },
+            isFavorite = row.isFavorite,
+            coverPageId = row.coverPageId.ifBlank { firstPageId },
+            coverSrc = coverSrc,
+            customCoverPath = customCoverPath,
+            diagnostic = diagnostic,
+            currentPageId = currentPageId,
+            author = row.author,
+            year = row.year,
+            genre = row.genre,
+            seriesName = row.seriesName,
+            lastReadAt = row.lastReadAt,
+            readingPagesPerMinute = row.readingPagesPerMinute,
+            readingStatus = readingStatus,
+            sourceName = row.sourceLabel,
+        )
+    }
 
     companion object {
         private val instances = mutableMapOf<String, LibraryDb>()

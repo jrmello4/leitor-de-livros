@@ -2,6 +2,8 @@ package com.jrmello4.tactilereader.scaffold
 
 import android.content.ContentResolver
 import android.net.Uri
+import android.os.ParcelFileDescriptor
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import com.jrmello4.tactilereader.core.FileSourceOpener
 import com.jrmello4.tactilereader.core.SourceOpener
@@ -68,6 +70,31 @@ class ContentSourceOpener(private val resolver: ContentResolver) : SourceOpener 
 
     override fun localPath(reference: String): String? =
         if (reference.startsWith("content://")) null else FileSourceOpener.localPath(reference)
+
+    override fun openFileDescriptor(reference: String): ParcelFileDescriptor? =
+        if (reference.startsWith("content://")) {
+            resolver.openFileDescriptor(Uri.parse(reference), "r")
+        } else {
+            super<SourceOpener>.openFileDescriptor(reference)
+        }
+
+    override fun lastModifiedMillis(reference: String): Long {
+        if (!reference.startsWith("content://")) return File(reference).lastModified()
+        return try {
+            resolver.query(
+                Uri.parse(reference),
+                arrayOf(DocumentsContract.Document.COLUMN_LAST_MODIFIED),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                val index = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+                if (cursor.moveToFirst() && index >= 0) cursor.getLong(index) else 0L
+            } ?: 0L
+        } catch (_: Exception) {
+            0L
+        }
+    }
 }
 
 /** Mantém a fonte do processo: definida uma vez no [TactileApp]. */

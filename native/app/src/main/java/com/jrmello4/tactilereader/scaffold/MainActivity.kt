@@ -135,15 +135,7 @@ class MainActivity : ComponentActivity() {
                         shouldCancel = { cancelWork.get() },
                     )
                 }
-                val sources = withContext(Dispatchers.IO) {
-                    scan.sources.mapNotNull { source ->
-                        if (source.displayName?.lowercase()?.endsWith(".pdf") == true) {
-                            renderPdfSource(source)
-                        } else {
-                            source
-                        }
-                    }
-                }
+                val sources = scan.sources
                 busy.value = null
                 when {
                     sources.isNotEmpty() -> {
@@ -389,6 +381,7 @@ class MainActivity : ComponentActivity() {
                                                 onOpenSettings = { screen = "settings" },
                                                 onOpenBookmarks = { screen = "bookmarks" },
                                                 onOpenStats = { screen = "stats" },
+                                                onOpenOpds = { screen = "opds" },
                                                 folders = folders,
                                                 onRescan = {
                                                     lifecycleScope.launch {
@@ -469,59 +462,12 @@ class MainActivity : ComponentActivity() {
         } catch (_: SecurityException) {
             // Melhor-esforço; a origem segue válida nesta sessão.
         }
-        if (name.lowercase().endsWith(".pdf")) {
-            return renderPdfSource(ImportSource(uri.toString(), name))
-        }
         return ImportSource(uri.toString(), name)
-    }
-
-    /** PDF: renderiza do descritor SAF para `pdf-pages/` (derivado, não cópia). */
-    private fun renderPdfSource(source: ImportSource): ImportSource? {
-        return try {
-            val descriptor = contentResolver.openFileDescriptor(Uri.parse(source.reference), "r")
-                ?: return null
-            val name = source.displayName ?: "pdf"
-            val rendered = descriptor.use {
-                com.jrmello4.tactilereader.pdf.PdfImporter.import(
-                    it,
-                    name.substringBeforeLast('.'),
-                    File(filesDir, "pdf-pages"),
-                )
-            } ?: return null
-            ImportSource(rendered.absolutePath, rendered.name)
-        } catch (error: Exception) {
-            android.widget.Toast.makeText(
-                this@MainActivity,
-                "PDF indisponível: ${error.message ?: "erro"}",
-                android.widget.Toast.LENGTH_LONG,
-            ).show()
-            null
-        }
     }
 
     /** Importa um caminho já dentro do sandbox (ex.: download OPDS). */
     private fun importLocalPath(path: String) {
         lifecycleScope.launch {
-            if (path.lowercase().endsWith(".pdf")) {
-                val rendered = withContext(Dispatchers.IO) {
-                    try {
-                        com.jrmello4.tactilereader.pdf.PdfImporter
-                            .import(File(path), File(filesDir, "pdf-pages"))
-                            ?.absolutePath
-                    } catch (error: Exception) {
-                        android.widget.Toast.makeText(
-                            this@MainActivity,
-                            "PDF indisponível: ${error.message ?: "erro"}",
-                            android.widget.Toast.LENGTH_LONG,
-                        ).show()
-                        null
-                    }
-                }
-                if (rendered != null) {
-                    viewModel.importSources(listOf(ImportSource(rendered, File(rendered).name)))
-                }
-                return@launch
-            }
             viewModel.importSources(listOf(ImportSource(path, File(path).name)))
         }
     }

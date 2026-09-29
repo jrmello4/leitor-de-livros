@@ -44,9 +44,9 @@ jobs:
         run: sdkmanager.bat "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       # O núcleo é Kotlin puro: sem Rust, sem NDK, sem .so por ABI.
-      - name: Unit tests, androidTest compilation and release build
+      - name: Unit tests, lint, Android builds and androidTest compilation
         shell: bash
-        run: cd native && ./gradlew testDebugUnitTest compileDebugAndroidTestSources assembleRelease generateReleaseMetadata --no-daemon
+        run: cd native && ./gradlew testDebugUnitTest lintRelease assembleDebug compileDebugAndroidTestSources assembleRelease generateReleaseMetadata --no-daemon
 
       - name: Upload release APK and manifest
         uses: actions/upload-artifact@v7

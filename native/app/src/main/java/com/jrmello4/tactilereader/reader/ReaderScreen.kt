@@ -89,6 +89,7 @@ import com.jrmello4.tactilereader.ui.theme.WarmAmber
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import java.io.File
@@ -225,22 +226,41 @@ fun ReaderContent(
 
     val firstVisible by remember { derivedStateOf { listState.firstVisibleItemIndex } }
     val currentPage = pages.getOrNull(firstVisible)
-    val isLastStretch = pages.isNotEmpty() && firstVisible >= (pages.size - 2).coerceAtLeast(0)
-    var bingeVisible by remember(pages, nextTitle) { mutableStateOf(true) }
+    var bingeCancelled by remember(pages, nextTitle) { mutableStateOf(false) }
     var bingeCountdown by remember(pages, nextTitle) { mutableStateOf<Int?>(null) }
 
-    // Binge: no fim da edição, conta 6s e abre a próxima
-    LaunchedEffect(isLastStretch, nextTitle, didRestore, bingeVisible) {
-        if (!isLastStretch || nextTitle == null || !didRestore || !bingeVisible) {
+    // A contagem só começa quando o próprio card está visível; collectLatest
+    // cancela o timer assim que o usuário rola para longe dele.
+    LaunchedEffect(listState, nextTitle, didRestore, bingeCancelled) {
+        if (nextTitle == null || !didRestore || bingeCancelled) {
             bingeCountdown = null
             return@LaunchedEffect
         }
-        for (left in 6 downTo 1) {
-            bingeCountdown = left
-            delay(1000)
+        snapshotFlow {
+            val layout = listState.layoutInfo
+            val card = layout.visibleItemsInfo.firstOrNull { it.key == "binge" }
+            card?.let {
+                isBingeCardActive(
+                    visibleFraction(
+                        itemOffset = it.offset,
+                        itemSize = it.size,
+                        viewportStart = layout.viewportStartOffset,
+                        viewportEnd = layout.viewportEndOffset,
+                    ),
+                )
+            } ?: false
+        }.distinctUntilChanged().collectLatest { cardActive ->
+            if (!cardActive) {
+                bingeCountdown = null
+                return@collectLatest
+            }
+            for (left in 6 downTo 1) {
+                bingeCountdown = left
+                delay(1000)
+            }
+            bingeCountdown = null
+            onBingeOpenNext()
         }
-        bingeCountdown = null
-        onBingeOpenNext()
     }
 
     // Zoom GLOBAL do leitor
@@ -386,7 +406,7 @@ fun ReaderContent(
                                 countdown = bingeCountdown,
                                 onOpenNow = onBingeOpenNext,
                                 onCancel = {
-                                    bingeVisible = false
+                                    bingeCancelled = true
                                     bingeCountdown = null
                                 },
                             )

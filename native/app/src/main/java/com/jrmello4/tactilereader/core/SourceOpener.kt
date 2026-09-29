@@ -1,5 +1,6 @@
 package com.jrmello4.tactilereader.core
 
+import android.os.ParcelFileDescriptor
 import java.io.File
 import java.io.FileInputStream
 import java.io.InputStream
@@ -20,6 +21,14 @@ interface SourceOpener {
 
     /** Nome de exibição (com extensão), quando conhecido. */
     fun displayName(reference: String): String?
+
+    /** Descritor aleatório para renderizadores Android; nulo quando não disponível. */
+    fun openFileDescriptor(reference: String): ParcelFileDescriptor? =
+        localPath(reference)?.let { ParcelFileDescriptor.open(File(it), ParcelFileDescriptor.MODE_READ_ONLY) }
+
+    /** Momento de alteração da origem, quando conhecido. */
+    fun lastModifiedMillis(reference: String): Long =
+        localPath(reference)?.let { File(it).lastModified() } ?: 0L
 
     /**
      * Caminho local quando a referência é um arquivo de verdade; nulo para

@@ -34,7 +34,24 @@ data class Pub(
     val lastReadAt: String? = null,
     /** Velocidade observada em páginas por minuto; nulo antes de uma sessão. */
     val readingPagesPerMinute: Double? = null,
+    /** Estado explícito; percentuais não definem se a leitura começou ou terminou. */
+    val readingStatus: ReadingStatus = ReadingStatus.NOT_STARTED,
+    /** Nome portátil da origem, usado para correspondência segura no backup. */
+    val sourceName: String = title,
 )
+
+enum class ReadingStatus(val databaseValue: Int) {
+    NOT_STARTED(0),
+    READING(1),
+    FINISHED(2);
+
+    companion object {
+        fun fromDatabase(value: Int): ReadingStatus =
+            values().firstOrNull { it.databaseValue == value } ?: NOT_STARTED
+    }
+}
+
+internal fun Pub.isContinueCandidate(): Boolean = readingStatus == ReadingStatus.READING
 
 /** Estatística local acumulada, sem dados de conta ou telemetria. */
 data class ReadingStats(
@@ -59,6 +76,24 @@ data class ReaderPage(
 data class ReaderProgress(
     val pageId: String,
     val scrollRatio: Double,
+)
+
+/** Portably addressable reading position and bookmarks used by JSON backups. */
+internal data class BackupPagePosition(
+    val pageIndex: Int,
+    val scrollRatio: Double = 0.0,
+)
+
+internal data class BackupBookmarkPosition(
+    val pageIndex: Int,
+    val pageId: String,
+    val label: String,
+)
+
+internal data class PublicationBackupSnapshot(
+    val position: BackupPagePosition? = null,
+    val bookmarks: List<BackupBookmarkPosition> = emptyList(),
+    val pageManifestFingerprint: String? = null,
 )
 
 /** Marcador de página. */
@@ -116,6 +151,7 @@ data class PublicationReadingStat(
     val sessions: Int,
     val pagesPerMinute: Double?,
     val lastReadAt: String?,
+    val readingStatus: ReadingStatus = ReadingStatus.NOT_STARTED,
 )
 
 /** Progresso da importação para a estante não parecer travada. */

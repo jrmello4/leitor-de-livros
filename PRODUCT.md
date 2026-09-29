@@ -12,7 +12,7 @@ People who read locally stored comics and manga on an Android phone and want con
 
 ## Product Purpose
 
-Provide a local-first library and reader for CBZ, CBR, ZIP/7z collections, and image folders on Android. Success means the interface disappears into the work, Webtoon scrolling stays smooth on mid-range phones, series are easy to navigate, and progress restores exactly where the reader stopped.
+Provide a local-first library and reader for CBZ, CBR, ZIP/7z collections, PDF, and image folders on Android. Success means the interface disappears into the work, Webtoon scrolling stays smooth on mid-range phones, series are easy to navigate, and progress restores exactly where the reader stopped.
 
 ## Positioning
 
@@ -20,19 +20,19 @@ A local-first Android comic reader with a virtualized Webtoon engine, SAF-based 
 
 ## Operating Context
 
-v1 targets mid-range Android phones (for example Moto G34 5G class: 4–8 GB RAM, ARM64, Android 13+). Readers import from Downloads/SD via Storage Access Framework, organize a personal library, read fullscreen with touch, and resume later.
+v1 targets mid-range Android phones (for example Moto G34 5G class: 4–8 GB RAM, ARM64); the current app supports Android 8 / API 26 and newer. Readers import from Downloads/SD via Storage Access Framework, organize a personal library, read fullscreen with touch, and resume later.
 
 ## Capabilities and Constraints
 
 - Local CBZ, CBR (RAR4/RAR5), ZIP/7z mixed collections, and image-folder reading.
+- PDF reading via Android `PdfRenderer`, with pages rendered on demand into the managed page cache.
 - Webtoon vertical mode is the default reading mode on Android.
 - SAF file and folder pickers; originals remain read-only.
-- Progress is stored as page id + scroll ratio inside the page.
+- Reading state explicitly distinguishes not started, reading, and finished; the current page and scroll ratio restore the exact position.
 - Series grouping with natural issue order and non-destructive duplicate hints.
 - Central de Marcadores with search, direct page jumping, removal, and JSON backup.
 - Minha Leitura (reading stats) with local calm metrics (read time, pages, PPM, per-publication breakdown).
 - Structured per-file import reporting with diagnostics and targeted retry of failures.
-- PDF is not available on Android yet.
 - V1 excludes EPUB, accounts, sync, online metadata, a store, discovery, iOS, and desktop distribution.
 
 ## Brand Commitments

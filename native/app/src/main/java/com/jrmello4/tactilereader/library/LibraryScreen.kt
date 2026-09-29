@@ -39,10 +39,12 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -62,6 +64,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
@@ -74,7 +77,10 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.jrmello4.tactilereader.core.Pub
+import com.jrmello4.tactilereader.core.ReadingStatus
+import com.jrmello4.tactilereader.core.isContinueCandidate
 import com.jrmello4.tactilereader.core.ReadingMetrics
+import com.jrmello4.tactilereader.scaffold.R
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -94,6 +100,7 @@ fun LibraryScreen(
     onOpenSettings: () -> Unit = {},
     onOpenBookmarks: () -> Unit = {},
     onOpenStats: () -> Unit = {},
+    onOpenOpds: () -> Unit = {},
     folders: List<FolderEntry> = emptyList(),
     onRescan: () -> Unit = {},
 ) {
@@ -108,6 +115,7 @@ fun LibraryScreen(
         onOpenSettings = onOpenSettings,
         onOpenBookmarks = onOpenBookmarks,
         onOpenStats = onOpenStats,
+        onOpenOpds = onOpenOpds,
         covers = covers,
         onCoverVisible = viewModel::requestCover,
         onToggleFavorite = viewModel::toggleFavorite,
@@ -126,6 +134,7 @@ enum class LibrarySort { RECENTES, TITULO, PROGRESSO }
 enum class LibraryTab { SERIES, PASTAS }
 
 /** Conteúdo puro por estado — testável na JVM sem JNI nem ViewModel. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryContent(
     state: LibraryUiState,
@@ -136,6 +145,7 @@ fun LibraryContent(
     onOpenSettings: () -> Unit = {},
     onOpenBookmarks: () -> Unit = {},
     onOpenStats: () -> Unit = {},
+    onOpenOpds: () -> Unit = {},
     covers: Map<String, String> = emptyMap(),
     onCoverVisible: (Pub) -> Unit = {},
     coverImage: @Composable (Pub, File?, Modifier) -> Unit = { pub, file, mod ->
@@ -156,6 +166,7 @@ fun LibraryContent(
     var tab by rememberSaveable { mutableStateOf(LibraryTab.SERIES) }
     var selection by remember { mutableStateOf(setOf<String>()) }
     var pendingDelete by remember { mutableStateOf(setOf<String>()) }
+    var importSheetVisible by rememberSaveable { mutableStateOf(false) }
 
     val filtered = remember(state.pubs, query, filter, sort) {
         var list = state.pubs
@@ -166,9 +177,9 @@ fun LibraryContent(
         list = when (filter) {
             LibraryFilter.TODAS -> list
             LibraryFilter.FAVORITAS -> list.filter { it.isFavorite }
-            LibraryFilter.NAO_LIDAS -> list.filter { it.progress <= 0.01 }
-            LibraryFilter.LIDAS -> list.filter { it.progress >= 0.99 }
-            LibraryFilter.CONTINUAR -> list.filter { it.progress > 0.01 && it.progress < 0.99 }
+            LibraryFilter.NAO_LIDAS -> list.filter { it.readingStatus == ReadingStatus.NOT_STARTED }
+            LibraryFilter.LIDAS -> list.filter { it.readingStatus == ReadingStatus.FINISHED }
+            LibraryFilter.CONTINUAR -> list.filter { it.isContinueCandidate() }
         }
         when (sort) {
             LibrarySort.RECENTES -> list
@@ -177,7 +188,7 @@ fun LibraryContent(
         }
     }
     val continueReading = remember(state.pubs) {
-        state.pubs.filter { it.progress > 0.01 && it.progress < 0.99 }.take(5)
+        state.pubs.filter { it.isContinueCandidate() }.take(5)
     }
     val groups = remember(filtered) { groupBySeries(filtered) }
     var openSeriesKey by rememberSaveable { mutableStateOf<String?>(null) }
@@ -287,6 +298,29 @@ fun LibraryContent(
             )
         }
 
+        if (importSheetVisible) {
+            ModalBottomSheet(onDismissRequest = { importSheetVisible = false }) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text(stringResource(R.string.library_import), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+                    Button(
+                        onClick = { importSheetVisible = false; onAddClick() },
+                        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
+                    ) { Text(stringResource(R.string.library_import_file)) }
+                    Button(
+                        onClick = { importSheetVisible = false; onAddFolderClick() },
+                        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
+                    ) { Text(stringResource(R.string.library_import_folder)) }
+                    Button(
+                        onClick = { importSheetVisible = false; onOpenOpds() },
+                        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
+                    ) { Text(stringResource(R.string.library_import_opds)) }
+                }
+            }
+        }
+
         when {
             state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
@@ -305,7 +339,7 @@ fun LibraryContent(
             }
             else -> {
                 LazyVerticalGrid(
-                    columns = GridCells.Fixed(2),
+                    columns = GridCells.Adaptive(minSize = 136.dp),
                     modifier = Modifier
                         .fillMaxSize()
                         .navigationBarsPadding(),
@@ -333,8 +367,7 @@ fun LibraryContent(
                                 Spacer(Modifier.height(8.dp))
                             }
                             LibraryHeaderBar(
-                                onAddClick = onAddClick,
-                                onAddFolderClick = onAddFolderClick,
+                                onImportClick = { importSheetVisible = true },
                                 onOpenBookmarks = onOpenBookmarks,
                                 onOpenStats = onOpenStats,
                                 onOpenSettings = onOpenSettings,
@@ -622,8 +655,7 @@ fun LibraryContent(
 
 @Composable
 private fun LibraryHeaderBar(
-    onAddClick: () -> Unit,
-    onAddFolderClick: () -> Unit,
+    onImportClick: () -> Unit,
     onOpenBookmarks: () -> Unit = {},
     onOpenStats: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
@@ -654,40 +686,21 @@ private fun LibraryHeaderBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Surface(
-                onClick = onAddClick,
+                onClick = onImportClick,
                 shape = RoundedCornerShape(10.dp),
                 color = MaterialTheme.colorScheme.primaryContainer,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)),
-                modifier = Modifier.defaultMinSize(minHeight = 44.dp),
+                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
             ) {
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                 ) {
                     Text(
-                        text = "+ HQ",
+                        text = stringResource(R.string.library_import),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary,
-                    )
-                }
-            }
-            Surface(
-                onClick = onAddFolderClick,
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                modifier = Modifier.defaultMinSize(minHeight = 44.dp),
-            ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                ) {
-                    Text(
-                        text = "+ Pasta",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
                     )
                 }
             }
@@ -1086,7 +1099,7 @@ private fun seriesSubtitle(group: SeriesGroup): String {
         return "${single.pub.pageCount} páginas"
     }
     val total = group.editions.size
-    val read = group.editions.count { it.pub.progress >= 0.99 }
+    val read = group.editions.count { it.pub.readingStatus == ReadingStatus.FINISHED }
     return when {
         read == 0 -> "$total edições"
         read == total -> "$total edições · todas lidas"
@@ -1125,7 +1138,7 @@ private fun SeriesDetail(
                     tint = MaterialTheme.colorScheme.onSurface,
                 )
                 Spacer(Modifier.width(4.dp))
-                Text("All series", color = MaterialTheme.colorScheme.onSurface)
+                Text(stringResource(R.string.library_all_series), color = MaterialTheme.colorScheme.onSurface)
             }
             Text(
                 text = group.title,
@@ -1138,7 +1151,7 @@ private fun SeriesDetail(
             )
         }
         LazyVerticalGrid(
-            columns = GridCells.Fixed(2),
+            columns = GridCells.Adaptive(minSize = 136.dp),
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),

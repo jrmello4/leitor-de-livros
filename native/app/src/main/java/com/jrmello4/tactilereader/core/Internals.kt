@@ -27,9 +27,6 @@ internal const val CACHE_MISSING_DIAGNOSTIC =
     "Derived cache is unavailable; page reconstruction is required."
 internal const val CUSTOM_COVER_MISSING_DIAGNOSTIC =
     "The custom cover is unavailable; the original publication cover is shown."
-internal const val PDF_UNAVAILABLE_DIAGNOSTIC =
-    "PDF ainda não está disponível no Android; use CBZ, ZIP ou imagens. O arquivo original foi preservado."
-
 internal val IMAGE_EXTENSIONS = setOf("avif", "gif", "jpeg", "jpg", "png", "webp")
 
 internal fun digestId(prefix: String, bytes: ByteArray): String {
@@ -63,16 +60,17 @@ internal fun naturalCompare(left: String, right: String): Int {
         val aDigit = a[i].isDigit()
         val bDigit = b[j].isDigit()
         if (aDigit && bDigit) {
-            var iStart = i
-            var jStart = j
+            val iStart = i
+            val jStart = j
             while (i < a.length && a[i].isDigit()) i++
             while (j < b.length && b[j].isDigit()) j++
             val leftNumber = a.substring(iStart, i).trimStart('0').ifEmpty { "0" }
             val rightNumber = b.substring(jStart, j).trimStart('0').ifEmpty { "0" }
             val ordering = compareNumericStrings(leftNumber, rightNumber)
             if (ordering != 0) return ordering
-            iStart = i
-            jStart = j
+            // Números iguais ficam determinísticos: page1 precede page001.
+            val widthOrdering = (i - iStart).compareTo(j - jStart)
+            if (widthOrdering != 0) return widthOrdering
             continue
         }
         val ordering = a[i].compareTo(b[j])
@@ -166,11 +164,14 @@ internal fun File.canonicalPathOrNull(): String? = try {
 internal sealed class PageSourceRef {
     data class Image(val path: String) : PageSourceRef()
     data class Archive(val path: String, val member: String) : PageSourceRef()
+    data class SevenZip(val path: String, val member: String) : PageSourceRef()
     data class Pdf(val path: String, val pageIndex: Int) : PageSourceRef()
 
     fun toJson(): String = when (this) {
         is Image -> JSONObject().put("kind", "image").put("path", path).toString()
         is Archive -> JSONObject().put("kind", "archive").put("path", path)
+            .put("member", member).toString()
+        is SevenZip -> JSONObject().put("kind", "7z").put("path", path)
             .put("member", member).toString()
         is Pdf -> JSONObject().put("kind", "pdf").put("path", path)
             .put("pageIndex", pageIndex).toString()
@@ -180,6 +181,7 @@ internal sealed class PageSourceRef {
         get() = when (this) {
             is Image -> path
             is Archive -> path
+            is SevenZip -> path
             is Pdf -> path
         }
 
@@ -191,6 +193,7 @@ internal sealed class PageSourceRef {
                 when (json.optString("kind")) {
                     "image" -> Image(json.getString("path"))
                     "archive" -> Archive(json.getString("path"), json.getString("member"))
+                    "7z" -> SevenZip(json.getString("path"), json.getString("member"))
                     "pdf" -> Pdf(json.getString("path"), json.optInt("pageIndex", 0))
                     else -> null
                 }

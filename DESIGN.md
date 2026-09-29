@@ -17,7 +17,7 @@ Construído 100% em **Android Nativo com Kotlin e Jetpack Compose**, o aplicativ
    - **Oxide Red (`#D64045`)**: Erros, ações destrutivas e cancelamentos.
    - **Sage Green (`#588157`)**: Sucesso exclusivo e leitura 100% concluída.
    - **Sem Azul Genérico Dominante.**
-5. **Ergonomia M3 de Polegar:** Navegação inferior (`NavigationBar`) acessível com uma mão, alvos de toque mínimos de 48dp com 8dp de espaçamento, e FAB de importação posicionado no canto inferior.
+5. **Ergonomia M3 de Polegar:** Navegação inferior (`NavigationBar`) acessível com uma mão, alvos principais de toque de pelo menos 48dp com 8dp de espaçamento, e uma ação `Importar` que oferece arquivo, pasta e OPDS em um bottom sheet.
 6. **Rolagem Unificada:** Telas com rolagem única de ponta a ponta, sem menus ou cabeçalhos travados na metade da tela.
 
 ---
@@ -77,14 +77,15 @@ Quatro destinos canônicos na barra inferior:
 - **Rolagem Unificada:** Implementada com `LazyVerticalGrid` como container raiz. Não há listas aninhadas com rolagem bloqueada na metade da tela.
 - **Hero Card Editorial:** Cartão em destaque com capa expandida, título da série/edição, indicador de progresso com tempo restante estimado e botão de continuidade imediata.
 - **Fita de Filtros:** Ribbon horizontal compacto com opções `Tudo`, `Lendo`, `Favoritos` e agrupamento por série.
-- **Floating Action Button (FAB):** Botão flutuante `+ HQ` no canto inferior direito, liberando o cabeçalho superior de poluição visual.
+- **Importação:** Ação única `Importar` no cabeçalho; o bottom sheet mantém acesso direto a HQ/arquivo, pasta e OPDS.
+- **Grade responsiva:** Número de colunas adaptado à largura disponível, mantendo as capas proporcionais.
 
 ### Leitor Vertical
 - **Canvas Infinito:** Faixa vertical contínua com carregamento sob demanda de bitmaps via Coil (máximo 1080px).
 - **HUD Coordenado:** Top Bar e Bottom Bar em grafite profundo (`Color(0xF2101318)`) com bordas `SeamSubtle`, ativados por toque central e sem ocluir a arte da página desnecessariamente.
 - **Folio Tabular:** Indicador inferior com semântica TalkBack: `página X de Y`.
 - **Controles Físicos e Gestos:** Teclas de volume para avançar/voltar páginas; duplo toque para zoom 2x; pinça livre para zoom global e pan lateral sem travar a rolagem vertical.
-- **Card de Fim de Edição (Binge):** Transição suave para a próxima edição da série com contagem regressiva de 6 segundos e opção de cancelamento.
+- **Card de Fim de Edição (Binge):** A contagem regressiva de 6 segundos começa quando ao menos 40% do card da próxima edição está visível e cancela se o leitor voltar para cima; há também cancelamento manual.
 
 ### Central de Marcadores
 - Listagem editorial com badges tabulares `PÁG. X`.
