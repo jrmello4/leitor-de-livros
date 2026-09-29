@@ -108,6 +108,10 @@ jobs:
           fi
           echo "apk_name=tactile-native-0.4.0.apk" >> "$GITHUB_OUTPUT"
 
+      - name: Move native-latest tag to the validated commit
+        shell: bash
+        run: git push --force origin "${GITHUB_SHA}:refs/tags/native-latest"
+
       - name: Publish native-latest release
         uses: softprops/action-gh-release@v3
         with:
