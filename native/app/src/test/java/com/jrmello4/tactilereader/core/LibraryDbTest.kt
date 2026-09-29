@@ -12,10 +12,15 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.io.ByteArrayOutputStream
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import org.apache.commons.compress.archivers.sevenz.SevenZOutputFile
 
 /**
  * Prova na JVM o núcleo Kotlin puro: importar CBZ (ZIP), listar, garantir
@@ -62,9 +67,79 @@ class LibraryDbTest {
         return out.toByteArray()
     }
 
+    private fun cbzBytesWithNames(names: List<String>): ByteArray {
+        val out = ByteArrayOutputStream()
+        ZipOutputStream(out).use { zip ->
+            for (name in names) {
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(pngBytes())
+                zip.closeEntry()
+            }
+        }
+        return out.toByteArray()
+    }
+
+    private fun sevenZipWithPages(root: File, names: List<String>): File {
+        val archiveFile = File(root, "natural.7z")
+        SevenZOutputFile(archiveFile).use { archive ->
+            for ((index, name) in names.withIndex()) {
+                val page = File(root, "source-$index.png").apply { writeBytes(pngBytes()) }
+                archive.putArchiveEntry(archive.createArchiveEntry(page, name))
+                archive.write(page.readBytes())
+                archive.closeArchiveEntry()
+            }
+        }
+        return archiveFile
+    }
+
     private fun openDb(root: File): LibraryDb {
         LibraryDb.closeAll()
         return LibraryDb.open(File(root, "lib"), File(root, "imports"))
+    }
+
+    @Test
+    fun shelfListingUsesOneQueryFor10_100And500Publications() {
+        for (targetCount in listOf(10, 100, 500)) {
+            val root = tempRoot("shelf-scale-$targetCount")
+            val db = openDb(root)
+            repeat(targetCount) { index ->
+                val publicationId = "publication-$index"
+                val pageId = "$publicationId-page-0000"
+                db.insertPublication(
+                    LibraryDb.NewPublication(
+                        id = publicationId,
+                        title = "HQ $index",
+                        sourceLabel = "HQ $index.cbz",
+                        sourcePath = "archive:${File(root, "$index.cbz").absolutePath}",
+                        format = "cbz",
+                        pages = listOf(
+                            LibraryDb.NewPage(
+                                id = pageId,
+                                index = 0,
+                                name = "1.png",
+                                cachePath = File(""),
+                                sourceRef = PageSourceRef.Image("missing-$index.png"),
+                                width = 8,
+                                height = 12,
+                            ),
+                        ),
+                        coverPageId = pageId,
+                        addedAt = "1",
+                        updatedAt = "1",
+                    ),
+                )
+            }
+
+            var queryCount = 0
+            db.queryObserverForTests = { queryCount++ }
+            val publications = db.listPublications()
+            db.queryObserverForTests = null
+
+            assertEquals("$targetCount publications returned", targetCount, publications.size)
+            assertEquals("$targetCount publications use a constant query count", 1, queryCount)
+            assertTrue(publications.all { it.readingStatus == ReadingStatus.NOT_STARTED && it.progress == 0.0 })
+        }
+        LibraryDb.closeAll()
     }
 
     @Test
@@ -124,6 +199,61 @@ class LibraryDbTest {
     }
 
     @Test
+    fun differentPagesCanRebuildWithoutHoldingTheDatabaseMonitor() {
+        val root = tempRoot("parallel-pages")
+        LibraryDb.closeAll()
+        val bytes = pngBytes()
+        val bothPagesOpened = CountDownLatch(2)
+        val opener = object : SourceOpener {
+            override fun isAvailable(reference: String) = true
+            override fun sizeBytes(reference: String) = bytes.size.toLong()
+            override fun openStream(reference: String) = ByteArrayInputStream(bytes).also {
+                bothPagesOpened.countDown()
+                check(bothPagesOpened.await(3, TimeUnit.SECONDS)) {
+                    "page extraction waited behind another page on the database monitor"
+                }
+            }
+            override fun displayName(reference: String) = "$reference.png"
+        }
+        val db = LibraryDb.open(File(root, "lib"), File(root, "imports"), opener)
+        val pages = listOf("one", "two").mapIndexed { index, name ->
+            LibraryDb.NewPage(
+                id = "page-$name",
+                index = index,
+                name = "$name.png",
+                cachePath = File(""),
+                sourceRef = PageSourceRef.Image("remote:$name"),
+                width = 8,
+                height = 12,
+            )
+        }
+        val publication = LibraryDb.NewPublication(
+            id = "parallel-publication",
+            title = "Parallel",
+            sourceLabel = "parallel-images",
+            sourcePath = "images:parallel",
+            format = "images",
+            pages = pages,
+            coverPageId = pages.first().id,
+            addedAt = "1",
+            updatedAt = "1",
+        )
+        db.insertPublication(publication)
+
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val first = pool.submit<ReaderPage> { db.ensurePage(publication.id, pages[0].id) }
+            val second = pool.submit<ReaderPage> { db.ensurePage(publication.id, pages[1].id) }
+            assertTrue("both pages enter extraction at once", bothPagesOpened.await(2, TimeUnit.SECONDS))
+            assertTrue(File(first.get(5, TimeUnit.SECONDS).cachePath ?: "").isFile)
+            assertTrue(File(second.get(5, TimeUnit.SECONDS).cachePath ?: "").isFile)
+        } finally {
+            pool.shutdownNow()
+            LibraryDb.closeAll()
+        }
+    }
+
+    @Test
     fun progressBookmarksAndFavoriteRoundTrip() {
         val root = tempRoot("progress")
         val db = openDb(root)
@@ -154,12 +284,100 @@ class LibraryDbTest {
         val comic = File(root, "HQ.cbz").apply { writeBytes(cbzBytes(4)) }
         db.importPaths(listOf(comic.absolutePath))
         val pub = db.listPublications().single()
-
-        db.markRead(pub.id, pub.pageCount - 1)
-        assertEquals(1.0, db.listPublications().single().progress, 0.0001)
+        assertEquals(ReadingStatus.NOT_STARTED, pub.readingStatus)
+        assertEquals(0.0, pub.progress, 0.0001)
 
         db.markRead(pub.id, 0)
-        assertEquals(0.25, db.listPublications().single().progress, 0.0001)
+        val firstPage = db.listPublications().single()
+        assertEquals(ReadingStatus.READING, firstPage.readingStatus)
+        assertEquals(0.25, firstPage.progress, 0.0001)
+        assertTrue(firstPage.isContinueCandidate())
+
+        db.markRead(pub.id, pub.pageCount - 1)
+        val finished = db.listPublications().single()
+        assertEquals(ReadingStatus.FINISHED, finished.readingStatus)
+        assertEquals(1.0, finished.progress, 0.0001)
+
+        db.clearReadingProgress(pub.id)
+        val cleared = db.listPublications().single()
+        assertEquals(ReadingStatus.NOT_STARTED, cleared.readingStatus)
+        assertEquals(0.0, cleared.progress, 0.0001)
+        assertNull(db.loadReaderState(pub.id))
+        assertTrue("publicação limpa sai de Continuar", !cleared.isContinueCandidate())
+    }
+
+    @Test
+    fun cbzAndImageFolderUseNaturalPageOrder() {
+        val root = tempRoot("natural-order")
+        val db = openDb(root)
+        val names = listOf(
+            "page1.jpg", "page2.jpg", "page9.jpg", "page10.jpg", "page11.jpg", "page20.jpg",
+            "001.jpg", "002.jpg", "010.jpg",
+        )
+        val comic = File(root, "natural.cbz").apply { writeBytes(cbzBytesWithNames(names)) }
+        db.importPaths(listOf(comic.absolutePath))
+
+        val cbzNames = db.listPages(db.listPublications().single().id).map { it.name }
+        assertEquals(
+            listOf("001.jpg", "002.jpg", "010.jpg", "page1.jpg", "page2.jpg", "page9.jpg", "page10.jpg", "page11.jpg", "page20.jpg"),
+            cbzNames,
+        )
+
+        LibraryDb.closeAll()
+        val folderDb = LibraryDb.open(File(root, "folder-lib"), File(root, "folder-imports"))
+        val folder = File(root, "images").apply { mkdirs() }
+        val imageFiles = names.map { File(folder, it).apply { writeBytes(pngBytes()) } }
+        folderDb.importPaths(imageFiles.map { it.absolutePath })
+        val imageNames = folderDb.listPages(folderDb.listPublications().single().id).map { it.name }
+        assertEquals(cbzNames, imageNames)
+    }
+
+    @Test
+    fun sevenZipExtractsPagesOnDemandAndDeleteRemovesDerivedCache() {
+        val root = tempRoot("seven-zip-lifecycle")
+        val db = openDb(root)
+        val names = listOf("page1.png", "page10.png", "page2.png")
+        val archive = sevenZipWithPages(root, names)
+
+        val result = db.importPaths(listOf(archive.absolutePath))
+        assertEquals("7z import diagnostics: ${result.diagnostics}", 0, result.diagnostics.size)
+        val pub = db.listPublications().single()
+        assertEquals("7z", pub.format)
+        assertEquals(listOf("page1.png", "page2.png", "page10.png"), db.listPages(pub.id).map { it.name })
+        assertTrue("não mantém pasta de extração integral", !File(db.dataDir, "7z-${pub.id}").exists())
+        assertEquals(0, db.cacheInfo().entryCount)
+
+        val page = db.listPages(pub.id).first()
+        val cachedPath = File(db.ensurePage(pub.id, page.id).cachePath ?: "")
+        assertTrue("página pedida é extraída para o cache", cachedPath.isFile)
+        assertEquals(1, db.cacheInfo().entryCount)
+        db.clearCache()
+        assertTrue("limpeza remove a extração derivada", !cachedPath.exists())
+
+        val rebuilt = File(db.ensurePage(pub.id, page.id).cachePath ?: "")
+        assertTrue("página continua reconstruível a partir do original", rebuilt.isFile)
+        db.deletePublication(pub.id)
+        assertTrue("exclusão remove o cache derivado", !rebuilt.exists())
+        assertTrue("arquivo original preservado", archive.isFile)
+    }
+
+    @Test
+    fun readingTheFirstPagePersistsAnExactContinuePosition() {
+        val root = tempRoot("first-page-reading")
+        val db = openDb(root)
+        val comic = File(root, "HQ.cbz").apply { writeBytes(cbzBytes(4)) }
+        db.importPaths(listOf(comic.absolutePath))
+        val pub = db.listPublications().single()
+        val firstPage = db.listPages(pub.id).first()
+
+        db.saveReaderState(pub.id, firstPage.id, 0.35)
+
+        val updated = db.listPublications().single()
+        assertEquals(ReadingStatus.READING, updated.readingStatus)
+        assertTrue("primeira página tem progresso positivo", updated.progress > 0.0)
+        assertTrue(updated.isContinueCandidate())
+        assertEquals(firstPage.id, db.loadReaderState(pub.id)?.pageId)
+        assertEquals(0.35, db.loadReaderState(pub.id)?.scrollRatio ?: 0.0, 0.0001)
     }
 
     @Test

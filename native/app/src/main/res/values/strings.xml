@@ -1,0 +1,7 @@
+<resources>
+    <string name="library_all_series">Todas as séries</string>
+    <string name="library_import">Importar</string>
+    <string name="library_import_file">HQ ou arquivo</string>
+    <string name="library_import_folder">Pasta</string>
+    <string name="library_import_opds">OPDS</string>
+</resources>

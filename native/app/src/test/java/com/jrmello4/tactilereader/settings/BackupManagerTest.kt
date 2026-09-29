@@ -32,6 +32,10 @@ class BackupManagerTest {
     }
 
     private fun cbz(path: File) {
+        cbz(path, (1..3).map { "%03d.png".format(it) })
+    }
+
+    private fun cbz(path: File, names: List<String>) {
         val bitmap = Bitmap.createBitmap(8, 12, Bitmap.Config.ARGB_8888)
         Canvas(bitmap).drawColor(Color.BLUE)
         val png = ByteArrayOutputStream().use { out ->
@@ -39,8 +43,8 @@ class BackupManagerTest {
             out.toByteArray()
         }
         ZipOutputStream(path.outputStream()).use { zip ->
-            for (index in 1..3) {
-                zip.putNextEntry(ZipEntry("%03d.png".format(index)))
+            for (name in names) {
+                zip.putNextEntry(ZipEntry(name))
                 zip.write(png)
                 zip.closeEntry()
             }
@@ -102,5 +106,122 @@ class BackupManagerTest {
             threw = true
         }
         assertTrue(threw)
+    }
+
+    @Test
+    fun portableBackupRestoresAfterDeleteAndReimportWithNewPublicationId() {
+        val root = tempRoot()
+        LibraryDb.closeAll()
+        val db = LibraryDb.open(File(root, "lib"), File(root, "imports"))
+        val original = File(root, "old-location/HQ.cbz").apply {
+            parentFile?.mkdirs()
+            cbz(this)
+        }
+        db.importPaths(listOf(original.absolutePath))
+        val previous = db.listPublications().single()
+        val oldPages = db.listPages(previous.id)
+        db.setFavorite(previous.id, true)
+        db.saveReaderState(previous.id, oldPages[2].id, 0.54)
+        db.upsertBookmark(previous.id, oldPages[1].id, "retomar daqui")
+        val backup = BackupManager.export(db, File(root, "backup.json"))
+
+        db.deletePublication(previous.id)
+        val reimported = File(root, "new-location/HQ.cbz").apply {
+            parentFile?.mkdirs()
+            original.copyTo(this)
+        }
+        db.importPaths(listOf(reimported.absolutePath))
+        val current = db.listPublications().single()
+        assertTrue("reimport deve ganhar outra identidade interna", current.id != previous.id)
+
+        val summary = BackupManager.import(db, backup)
+        assertEquals(1, summary.favorites)
+        assertEquals(1, summary.progress)
+        assertEquals(1, summary.bookmarks)
+        assertTrue(db.listPublications().single().isFavorite)
+        val newPages = db.listPages(current.id)
+        val restored = db.loadReaderState(current.id)
+        assertEquals(newPages[2].id, restored?.pageId)
+        assertEquals(0.54, restored?.scrollRatio ?: 0.0, 0.0001)
+        assertEquals(newPages[1].id, db.listBookmarks(current.id).single().pageId)
+    }
+
+    @Test
+    fun portableBackupDoesNotGuessWhenMetadataMatchesMultiplePublications() {
+        val root = tempRoot()
+        LibraryDb.closeAll()
+        val db = LibraryDb.open(File(root, "lib"), File(root, "imports"))
+        val original = File(root, "source/HQ.cbz").apply {
+            parentFile?.mkdirs()
+            cbz(this)
+        }
+        db.importPaths(listOf(original.absolutePath))
+        val previous = db.listPublications().single()
+        db.setFavorite(previous.id, true)
+        val backup = BackupManager.export(db, File(root, "backup.json"))
+        db.deletePublication(previous.id)
+
+        val candidates = listOf("one", "two").map { directory ->
+            File(root, "$directory/HQ.cbz").apply {
+                parentFile?.mkdirs()
+                original.copyTo(this)
+            }
+        }
+        db.importPaths(candidates.map { it.absolutePath })
+        val summary = BackupManager.import(db, backup)
+        assertEquals(0, summary.favorites)
+        assertTrue(db.listPublications().none { it.isFavorite })
+    }
+
+    @Test
+    fun portableBackupRejectsDifferentPageManifestWithSameTitleAndPageCount() {
+        val root = tempRoot()
+        LibraryDb.closeAll()
+        val db = LibraryDb.open(File(root, "lib"), File(root, "imports"))
+        val original = File(root, "source/HQ.cbz").apply {
+            parentFile?.mkdirs()
+            cbz(this)
+        }
+        db.importPaths(listOf(original.absolutePath))
+        val previous = db.listPublications().single()
+        db.setFavorite(previous.id, true)
+        val backup = BackupManager.export(db, File(root, "backup.json"))
+        db.deletePublication(previous.id)
+
+        val replacement = File(root, "replacement/HQ.cbz").apply {
+            parentFile?.mkdirs()
+            cbz(this, listOf("cover.png", "middle.png", "last.png"))
+        }
+        db.importPaths(listOf(replacement.absolutePath))
+        assertEquals("HQ", db.listPublications().single().title)
+        assertEquals(3, db.listPublications().single().pageCount)
+
+        val summary = BackupManager.import(db, backup)
+
+        assertEquals(0, summary.favorites)
+        assertTrue(db.listPublications().none { it.isFavorite })
+    }
+
+    @Test
+    fun backupRestoresExplicitNotStartedStateByClearingExistingProgress() {
+        val root = tempRoot()
+        LibraryDb.closeAll()
+        val db = LibraryDb.open(File(root, "lib"), File(root, "imports"))
+        val comic = File(root, "HQ.cbz").apply { cbz(this) }
+        db.importPaths(listOf(comic.absolutePath))
+        val pub = db.listPublications().single()
+        val firstPage = db.listPages(pub.id).first()
+        db.saveReaderState(pub.id, firstPage.id, 0.75)
+        db.clearReadingProgress(pub.id)
+        val backup = BackupManager.export(db, File(root, "backup.json"))
+
+        db.saveReaderState(pub.id, firstPage.id, 0.25)
+        assertEquals(1, db.listPublications().single().readingStatus.databaseValue)
+        BackupManager.import(db, backup)
+
+        val restored = db.listPublications().single()
+        assertEquals(0, restored.readingStatus.databaseValue)
+        assertEquals(0.0, restored.progress, 0.0)
+        assertEquals(null, db.loadReaderState(pub.id))
     }
 }

@@ -29,9 +29,23 @@ class InternalsTest {
 
     @Test
     fun naturalCompareOrdersNumbersByValue() {
-        val names = mutableListOf("page10.png", "page2.png", "page1.png")
+        val names = mutableListOf(
+            "page20.jpg", "page9.jpg", "page11.jpg", "page1.jpg",
+            "page10.jpg", "page2.jpg",
+        )
         names.sortWith { a, b -> naturalCompare(a, b) }
-        assertEquals(listOf("page1.png", "page2.png", "page10.png"), names)
+        assertEquals(
+            listOf("page1.jpg", "page2.jpg", "page9.jpg", "page10.jpg", "page11.jpg", "page20.jpg"),
+            names,
+        )
+
+        val padded = mutableListOf("010.jpg", "002.jpg", "001.jpg")
+        padded.sortWith { a, b -> naturalCompare(a, b) }
+        assertEquals(listOf("001.jpg", "002.jpg", "010.jpg"), padded)
+
+        val duplicateValue = mutableListOf("page001.jpg", "page1.jpg", "page01.jpg")
+        duplicateValue.sortWith { a, b -> naturalCompare(a, b) }
+        assertEquals(listOf("page1.jpg", "page01.jpg", "page001.jpg"), duplicateValue)
     }
 
     @Test

@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.sp
 import com.jrmello4.tactilereader.core.LibraryDb
 import com.jrmello4.tactilereader.core.OverallReadingStats
 import com.jrmello4.tactilereader.core.PublicationReadingStat
+import com.jrmello4.tactilereader.core.ReadingStatus
 import com.jrmello4.tactilereader.core.ReadingMetrics
 import com.jrmello4.tactilereader.scaffold.AppSources
 import com.jrmello4.tactilereader.ui.theme.DarkGraphite750
@@ -327,7 +328,7 @@ private fun PubStatCard(
                 modifier = Modifier.padding(top = 4.dp),
             )
 
-            val isComplete = pub.progress >= 0.999
+            val isComplete = pub.readingStatus == ReadingStatus.FINISHED
             LinearProgressIndicator(
                 progress = { pub.progress.toFloat().coerceIn(0f, 1f) },
                 modifier = Modifier

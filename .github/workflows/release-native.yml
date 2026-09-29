@@ -70,7 +70,7 @@ jobs:
         env:
           ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
 
-      - name: Build signed release APK
+      - name: Validate and build signed release APK
         shell: bash
         # Aspas SIMPLES: senhas com `$` (como a atual) seriam expandidas
         # como variável pelo bash dentro de aspas duplas.
@@ -80,7 +80,7 @@ jobs:
           export TACTILE_STORE_PASSWORD='${{ secrets.ANDROID_STORE_PASSWORD }}'
           export TACTILE_KEY_ALIAS='${{ secrets.ANDROID_KEY_ALIAS }}'
           export TACTILE_KEY_PASSWORD='${{ secrets.ANDROID_KEY_PASSWORD }}'
-          cd native && ./gradlew assembleRelease generateReleaseMetadata --no-daemon
+          cd native && ./gradlew testDebugUnitTest lintRelease assembleDebug compileDebugAndroidTestSources assembleRelease generateReleaseMetadata --no-daemon
 
       - name: Verify signature and collect APK
         id: apk

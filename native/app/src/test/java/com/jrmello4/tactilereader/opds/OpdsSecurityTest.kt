@@ -30,7 +30,12 @@ class OpdsSecurityTest {
         )
     }
 
-    private class RawHttpServer(val response: String) {
+    private class RawHttpServer(
+        val response: String,
+        private val status: Int = 200,
+        private val headers: Map<String, String> = emptyMap(),
+        private val onRequest: ((Map<String, String>) -> Unit)? = null,
+    ) {
         private val socket = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
         val url = "http://127.0.0.1:${socket.localPort}/feed.atom"
 
@@ -39,16 +44,26 @@ class OpdsSecurityTest {
                 try {
                     socket.accept().use { client ->
                         val reader = client.getInputStream().bufferedReader()
+                        val requestHeaders = mutableMapOf<String, String>()
                         while (true) {
                             val line = reader.readLine() ?: break
                             if (line.isBlank()) break
+                            val separator = line.indexOf(':')
+                            if (separator > 0) {
+                                requestHeaders[line.substring(0, separator).trim().lowercase()] =
+                                    line.substring(separator + 1).trim()
+                            }
                         }
+                        onRequest?.invoke(requestHeaders)
                         val bytes = response.toByteArray(Charsets.UTF_8)
                         val out = client.getOutputStream()
+                        val reason = if (status == 302) "Found" else "OK"
+                        val extraHeaders = headers.entries.joinToString("") { (name, value) -> "$name: $value\r\n" }
                         out.write(
                             (
-                                "HTTP/1.1 200 OK\r\nContent-Type: application/atom+xml;charset=UTF-8\r\n" +
-                                    "Content-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
+                                "HTTP/1.1 $status $reason\r\nContent-Type: application/atom+xml;charset=UTF-8\r\n" +
+                                    "Content-Length: ${bytes.size}\r\n$extraHeaders" +
+                                    "Connection: close\r\n\r\n"
                             ).toByteArray(),
                         )
                         out.write(bytes)
@@ -144,6 +159,36 @@ class OpdsSecurityTest {
         } finally {
             server.stop()
             targetDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun authorizationIsNotForwardedToAnotherOriginAfterRedirect() {
+        val xml = """
+            <feed xmlns="http://www.w3.org/2005/Atom"><entry><title>HQ</title></entry></feed>
+        """.trimIndent()
+        var sourceHeaders: Map<String, String> = emptyMap()
+        var targetHeaders: Map<String, String> = emptyMap()
+        val target = RawHttpServer(xml, onRequest = { targetHeaders = it })
+        val source = RawHttpServer(
+            response = "",
+            status = 302,
+            headers = mapOf("Location" to target.url),
+            onRequest = { sourceHeaders = it },
+        )
+        try {
+            val server = OpdsServer(
+                name = "Protegido",
+                url = source.url,
+                user = "ana",
+                pass = "segredo",
+            )
+            assertEquals(1, OpdsClient.fetchFeed(server).size)
+            assertEquals("Basic YW5hOnNlZ3JlZG8=", sourceHeaders["authorization"])
+            assertTrue(targetHeaders["authorization"].isNullOrBlank())
+        } finally {
+            source.stop()
+            target.stop()
         }
     }
 }

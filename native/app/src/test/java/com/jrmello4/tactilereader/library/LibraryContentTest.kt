@@ -9,6 +9,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import com.jrmello4.tactilereader.core.Pub
+import com.jrmello4.tactilereader.core.ReadingStatus
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -28,19 +29,20 @@ class LibraryContentTest {
     val compose = createComposeRule()
 
     @Test
-    fun addButtonFiresHandler() {
+    fun importFileOptionFiresHandler() {
         var clicks = 0
         compose.setContent {
             MaterialTheme {
                 LibraryContent(LibraryUiState(loading = false), onAddClick = { clicks++ })
             }
         }
-        compose.onNodeWithText("+ HQ").performClick()
+        compose.onNodeWithText("Importar").performClick()
+        compose.onNodeWithText("HQ ou arquivo").performClick()
         assertEquals(1, clicks)
     }
 
     @Test
-    fun folderButtonFiresHandler() {
+    fun folderOptionFiresHandler() {
         var clicks = 0
         compose.setContent {
             MaterialTheme {
@@ -51,7 +53,25 @@ class LibraryContentTest {
                 )
             }
         }
-        compose.onNodeWithText("+ Pasta").performClick()
+        compose.onNodeWithText("Importar").performClick()
+        compose.onNodeWithText("Pasta").performClick()
+        assertEquals(1, clicks)
+    }
+
+    @Test
+    fun opdsOptionFiresHandler() {
+        var clicks = 0
+        compose.setContent {
+            MaterialTheme {
+                LibraryContent(
+                    LibraryUiState(loading = false),
+                    onAddClick = {},
+                    onOpenOpds = { clicks++ },
+                )
+            }
+        }
+        compose.onNodeWithText("Importar").performClick()
+        compose.onNodeWithText("OPDS").performClick()
         assertEquals(1, clicks)
     }
 
@@ -77,7 +97,7 @@ class LibraryContentTest {
         compose.onNodeWithText("Série X").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("2 edições").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Série X").performScrollTo().performClick()
-        compose.onNodeWithText("All series").assertIsDisplayed()
+        compose.onNodeWithText("Todas as séries").assertIsDisplayed()
         compose.onNodeWithText("capa-b").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("capa-b").assertHasClickAction()
         compose.onNodeWithText("capa-b").performClick()
@@ -99,7 +119,7 @@ class LibraryContentTest {
 
     @Test
     fun continueReadingShowsHeroWithHumanizedProgressAndResumeAction() {
-        val pub = Pub("p1", "demo-hq", "cbz", 10, 0.5, false)
+        val pub = Pub("p1", "demo-hq", "cbz", 10, 0.5, false, readingStatus = ReadingStatus.READING)
         val opened = AtomicReference<String?>(null)
         compose.setContent {
             MaterialTheme {
@@ -119,6 +139,18 @@ class LibraryContentTest {
         summary.performClick()
         compose.waitForIdle()
         assertEquals("p1", opened.get())
+    }
+
+    @Test
+    fun unstartedPublicationDoesNotShowContinueHero() {
+        val pub = Pub("p1", "demo-hq", "cbz", 10, 0.0, false)
+        compose.setContent {
+            MaterialTheme {
+                LibraryContent(LibraryUiState(loading = false, pubs = listOf(pub)), onAddClick = {})
+            }
+        }
+
+        compose.onNodeWithText("Continuar lendo").assertDoesNotExist()
     }
 
     @Test
