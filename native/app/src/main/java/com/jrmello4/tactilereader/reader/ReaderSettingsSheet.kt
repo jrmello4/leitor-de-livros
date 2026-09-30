@@ -13,41 +13,45 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import com.jrmello4.tactilereader.scaffold.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ReaderSettingsSheet(settings: ReaderSettings, onChange: (ReaderSettings) -> Unit, onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
-            Text("Configurações de leitura", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
-            Choices("Modo", settings.mode, listOf(
-                ReaderMode.SINGLE_PAGE to "Página única", ReaderMode.DOUBLE_PAGE to "Página dupla",
-                ReaderMode.VERTICAL to "Vertical", ReaderMode.WEBTOON to "Webtoon",
+            Text(stringResource(R.string.reader_settings_title), style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
+            Choices(stringResource(R.string.reader_mode_title), settings.mode, listOf(
+                ReaderMode.SINGLE_PAGE to stringResource(R.string.reader_mode_single_page), ReaderMode.DOUBLE_PAGE to stringResource(R.string.reader_mode_double_page),
+                ReaderMode.VERTICAL to stringResource(R.string.reader_mode_vertical), ReaderMode.WEBTOON to stringResource(R.string.reader_mode_webtoon),
             )) { onChange(settings.copy(mode = it)) }
-            Choices("Direção", settings.direction, listOf(
-                ReadingDirection.LEFT_TO_RIGHT to "Esquerda → direita", ReadingDirection.RIGHT_TO_LEFT to "Direita → esquerda",
+            Choices(stringResource(R.string.reader_direction_title), settings.direction, listOf(
+                ReadingDirection.LEFT_TO_RIGHT to stringResource(R.string.reader_direction_ltr), ReadingDirection.RIGHT_TO_LEFT to stringResource(R.string.reader_direction_rtl),
             )) { onChange(settings.copy(direction = it)) }
-            Text("Em RTL, a sequência começa na última página do arquivo.", style = MaterialTheme.typography.bodySmall)
-            Choices("Ajuste", settings.fit, listOf(
-                FitMode.FIT_SCREEN to "Ajustar à tela", FitMode.FIT_WIDTH to "Ajustar à largura", FitMode.FIT_HEIGHT to "Ajustar à altura",
+            Text(stringResource(R.string.reader_direction_rtl_file_order), style = MaterialTheme.typography.bodySmall)
+            Choices(stringResource(R.string.reader_fit_title), settings.fit, listOf(
+                FitMode.FIT_SCREEN to stringResource(R.string.reader_fit_screen), FitMode.FIT_WIDTH to stringResource(R.string.reader_fit_width), FitMode.FIT_HEIGHT to stringResource(R.string.reader_fit_height),
             ), enabled = settings.mode != ReaderMode.WEBTOON) { onChange(settings.copy(fit = it)) }
-            if (settings.mode == ReaderMode.WEBTOON) Text("Webtoon sempre ajusta à largura.", style = MaterialTheme.typography.bodySmall)
+            if (settings.mode == ReaderMode.WEBTOON) Text(stringResource(R.string.reader_webtoon_fit_width), style = MaterialTheme.typography.bodySmall)
+            val coverLabel = stringResource(R.string.reader_cover_alone)
             Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Exibir capa separadamente", Modifier.weight(1f))
+                Text(coverLabel, Modifier.weight(1f))
                 Switch(settings.coverAlone, { onChange(settings.copy(coverAlone = it)) }, enabled = settings.mode == ReaderMode.DOUBLE_PAGE,
-                    modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).semantics { contentDescription = "Exibir capa separadamente" })
+                    modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).semantics { contentDescription = coverLabel })
             }
-            Choices("Orientação", settings.orientation, listOf(
-                ReaderOrientation.SYSTEM to "Sistema", ReaderOrientation.PORTRAIT to "Retrato", ReaderOrientation.LANDSCAPE to "Paisagem",
+            Choices(stringResource(R.string.reader_orientation_title), settings.orientation, listOf(
+                ReaderOrientation.SYSTEM to stringResource(R.string.reader_orientation_system), ReaderOrientation.PORTRAIT to stringResource(R.string.reader_orientation_portrait), ReaderOrientation.LANDSCAPE to stringResource(R.string.reader_orientation_landscape),
             )) { onChange(settings.copy(orientation = it)) }
-            Choices("Fundo", settings.background, listOf(
-                ReaderBackground.BLACK to "Preto", ReaderBackground.GRAY to "Cinza escuro", ReaderBackground.WHITE to "Branco",
+            Choices(stringResource(R.string.reader_background_title), settings.background, listOf(
+                ReaderBackground.BLACK to stringResource(R.string.reader_background_black), ReaderBackground.GRAY to stringResource(R.string.reader_background_gray), ReaderBackground.WHITE to stringResource(R.string.reader_background_white),
             )) { onChange(settings.copy(background = it)) }
+            val keepScreenLabel = stringResource(R.string.reader_keep_screen_on)
             Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Manter tela ligada", Modifier.weight(1f))
-                Switch(settings.keepScreenOn, { onChange(settings.copy(keepScreenOn = it)) }, modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).semantics { contentDescription = "Manter tela ligada" })
+                Text(keepScreenLabel, Modifier.weight(1f))
+                Switch(settings.keepScreenOn, { onChange(settings.copy(keepScreenOn = it)) }, modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).semantics { contentDescription = keepScreenLabel })
             }
-            TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Concluir") }
+            TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.reader_settings_done)) }
             Spacer(Modifier.height(24.dp))
         }
     }

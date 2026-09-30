@@ -84,20 +84,52 @@ fun ReaderContent(
     settings: ReaderSettings = ReaderSettings(),
     onSettingsChange: (ReaderSettings) -> Unit = {},
     onPositionChanged: (String, Double) -> Unit = { _, _ -> },
-    initialHudVisible: Boolean = true,
+    initialHudVisible: Boolean = settings.mode == ReaderMode.VERTICAL || settings.mode == ReaderMode.WEBTOON,
+    navigationKey: Any? = null,
+    settingsForSheet: ReaderSettings = settings,
 ) {
-    if (!state.loading && state.error == null && settings.mode in listOf(ReaderMode.SINGLE_PAGE, ReaderMode.DOUBLE_PAGE)) {
-        ReaderPagedContent(state, settings, paths, onPageVisible, onProgress, onPositionChanged,
-            bookmarks, onToggleBookmark, onBack, onSettingsChange, nextTitle, onBingeOpenNext)
-        return
+    // Chrome survives navigation/zoom resets, including changes made while the sheet is open.
+    var hud by rememberSaveable(navigationKey) { mutableStateOf(initialHudVisible) }
+    var showSettings by rememberSaveable(navigationKey) { mutableStateOf(false) }
+    ReaderWindow(settings, hud || showSettings)
+    Box(modifier.fillMaxSize()) {
+        androidx.compose.runtime.key(navigationKey, settings.mode, settings.coverAlone, settings.direction) {
+            if (!state.loading && state.error == null && settings.mode in listOf(ReaderMode.SINGLE_PAGE, ReaderMode.DOUBLE_PAGE)) {
+                ReaderPagedContent(state, settings, paths, onPageVisible, onProgress, onPositionChanged,
+                    bookmarks, onToggleBookmark, onBack, nextTitle, onBingeOpenNext,
+                    hud, { hud = !hud }, showSettings, { showSettings = true })
+            } else {
+                ReaderContinuousContent(state, onBack, paths, onPageVisible, onProgress, pageImage,
+                    bookmarks, onToggleBookmark, nextTitle, onBingeOpenNext, settings, onPositionChanged,
+                    hud, { hud = !hud }, showSettings, { showSettings = true })
+            }
+        }
+        if (showSettings) ReaderSettingsSheet(settingsForSheet, onSettingsChange) { showSettings = false }
     }
-    var hud by rememberSaveable { mutableStateOf(initialHudVisible) }
-    var showSettings by remember { mutableStateOf(false) }
+}
+
+@OptIn(FlowPreview::class)
+@Composable
+private fun ReaderContinuousContent(
+    state: ReaderUiState,
+    onBack: () -> Unit,
+    paths: Map<String, String>,
+    onPageVisible: (ReaderPage) -> Unit,
+    onProgress: (String, Double) -> Unit,
+    pageImage: @Composable (ReaderPage, File?, Modifier) -> Unit,
+    bookmarks: Set<String>,
+    onToggleBookmark: (String) -> Unit,
+    nextTitle: String?,
+    onBingeOpenNext: () -> Unit,
+    settings: ReaderSettings,
+    onPositionChanged: (String, Double) -> Unit,
+    hud: Boolean,
+    onToggleHud: () -> Unit,
+    showSettings: Boolean,
+    onOpenSettings: () -> Unit,
+) {
     val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     val listState = rememberLazyListState()
-
-    // Ler não deve apagar a tela no meio de uma página.
-    ReaderWindow(settings, hud || showSettings)
 
     val pages = remember(state.pages, settings.direction) { readingOrder(state.pages, settings.direction) }
     val targetIndex = state.startPageId?.let { id -> pages.indexOfFirst { it.id == id } } ?: -1
@@ -219,7 +251,7 @@ fun ReaderContent(
     }
     val scope = rememberCoroutineScope()
 
-    Box(modifier = modifier.fillMaxSize().background(settings.background.color)) {
+    Box(modifier = Modifier.fillMaxSize().background(settings.background.color)) {
         when {
             state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
@@ -229,12 +261,13 @@ fun ReaderContent(
                 )
             }
             state.error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                val errorDetail = state.error.ifBlank { stringResource(R.string.reader_unknown_error) }
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.padding(24.dp),
                 ) {
                     Text(
-                        stringResource(R.string.common_error_detail, state.error),
+                        stringResource(R.string.common_error_detail, errorDetail),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.error,
                     )
@@ -299,7 +332,7 @@ fun ReaderContent(
                                 val xFrac = if (width > 0) screenX / width else 0.5f
                                 val step = tapStep(xFrac, settings.direction)
                                 if (step == 0) {
-                                    hud = !hud
+                                    onToggleHud()
                                 } else if (zoom <= 1f) {
                                     scope.launch { scrollBlock(step) }
                                 }
@@ -368,11 +401,13 @@ fun ReaderContent(
                 },
                 onToggleBookmark = { currentPage?.let { onToggleBookmark(it.id) } },
                 direction = settings.direction,
-                onSettings = { showSettings = true },
-                onSeek = { index -> scope.launch { listState.scrollToItem(index); pages.getOrNull(index)?.let { onProgress(it.id, 0.0) } } },
+                onSettings = onOpenSettings,
+                onSeek = { index -> scope.launch {
+                    listState.scrollToItem(index)
+                    pages.getOrNull(index)?.let { onPositionChanged(it.id, 0.0); onProgress(it.id, 0.0) }
+                } },
             )
         }
-        if (showSettings) ReaderSettingsSheet(settings, onSettingsChange) { showSettings = false }
     }
 }
 

@@ -20,9 +20,12 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import com.jrmello4.tactilereader.core.ReaderPage
 import java.io.File
+import androidx.compose.ui.res.stringResource
+import com.jrmello4.tactilereader.scaffold.R
 
 @Composable
 internal fun ReaderFittedImage(page: ReaderPage, file: File?, settings: ReaderSettings, modifier: Modifier, continuous: Boolean = false) {
+    val pageDescription = stringResource(R.string.reader_page_content_description, page.index + 1)
     val ratio = if (page.width > 0 && page.height > 0) page.width.toFloat() / page.height else 2f / 3f
     val screenHeight = LocalConfiguration.current.screenHeightDp.dp
     val fit = if (settings.mode == ReaderMode.WEBTOON) FitMode.FIT_WIDTH else settings.fit
@@ -41,7 +44,7 @@ internal fun ReaderFittedImage(page: ReaderPage, file: File?, settings: ReaderSe
             FitMode.FIT_SCREEN -> Modifier
         }
         Box(scrollModifier, contentAlignment = Alignment.Center) {
-            Box(imageModifier.semantics(mergeDescendants = true) { contentDescription = "Página ${page.index + 1}" }, contentAlignment = Alignment.Center) {
+            Box(imageModifier.semantics(mergeDescendants = true) { contentDescription = pageDescription }, contentAlignment = Alignment.Center) {
                 if (file == null) {
                     CircularProgressIndicator(Modifier.size(24.dp), color = if (settings.background == ReaderBackground.WHITE)
                         androidx.compose.ui.graphics.Color.DarkGray else MaterialTheme.colorScheme.primary)
@@ -49,7 +52,7 @@ internal fun ReaderFittedImage(page: ReaderPage, file: File?, settings: ReaderSe
                     AsyncImage(
                         model = ImageRequest.Builder(LocalContext.current).data(file).size(1080)
                             .memoryCacheKey("page-${page.id}").build(),
-                        contentDescription = "Página ${page.index + 1}",
+                        contentDescription = null,
                         contentScale = ContentScale.Fit,
                         modifier = Modifier.fillMaxSize(),
                     )

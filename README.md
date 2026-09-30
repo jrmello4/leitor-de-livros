@@ -14,6 +14,8 @@ App nativo Kotlin + Compose. O histórico de validações de host e dispositivo
 fica em [`docs/android-status.md`](docs/android-status.md). O Reader 2.0 foi
 validado com 141 testes locais e 44 testes instrumentados no Moto G34 5G
 (Android 15); detalhes e limites em [`docs/reader-2-validation.md`](docs/reader-2-validation.md).
+O acabamento da versão `0.5.1` passou em 145 testes locais e 31 testes no
+aparelho; veja [`docs/reader-2-finishing.md`](docs/reader-2-finishing.md).
 
 - Reader 2.0 com página única/dupla, Vertical/Webtoon, LTR/RTL, ajustes de
   imagem, gestos de zoom/pan, HUD com slider e configurações persistentes
@@ -52,7 +54,7 @@ APK assinado + `apksigner verify`. Exige 4 segredos (Settings → Secrets
 `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Sem eles o workflow falha
 cedo; os APKs do CI comum usam assinatura de depuração e não são publicáveis.
 
-A release versionada do Reader 2.0 é `v0.5.0`. O APK oficial, manifesto e
+A release versionada atual do Reader 2.0 é `v0.5.1`. O APK oficial, manifesto e
 SBOM são distribuídos nos assets do GitHub Releases.
 
 ## Licença

@@ -124,7 +124,8 @@ class ReaderViewModel(
                     direction = if (direction == "rtl") ReadingDirection.RIGHT_TO_LEFT else ReadingDirection.LEFT_TO_RIGHT,
                 )
             } catch (error: Exception) {
-                _state.value.copy(loading = false, error = error.message ?: "falha desconhecida")
+                // Fallback copy belongs to the localized UI, not the ViewModel.
+                _state.value.copy(loading = false, error = error.message.orEmpty())
             }
         }
     }

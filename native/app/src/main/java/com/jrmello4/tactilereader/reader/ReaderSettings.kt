@@ -46,7 +46,12 @@ class ReaderSettingsStore(context: Context) {
     }
 }
 
-/** Logical positions always advance toward the terminal page used by ReadingStateRules. */
+/**
+ * PAGE ORDER policy, pending manual validation with a real manga: RTL reverses the file sequence.
+ * Change this function if that policy is rejected; visualSpread/tapStep independently control
+ * READING DIRECTION. Also align ReadingStateRules and ReaderViewModel's terminal/start/metric
+ * indexes with the approved policy (see docs/reader-2-finishing.md). No policy change here.
+ */
 internal fun <T> readingOrder(pages: List<T>, direction: ReadingDirection): List<T> =
     if (direction == ReadingDirection.RIGHT_TO_LEFT) pages.asReversed() else pages
 
@@ -62,7 +67,8 @@ internal fun pageSpreads(pageCount: Int, coverAlone: Boolean): List<List<Int>> {
 }
 
 internal fun visualSpread(spread: List<Int>, direction: ReadingDirection): List<Int> =
-    readingOrder(spread, direction)
+    // Spatial placement only: it must not inherit a future change to the file-order policy.
+    if (direction == ReadingDirection.RIGHT_TO_LEFT) spread.asReversed() else spread
 
 internal fun tapStep(fraction: Float, direction: ReadingDirection): Int {
     if (fraction in 0.25f..0.75f) return 0

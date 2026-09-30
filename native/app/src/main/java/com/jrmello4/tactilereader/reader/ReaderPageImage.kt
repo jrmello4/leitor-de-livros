@@ -18,6 +18,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
@@ -47,10 +48,10 @@ internal fun DefaultPageImage(page: ReaderPage, file: File?, modifier: Modifier 
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            text = "${page.index + 1}",
+            text = stringResource(R.string.reader_page_number, page.index + 1),
             style = MaterialTheme.typography.labelLarge,
             color = DarkGraphite750,
-            modifier = Modifier.padding(48.dp),
+            modifier = Modifier.padding(48.dp).clearAndSetSemantics {},
         )
         if (file != null) {
             AsyncImage(

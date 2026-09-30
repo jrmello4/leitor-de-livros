@@ -119,7 +119,7 @@ internal fun ReaderControls(
                     },
             ) {
                 Text(
-                    if (zoom > 1f) "1:1" else stringResource(R.string.reader_zoom),
+                    stringResource(if (zoom > 1f) R.string.reader_zoom_actual_size else R.string.reader_zoom),
                     color = if (zoom > 1f) WarmAmber else Paper50,
                     style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
                 )
@@ -129,7 +129,7 @@ internal fun ReaderControls(
                 onClick = onSettings,
                 modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
             ) {
-                Icon(Icons.Filled.Settings, contentDescription = "Configurações de leitura", tint = Paper50)
+                Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.reader_open_settings), tint = Paper50)
             }
             IconButton(
                 onClick = onToggleBookmark,
@@ -165,11 +165,12 @@ internal fun ReaderControls(
                     color = Paper300,
                     modifier = Modifier.semantics { stateDescription = pageState },
                 )
-                Text("${(pageNumber * 100 / pageCount).coerceIn(0, 100)}%", color = Paper300, style = MaterialTheme.typography.labelSmall)
+                Text(stringResource(R.string.reader_progress_percent, (pageNumber * 100 / pageCount).coerceIn(0, 100)), color = Paper300, style = MaterialTheme.typography.labelSmall)
                 var seeking by remember { mutableStateOf(false) }
                 var seekPage by remember { mutableFloatStateOf(pageNumber.toFloat()) }
                 LaunchedEffect(pageNumber) { if (!seeking) seekPage = pageNumber.toFloat() }
                 if (pageCount > 1) {
+                    val seekLabel = stringResource(R.string.reader_go_to_page)
                     val sliderInteraction = remember { MutableInteractionSource() }
                     CompositionLocalProvider(LocalLayoutDirection provides if (direction == ReadingDirection.RIGHT_TO_LEFT) LayoutDirection.Rtl else LayoutDirection.Ltr) {
                         Slider(value = seekPage.coerceIn(1f, pageCount.toFloat()), onValueChange = { seeking = true; seekPage = it },
@@ -178,7 +179,7 @@ internal fun ReaderControls(
                             valueRange = 1f..pageCount.toFloat(), onValueChangeFinished = {
                                 onSeek(kotlin.math.round(seekPage).toInt() - 1)
                                 seeking = false
-                            }, modifier = Modifier.semantics { contentDescription = "Ir para página" }
+                            }, modifier = Modifier.semantics { contentDescription = seekLabel }
                                 .fillMaxWidth().heightIn(min = 48.dp))
                     }
                 }

@@ -14,6 +14,8 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.res.stringResource
+import com.jrmello4.tactilereader.scaffold.R
 import com.jrmello4.tactilereader.core.ReaderPage
 import java.io.File
 import kotlinx.coroutines.delay
@@ -24,8 +26,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 internal fun ReaderPagedContent(
     state: ReaderUiState, settings: ReaderSettings, paths: Map<String, String>,
     onPageVisible: (ReaderPage) -> Unit, onProgress: (String, Double) -> Unit, onPosition: (String, Double) -> Unit,
-    bookmarks: Set<String>, onBookmark: (String) -> Unit, onBack: () -> Unit, onSettings: (ReaderSettings) -> Unit,
+    bookmarks: Set<String>, onBookmark: (String) -> Unit, onBack: () -> Unit,
     nextTitle: String?, onNext: () -> Unit,
+    hud: Boolean, onToggleHud: () -> Unit, sheet: Boolean, onOpenSettings: () -> Unit,
 ) {
     val pages = remember(state.pages, settings.direction) { readingOrder(state.pages, settings.direction) }
     val spreads = remember(pages.size, settings.mode, settings.coverAlone) {
@@ -34,8 +37,8 @@ internal fun ReaderPagedContent(
     }
     val start = pages.indexOfFirst { it.id == state.startPageId }.coerceAtLeast(0)
     var spreadIndex by rememberSaveable { mutableIntStateOf(spreads.indexOfFirst { start in it }.coerceAtLeast(0)) }
-    var hud by rememberSaveable { mutableStateOf(false) }
-    var sheet by remember { mutableStateOf(false) }
+    // The physical page anchor survives regrouping. Persisted spread progress still uses its last page.
+    var positionIndex by rememberSaveable { mutableIntStateOf(start) }
     var cancelled by remember(nextTitle) { mutableStateOf(false) }
     var countdown by remember { mutableStateOf<Int?>(null) }
     val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
@@ -46,8 +49,14 @@ internal fun ReaderPagedContent(
         visibleFraction(cardBounds.top.toInt(), cardBounds.height.toInt(), viewportBounds.top.toInt(), viewportBounds.bottom.toInt()))
     val lastIndex = spreads.lastIndex + if (nextTitle != null && pages.isNotEmpty()) 1 else 0
     val transform = remember(spreadIndex) { ReaderTransform() }
-    val stepAction by rememberUpdatedState<(Int) -> Unit>({ step -> spreadIndex = (spreadIndex + step).coerceIn(0, lastIndex.coerceAtLeast(0)) })
-    val hudAction by rememberUpdatedState<() -> Unit>({ hud = !hud })
+    val stepAction by rememberUpdatedState<(Int) -> Unit>({ step ->
+        val target = (spreadIndex + step).coerceIn(0, lastIndex.coerceAtLeast(0))
+        if (target != spreadIndex) {
+            spreadIndex = target
+            positionIndex = spreads.getOrNull(target)?.lastOrNull() ?: pages.lastIndex
+        }
+    })
+    val hudAction by rememberUpdatedState(onToggleHud)
     val onNextCurrent by rememberUpdatedState(onNext)
     val spread = spreads.getOrNull(spreadIndex) ?: spreads.lastOrNull().orEmpty()
     val current = pages.getOrNull(spread.lastOrNull() ?: -1)
@@ -67,10 +76,10 @@ internal fun ReaderPagedContent(
         } else transform.contentSize = viewport
         transform.pan = transform.clamp(transform.pan)
     }
-    ReaderWindow(settings, hud || sheet)
-    LaunchedEffect(spreadIndex, pages) {
+    LaunchedEffect(spreadIndex, positionIndex, pages) {
         // Report the last logical page in a spread to the existing finish rule.
-        pages.getOrNull(spread.lastOrNull() ?: -1)?.let { onPosition(it.id, 0.0); onProgress(it.id, 0.0) }
+        pages.getOrNull(positionIndex)?.let { onPosition(it.id, 0.0) }
+        pages.getOrNull(spread.lastOrNull() ?: -1)?.let { onProgress(it.id, 0.0) }
         val neighbors = spreads.getOrNull(spreadIndex - 1).orEmpty() + spread + spreads.getOrNull(spreadIndex + 1).orEmpty()
         neighbors.distinct().forEach { pages.getOrNull(it)?.let(onPageVisible) }
     }
@@ -91,7 +100,7 @@ internal fun ReaderPagedContent(
                 BingeCard(nextTitle!!, countdown, onNext, { cancelled = true; countdown = null },
                     Modifier.onGloballyPositioned { cardBounds = it.boundsInWindow() })
             } else if (pages.isEmpty()) {
-                Text("Esta publicação não tem páginas.", color = if (settings.background == ReaderBackground.WHITE)
+                Text(stringResource(R.string.reader_empty_pages), color = if (settings.background == ReaderBackground.WHITE)
                     androidx.compose.ui.graphics.Color.DarkGray else androidx.compose.ui.graphics.Color.White)
             } else {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
@@ -109,7 +118,9 @@ internal fun ReaderPagedContent(
         }
         if (hud) ReaderControls(state.title, transform.zoom, (spread.lastOrNull() ?: 0) + 1, pages.size,
             current != null, current?.id in bookmarks, onBack, { transform.toggle() }, { current?.let { onBookmark(it.id) } },
-            onSettings = { sheet = true }, onSeek = { index -> spreadIndex = spreads.indexOfFirst { index in it }.coerceAtLeast(0) }, direction = settings.direction)
-        if (sheet) ReaderSettingsSheet(settings, onSettings) { sheet = false }
+            onSettings = onOpenSettings, onSeek = { index ->
+                spreadIndex = spreads.indexOfFirst { index in it }.coerceAtLeast(0)
+                positionIndex = index.coerceIn(0, pages.lastIndex.coerceAtLeast(0))
+            }, direction = settings.direction)
     }
 }
