@@ -8,9 +8,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
-import org.robolectric.annotation.GraphicsMode
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.UUID
@@ -21,10 +21,10 @@ import java.util.zip.ZipOutputStream
  * Prova o ciclo do backup local: exportar → mudar estado → importar →
  * favorito, progresso e marcadores voltam. Sem nuvem, sem JNI.
  */
-@RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
-@GraphicsMode(GraphicsMode.Mode.NATIVE)
-class BackupManagerTest {
+@RunWith(AndroidJUnit4::class)
+
+
+class BackupManagerDeviceTest {
     @Test
     fun portableBackupRestoresRtlDirectionBeforeCalculatingProgress() {
         val root = tempRoot()
@@ -79,7 +79,7 @@ class BackupManagerTest {
     }
 
     private fun tempRoot(): File {
-        val root = File(System.getProperty("java.io.tmpdir"), "tactile-backup-${UUID.randomUUID()}")
+        val root = File(ApplicationProvider.getApplicationContext<Context>().cacheDir, "tactile-backup-${UUID.randomUUID()}")
         root.mkdirs()
         return root
     }

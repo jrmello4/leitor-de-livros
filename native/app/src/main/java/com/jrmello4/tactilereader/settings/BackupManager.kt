@@ -52,6 +52,7 @@ object BackupManager {
                 .put("isFavorite", pub.isFavorite)
                 .put("progress", pub.progress)
                 .put("readingStatus", pub.readingStatus.name)
+                .put("readingDirection", db.readingDirection(pub.id))
 
             state?.position?.let { position ->
                 val stateJson = JSONObject()
@@ -121,6 +122,10 @@ object BackupManager {
             }
 
             val pages = db.listPages(target.id)
+            // Direction must be restored before the position: it defines the terminal page.
+            // Older backups leave the current direction intact.
+            item.optString("readingDirection").takeIf { it == "ltr" || it == "rtl" }
+                ?.let { db.setReadingDirection(target.id, it) }
             val state = item.optJSONObject("readerState")
             val readingStatus = runCatching {
                 ReadingStatus.valueOf(item.optString("readingStatus"))

@@ -32,6 +32,36 @@ import org.apache.commons.compress.archivers.sevenz.SevenZOutputFile
 @Config(sdk = [34])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class LibraryDbTest {
+    @Test
+    fun readerDirectionUsesExistingColumnAndCentralFinishRules() {
+        val root = tempRoot("reader-direction")
+        LibraryDb.closeAll()
+        try {
+            val cbz = File(root, "reader.cbz").apply { writeBytes(cbzBytes(5)) }
+            val db = LibraryDb.open(File(root, "lib"), File(root, "imports"))
+            db.importPaths(listOf(cbz.absolutePath))
+            val pub = db.publications.list().single()
+            val pages = db.listPages(pub.id)
+            db.setReadingDirection(pub.id, "rtl")
+            assertEquals("rtl", db.readingDirection(pub.id))
+            assertNull(db.loadReaderState(pub.id))
+            db.saveReaderState(pub.id, pages.last().id, 0.35)
+            assertEquals(ReadingStatus.READING, db.publications.list().single().readingStatus)
+            db.saveReaderState(pub.id, pages.first().id, 0.0)
+            assertEquals(ReadingStatus.FINISHED, db.publications.list().single().readingStatus)
+            db.setReadingDirection(pub.id, "ltr")
+            assertEquals(ReadingStatus.READING, db.publications.list().single().readingStatus)
+            assertEquals(pages.first().id, db.loadReaderState(pub.id)?.pageId)
+            db.clearReadingProgress(pub.id)
+            assertEquals(ReadingStatus.NOT_STARTED, db.publications.list().single().readingStatus)
+            LibraryDb.closeAll()
+            val reopened = LibraryDb.open(File(root, "lib"), File(root, "imports"))
+            assertEquals("ltr", reopened.readingDirection(pub.id))
+        } finally {
+            LibraryDb.closeAll()
+            root.deleteRecursively()
+        }
+    }
     private fun tempRoot(label: String): File {
         val root = File(
             System.getProperty("java.io.tmpdir"),

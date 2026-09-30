@@ -26,6 +26,14 @@ import java.util.concurrent.atomic.AtomicReference
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class LibraryContentTest {
+    @Test
+    fun continueSummaryAgreesWithCoreProgressAndReaderPageNumber() {
+        val publication = Pub("resume", "HQ", "cbz", 8, 3.0 / 8.0, false,
+            readingStatus = ReadingStatus.READING)
+        compose.setContent { MaterialTheme { Text(readingProgressSummary(publication)) } }
+        compose.onNodeWithText("Página 3 de 8", substring = true).assertIsDisplayed()
+    }
+
     @get:Rule
     val compose = createComposeRule()
 
@@ -134,8 +142,8 @@ class LibraryContentTest {
         }
 
         compose.onNodeWithText("Continuar lendo").assertIsDisplayed()
-        compose.onNodeWithText("Página 6 de 10 • Faltam aprox. 4 páginas").assertIsDisplayed()
-        val summary = compose.onNodeWithText("Página 6 de 10 • Faltam aprox. 4 páginas")
+        compose.onNodeWithText("Página 5 de 10 • Faltam aprox. 5 páginas").assertIsDisplayed()
+        val summary = compose.onNodeWithText("Página 5 de 10 • Faltam aprox. 5 páginas")
         summary.assertHasClickAction()
         summary.performClick()
         compose.waitForIdle()
@@ -175,7 +183,7 @@ class LibraryContentTest {
             title = "speed",
             format = "cbz",
             pageCount = 40,
-            progress = 9.0 / 39.0,
+            progress = 10.0 / 40.0,
             isFavorite = false,
             readingPagesPerMinute = 2.0,
         )

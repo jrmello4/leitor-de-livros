@@ -40,12 +40,13 @@ internal fun BingeCard(
     countdown: Int?,
     onOpenNow: () -> Unit,
     onCancel: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = DarkGraphite800),
         border = BorderStroke(1.dp, SeamSubtle),
         shape = RoundedCornerShape(16.dp),
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(16.dp),
     ) {

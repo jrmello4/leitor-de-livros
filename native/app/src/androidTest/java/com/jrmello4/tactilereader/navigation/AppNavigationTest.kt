@@ -5,6 +5,10 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.Role
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.jrmello4.tactilereader.scaffold.MainActivity
 import org.junit.Rule
@@ -29,22 +33,22 @@ class AppNavigationTest {
         compose.onNodeWithText("Estante").assertIsDisplayed()
 
         // 2. Navegar para Marcadores
-        compose.onNodeWithContentDescription("Marcadores").performClick()
+        compose.onNodeWithText("Marcadores").performClick()
         compose.waitForIdle()
-        compose.onNodeWithText("Central de marcadores").assertIsDisplayed()
+        compose.onNode(hasText("Marcadores") and SemanticsMatcher.expectValue(SemanticsProperties.Heading, Unit)).assertIsDisplayed()
 
         // 3. Navegar para Minha leitura (Métricas)
-        compose.onNodeWithContentDescription("Minha leitura").performClick()
+        compose.onNodeWithText("Leitura").performClick()
         compose.waitForIdle()
         compose.onNodeWithText("Minha leitura").assertIsDisplayed()
 
         // 4. Navegar para Ajustes
-        compose.onNodeWithContentDescription("Ajustes").performClick()
+        compose.onNodeWithText("Ajustes").performClick()
         compose.waitForIdle()
-        compose.onNodeWithText("Ajustes e dados").assertIsDisplayed()
+        compose.onNode(hasText("Ajustes") and SemanticsMatcher.expectValue(SemanticsProperties.Heading, Unit)).assertIsDisplayed()
 
         // 5. Voltar para Estante
-        compose.onNodeWithContentDescription("Estante").performClick()
+        compose.onNode(hasText("Estante") and SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)).performClick()
         compose.waitForIdle()
         compose.onNodeWithText("Estante").assertIsDisplayed()
     }

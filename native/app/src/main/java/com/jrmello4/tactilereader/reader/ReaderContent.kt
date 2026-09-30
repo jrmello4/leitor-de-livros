@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
@@ -26,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -56,8 +58,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.io.File
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 /** Faixa de leitura pura por estado — testável na JVM sem JNI nem ViewModel. */
 @OptIn(FlowPreview::class)
@@ -76,57 +81,66 @@ fun ReaderContent(
     onToggleBookmark: (String) -> Unit = {},
     nextTitle: String? = null,
     onBingeOpenNext: () -> Unit = {},
+    settings: ReaderSettings = ReaderSettings(),
+    onSettingsChange: (ReaderSettings) -> Unit = {},
+    onPositionChanged: (String, Double) -> Unit = { _, _ -> },
+    initialHudVisible: Boolean = true,
 ) {
-    var hud by rememberSaveable { mutableStateOf(true) }
+    if (!state.loading && state.error == null && settings.mode in listOf(ReaderMode.SINGLE_PAGE, ReaderMode.DOUBLE_PAGE)) {
+        ReaderPagedContent(state, settings, paths, onPageVisible, onProgress, onPositionChanged,
+            bookmarks, onToggleBookmark, onBack, onSettingsChange, nextTitle, onBingeOpenNext)
+        return
+    }
+    var hud by rememberSaveable { mutableStateOf(initialHudVisible) }
+    var showSettings by remember { mutableStateOf(false) }
+    val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     val listState = rememberLazyListState()
 
     // Ler não deve apagar a tela no meio de uma página.
-    val view = LocalView.current
-    androidx.compose.runtime.DisposableEffect(view) {
-        view.keepScreenOn = true
-        onDispose { view.keepScreenOn = false }
-    }
+    ReaderWindow(settings, hud || showSettings)
 
-    val pages = state.pages
+    val pages = remember(state.pages, settings.direction) { readingOrder(state.pages, settings.direction) }
     val targetIndex = state.startPageId?.let { id -> pages.indexOfFirst { it.id == id } } ?: -1
-    val needsOffset = targetIndex > 0 && state.startRatio > 0.01
+    val needsOffset = targetIndex >= 0 && state.startRatio > 0.01
 
     // Retoma onde parou: uma vez por abertura, rola até a página salva e,
     // havendo proporção, aplica o deslocamento exato dentro dela.
-    var didRestore by remember { mutableStateOf(false) }
-    var didRestoreOffset by remember { mutableStateOf(!needsOffset) }
+    var didRestore by remember(state.loading) { mutableStateOf(false) }
+    var didRestoreOffset by remember(state.loading) { mutableStateOf(!needsOffset) }
     LaunchedEffect(pages, state.startPageId, didRestore) {
         if (!didRestore && pages.isNotEmpty()) {
-            if (targetIndex > 0) {
+            if (targetIndex >= 0) {
                 listState.scrollToItem(targetIndex)
             }
             didRestore = true
         }
     }
+
+    // Immediate UI anchor survives switching modes; only persistence is debounced.
+    val currentOnPosition by androidx.compose.runtime.rememberUpdatedState(onPositionChanged)
+    LaunchedEffect(listState, pages, didRestore, didRestoreOffset) {
+        snapshotFlow {
+            visibleReadingPosition(listState, pages)
+        }.distinctUntilChanged().collect { if (it != null && didRestore && didRestoreOffset) currentOnPosition(it.first, it.second) }
+    }
     LaunchedEffect(listState, pages, needsOffset, didRestoreOffset) {
         if (!needsOffset || didRestoreOffset) {
             return@LaunchedEffect
         }
-        snapshotFlow {
+        val info = snapshotFlow {
             listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == targetIndex }
-        }.collect { info ->
-            if (info != null && info.size > 0) {
-                listState.scrollToItem(targetIndex, (state.startRatio * info.size).toInt())
-                didRestoreOffset = true
-            }
-        }
+        }.first { it != null && it.size > 0 }!!
+        listState.scrollToItem(targetIndex, (state.startRatio * info.size).toInt())
+        didRestoreOffset = true
     }
 
     // Observa a primeira página visível e persiste {pageId, scrollRatio}
     LaunchedEffect(listState, pages, didRestore, didRestoreOffset) {
         snapshotFlow {
-            val info = listState.layoutInfo.visibleItemsInfo.firstOrNull()
-            val page = info?.let { pages.getOrNull(it.index) }
-            if (page == null || !didRestore || !didRestoreOffset) {
+            if (!didRestore || !didRestoreOffset) {
                 null
             } else {
-                val ratio = if (info.size > 0) (-info.offset.toDouble() / info.size).coerceIn(0.0, 1.0) else 0.0
-                page.id to ratio
+                visibleReadingPosition(listState, pages)
             }
         }.distinctUntilChanged().debounce(500).collect { current ->
             if (current != null) {
@@ -145,14 +159,18 @@ fun ReaderContent(
     }
 
     val firstVisible by remember { derivedStateOf { listState.firstVisibleItemIndex } }
-    val currentPage = pages.getOrNull(firstVisible)
+    val currentPage = pages.getOrNull(firstVisible.coerceAtMost(pages.lastIndex))
+    LaunchedEffect(firstVisible, pages) {
+        // A small neighborhood uses the same ensure/cache path as visible pages.
+        for (index in (firstVisible - 1)..(firstVisible + 2)) pages.getOrNull(index)?.let(onPageVisible)
+    }
     var bingeCancelled by remember(pages, nextTitle) { mutableStateOf(false) }
     var bingeCountdown by remember(pages, nextTitle) { mutableStateOf<Int?>(null) }
 
     // A contagem só começa quando o próprio card está visível; collectLatest
     // cancela o timer assim que o usuário rola para longe dele.
-    LaunchedEffect(listState, nextTitle, didRestore, bingeCancelled) {
-        if (nextTitle == null || !didRestore || bingeCancelled) {
+    LaunchedEffect(listState, nextTitle, didRestore, bingeCancelled, showSettings, lifecycleState) {
+        if (nextTitle == null || !didRestore || bingeCancelled || showSettings || lifecycleState != Lifecycle.State.RESUMED) {
             bingeCountdown = null
             return@LaunchedEffect
         }
@@ -201,13 +219,13 @@ fun ReaderContent(
     }
     val scope = rememberCoroutineScope()
 
-    Box(modifier = modifier.fillMaxSize().background(DarkGraphite950)) {
+    Box(modifier = modifier.fillMaxSize().background(settings.background.color)) {
         when {
             state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
                     stringResource(R.string.reader_loading),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Paper300,
+                    color = if (settings.background == ReaderBackground.WHITE) androidx.compose.ui.graphics.Color.DarkGray else Paper300,
                 )
             }
             state.error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -245,7 +263,7 @@ fun ReaderContent(
                         translationX = panX,
                         clip = true,
                     )
-                    .pointerInput(Unit) {
+                    .pointerInput(settings.direction) {
                         awaitEachGesture {
                             awaitFirstDown(requireUnconsumed = false)
                             do {
@@ -273,32 +291,26 @@ fun ReaderContent(
                         detectTapGestures(
                             onTap = { pos ->
                                 val width = viewport.width.toFloat()
-                                val height = viewport.height.toFloat()
                                 val screenX = if (width > 0) {
                                     (pos.x - width / 2f) * zoom + width / 2f + panX
                                 } else {
                                     pos.x
                                 }
-                                val screenY = if (height > 0) {
-                                    (pos.y - height / 2f) * zoom + height / 2f
-                                } else {
-                                    pos.y
-                                }
                                 val xFrac = if (width > 0) screenX / width else 0.5f
-                                val yFrac = if (height > 0) screenY / height else 0.5f
-                                if (xFrac in 0.35f..0.65f) {
+                                val step = tapStep(xFrac, settings.direction)
+                                if (step == 0) {
                                     hud = !hud
-                                } else {
-                                    scope.launch { scrollBlock(if (yFrac < 0.5f) -1 else 1) }
+                                } else if (zoom <= 1f) {
+                                    scope.launch { scrollBlock(step) }
                                 }
                             },
-                            onDoubleTap = {
+                            onDoubleTap = { point ->
                                 if (zoom > 1f) {
                                     zoom = 1f
                                 } else {
                                     zoom = 2f
                                 }
-                                panX = 0f
+                                panX = if (zoom == 1f) 0f else clampPan(viewport.width / 2f - point.x)
                             },
                         )
                     },
@@ -307,7 +319,7 @@ fun ReaderContent(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(0.dp),
-                    verticalArrangement = Arrangement.spacedBy(0.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (settings.mode == ReaderMode.VERTICAL) 12.dp else 0.dp),
                 ) {
                     items(pages, key = { it.id }) { page ->
                         val file = paths[page.id]?.let { File(it) }
@@ -316,7 +328,11 @@ fun ReaderContent(
                                 onPageVisible(page)
                             }
                         }
-                        pageImage(page, file, Modifier)
+                        if (settings.mode == ReaderMode.WEBTOON && settings.background == ReaderBackground.BLACK) {
+                            pageImage(page, file, Modifier)
+                        } else {
+                            ReaderFittedImage(page, file, settings, Modifier, continuous = true)
+                        }
                     }
                     // Binge: card editorial de transição no fim da edição
                     if (nextTitle != null && pages.isNotEmpty()) {
@@ -341,7 +357,7 @@ fun ReaderContent(
             ReaderControls(
                 title = state.title,
                 zoom = zoom,
-                pageNumber = firstVisible + 1,
+                pageNumber = (firstVisible + 1).coerceAtMost(pages.size),
                 pageCount = pages.size,
                 bookmarkEnabled = currentPage != null,
                 isBookmarked = currentPage?.let { bookmarks.contains(it.id) } == true,
@@ -351,7 +367,24 @@ fun ReaderContent(
                     panX = 0f
                 },
                 onToggleBookmark = { currentPage?.let { onToggleBookmark(it.id) } },
+                direction = settings.direction,
+                onSettings = { showSettings = true },
+                onSeek = { index -> scope.launch { listState.scrollToItem(index); pages.getOrNull(index)?.let { onProgress(it.id, 0.0) } } },
             )
         }
+        if (showSettings) ReaderSettingsSheet(settings, onSettingsChange) { showSettings = false }
     }
+}
+
+/** The end card is part of navigation, never a fictitious page beyond the publication. */
+private fun visibleReadingPosition(listState: LazyListState, pages: List<ReaderPage>): Pair<String, Double>? {
+    val layout = listState.layoutInfo
+    val card = layout.visibleItemsInfo.firstOrNull { it.key == "binge" }
+    if (card != null && isBingeCardActive(visibleFraction(card.offset, card.size, layout.viewportStartOffset, layout.viewportEndOffset))) {
+        return pages.lastOrNull()?.let { it.id to 0.0 }
+    }
+    val info = layout.visibleItemsInfo.firstOrNull() ?: return null
+    val page = pages.getOrNull(info.index) ?: return null
+    val ratio = if (info.size > 0) (-info.offset.toDouble() / info.size).coerceIn(0.0, 1.0) else 0.0
+    return page.id to ratio
 }

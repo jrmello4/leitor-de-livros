@@ -44,7 +44,8 @@ class LongComicMemoryTest {
         repeat(pageCount) { index ->
             File(pagesDir, "%04d.jpg".format(index)).writeBytes(longPageJpeg(index))
         }
-        val outcome = db.importPaths(listOf(pagesDir.absolutePath))
+        // Feed the generated images through the current source API (one image group).
+        val outcome = db.importPaths(pagesDir.listFiles().orEmpty().sortedBy { it.name }.map { it.absolutePath })
         assertTrue("diagnostics: ${outcome.diagnostics}", outcome.diagnostics.isEmpty())
         val pub = db.publications.list().single()
         assertEquals(pageCount, pub.pageCount)

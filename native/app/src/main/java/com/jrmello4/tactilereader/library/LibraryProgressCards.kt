@@ -38,9 +38,8 @@ import kotlin.math.roundToInt
 @Composable
 internal fun readingProgressSummary(pub: Pub): String {
     if (pub.pageCount <= 0) return stringResource(R.string.library_no_pages_available)
-    val currentPage = (pub.progress.coerceIn(0.0, 1.0) * (pub.pageCount - 1))
+    val currentPage = (pub.progress.coerceIn(0.0, 1.0) * pub.pageCount)
         .roundToInt()
-        .plus(1)
         .coerceIn(1, pub.pageCount)
     val remaining = (pub.pageCount - currentPage).coerceAtLeast(0)
     val pageText = stringResource(R.string.library_page_progress, currentPage, pub.pageCount)

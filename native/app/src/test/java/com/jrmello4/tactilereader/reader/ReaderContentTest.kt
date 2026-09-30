@@ -33,6 +33,24 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class ReaderContentTest {
+    @Test
+    fun loadingThenReadyRestoresOffsetEvenOnFirstPage() {
+        val state = androidx.compose.runtime.mutableStateOf(ReaderUiState())
+        var position: Pair<String, Double>? = null
+        val longPages = (0..3).map { ReaderPage("resume-$it", it, "$it.png", 800, 1200, null) }
+        compose.setContent {
+            MaterialTheme {
+                ReaderContent(state.value, {}, onPositionChanged = { id, ratio -> position = id to ratio },
+                    pageImage = { page, _, mod -> androidx.compose.foundation.layout.Box(mod.fillMaxWidth().height(1000.dp)) { Text(page.id) } })
+            }
+        }
+        compose.runOnIdle { state.value = ReaderUiState(loading = false, pages = longPages, startPageId = "resume-0", startRatio = 0.6) }
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(1000)
+        compose.waitForIdle()
+        assertEquals("resume-0", position?.first)
+        assertEquals(0.6, position?.second ?: -1.0, 0.01)
+    }
     @get:Rule
     val compose = createComposeRule()
 

@@ -1,6 +1,7 @@
 artifacts/
 test-results/
 .impeccable/
+.commandcode/
 .worktrees/
 .superpowers/
 *.log

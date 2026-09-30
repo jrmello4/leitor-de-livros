@@ -13,6 +13,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.util.Collections
 
@@ -28,6 +31,7 @@ data class ReaderUiState(
     /** Deslocamento salvo dentro da página (0..1). */
     val startRatio: Double = 0.0,
     val error: String? = null,
+    val direction: ReadingDirection = ReadingDirection.LEFT_TO_RIGHT,
 )
 
 /**
@@ -61,6 +65,32 @@ class ReaderViewModel(
     private var pausedAt = 0L
     private var pausedMillis = 0L
     private var sessionRecorded = false
+    private val progressMutex = Mutex()
+    private var lastPosition: Pair<String, Double>? = null
+
+    suspend fun configureDirection(direction: ReadingDirection) {
+        state.first { !it.loading }
+        progressMutex.withLock {
+            withContext(Dispatchers.IO) { db.setReadingDirection(publicationId, direction.value) }
+            if (_state.value.direction != direction) {
+                // A direction change begins a new metric sample at the same page ID.
+                finishSession()
+                val currentId = lastPosition?.first ?: _state.value.startPageId
+                val index = _state.value.pages.indexOfFirst { it.id == currentId }.takeIf { it >= 0 }
+                    ?: if (direction == ReadingDirection.RIGHT_TO_LEFT) _state.value.pages.lastIndex else 0
+                _state.value = _state.value.copy(direction = direction)
+                sessionStartPageIndex = logicalIndex(index)
+                furthestPageIndex = sessionStartPageIndex
+                sessionStartedAt = SystemClock.elapsedRealtime()
+                pausedMillis = 0L
+                pausedAt = 0L
+                sessionRecorded = false
+            }
+        }
+    }
+
+    private fun logicalIndex(index: Int): Int = if (_state.value.direction == ReadingDirection.RIGHT_TO_LEFT)
+        _state.value.pages.lastIndex - index else index
 
     init {
         refresh()
@@ -71,10 +101,11 @@ class ReaderViewModel(
             _state.value = try {
                 val title = _state.value.title
                 val (pages, progress) = withContext(Dispatchers.IO) { loadPagesAndState() }
+                val direction = withContext(Dispatchers.IO) { db.readingDirection(publicationId) }
                 val effectiveStartId = initialPageId ?: progress?.pageId
                 val restoredIndex = effectiveStartId?.let { id -> pages.indexOfFirst { it.id == id } }
                     ?.takeIf { it >= 0 }
-                    ?: 0
+                    ?: if (direction == "rtl") pages.lastIndex.coerceAtLeast(0) else 0
                 sessionStartedAt = SystemClock.elapsedRealtime()
                 sessionStartPageIndex = restoredIndex
                 furthestPageIndex = restoredIndex
@@ -82,12 +113,15 @@ class ReaderViewModel(
                 pausedMillis = 0L
                 sessionRecorded = false
                 withContext(Dispatchers.IO) { primeImmediatePages(pages) }
+                sessionStartPageIndex = if (direction == "rtl") pages.lastIndex - restoredIndex else restoredIndex
+                furthestPageIndex = sessionStartPageIndex
                 ReaderUiState(
                     loading = false,
                     title = title,
                     pages = pages,
                     startPageId = effectiveStartId,
                     startRatio = if (initialPageId != null) 0.0 else (progress?.scrollRatio ?: 0.0),
+                    direction = if (direction == "rtl") ReadingDirection.RIGHT_TO_LEFT else ReadingDirection.LEFT_TO_RIGHT,
                 )
             } catch (error: Exception) {
                 _state.value.copy(loading = false, error = error.message ?: "falha desconhecida")
@@ -168,13 +202,16 @@ class ReaderViewModel(
         if (pageId.isBlank()) {
             return
         }
+        lastPosition = pageId to scrollRatio
+        // A retained ViewModel also resumes the latest position after rotation/reopening.
+        _state.value = _state.value.copy(startPageId = pageId, startRatio = scrollRatio)
         _state.value.pages.indexOfFirst { it.id == pageId }
             .takeIf { it >= 0 }
-            ?.let { furthestPageIndex = maxOf(furthestPageIndex, it) }
+            ?.let { furthestPageIndex = maxOf(furthestPageIndex, logicalIndex(it)) }
         viewModelScope.launch {
             try {
-                withContext(Dispatchers.IO) {
-                    db.saveReaderState(publicationId, pageId, scrollRatio)
+                progressMutex.withLock {
+                    withContext(Dispatchers.IO) { db.saveReaderState(publicationId, pageId, scrollRatio) }
                 }
             } catch (_: Exception) {
                 // Progresso é melhor-esforço; a próxima parada tenta de novo.
@@ -219,7 +256,17 @@ class ReaderViewModel(
     /** Retoma o relógio sem transformar tempo em segundo plano em leitura. */
     @Synchronized
     fun resumeSession() {
-        if (sessionRecorded || pausedAt <= 0L) return
+        if (sessionRecorded && sessionStartedAt > 0L) {
+            sessionStartedAt = SystemClock.elapsedRealtime()
+            val index = _state.value.pages.indexOfFirst { it.id == _state.value.startPageId }.coerceAtLeast(0)
+            sessionStartPageIndex = logicalIndex(index)
+            furthestPageIndex = sessionStartPageIndex
+            pausedAt = 0L
+            pausedMillis = 0L
+            sessionRecorded = false
+            return
+        }
+        if (pausedAt <= 0L) return
         pausedMillis = saturatingAdd(
             pausedMillis,
             (SystemClock.elapsedRealtime() - pausedAt).coerceAtLeast(0L),

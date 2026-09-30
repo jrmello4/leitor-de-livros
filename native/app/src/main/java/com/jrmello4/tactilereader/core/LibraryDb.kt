@@ -405,6 +405,26 @@ class LibraryDb private constructor(
     fun saveReaderState(publicationId: String, pageId: String, scrollRatio: Double) =
         readingStateRepository.saveReaderState(publicationId, pageId, scrollRatio)
 
+    @Synchronized
+    fun readingDirection(publicationId: String): String = rawQuery(
+        "SELECT direction FROM publications WHERE id = ?", arrayOf(publicationId),
+    ).use { if (it.moveToFirst()) it.getString(0) else "ltr" }
+
+    /** Uses the existing publication column and central status rules; no schema change. */
+    @Synchronized
+    fun setReadingDirection(publicationId: String, direction: String) {
+        require(direction == "ltr" || direction == "rtl")
+        if (readingDirection(publicationId) == direction) return
+        database.beginTransaction()
+        try {
+            execInsert("UPDATE publications SET direction = ? WHERE id = ?", arrayOf(direction, publicationId))
+            loadReaderState(publicationId)?.let { saveReaderState(publicationId, it.pageId, it.scrollRatio) }
+            database.setTransactionSuccessful()
+        } finally {
+            database.endTransaction()
+        }
+    }
+
     /** Retorna as métricas locais acumuladas de uma publicação. */
     @Synchronized
     fun loadReadingStats(publicationId: String): ReadingStats? = readingStatsRepository.load(publicationId)

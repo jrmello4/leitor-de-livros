@@ -127,16 +127,19 @@ jobs:
             exit 1
           fi
           SHA=$(sha256sum "$APK" | awk '{print $1}')
+          VERSION=$(python -c "import json; print(json.load(open('release-manifest.json'))['versionName'])")
+          APK_NAME="tactile-native-${VERSION}.apk"
           echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "version_name=$VERSION" >> "$GITHUB_OUTPUT"
           mkdir -p release-artifacts
-          cp "$APK" "release-artifacts/tactile-native-0.4.0.apk"
+          cp "$APK" "release-artifacts/$APK_NAME"
           if [ -f "release-manifest.json" ]; then
             cp release-manifest.json release-artifacts/
           fi
           if [ -f "sbom.json" ]; then
             cp sbom.json release-artifacts/
           fi
-          echo "apk_name=tactile-native-0.4.0.apk" >> "$GITHUB_OUTPUT"
+          echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Move native-latest tag to the validated commit
         shell: bash
@@ -146,7 +149,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: native-latest
-          name: "Native rolling (0.4.0+${{ github.run_number }})"
+          name: "Native rolling (${{ steps.apk.outputs.version_name }}+${{ github.run_number }})"
           body: |
             Rolling build from `main` — app Android nativo.
 

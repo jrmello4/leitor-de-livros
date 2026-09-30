@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -15,6 +16,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.runtime.*
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -38,6 +49,7 @@ import com.jrmello4.tactilereader.ui.theme.Paper50
 import com.jrmello4.tactilereader.ui.theme.Paper500
 import com.jrmello4.tactilereader.ui.theme.WarmAmber
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ReaderControls(
     title: String,
@@ -49,7 +61,12 @@ internal fun ReaderControls(
     onBack: () -> Unit,
     onToggleZoom: () -> Unit,
     onToggleBookmark: () -> Unit,
+    onSettings: () -> Unit = {},
+    onSeek: (Int) -> Unit = {},
+    direction: ReadingDirection = ReadingDirection.LEFT_TO_RIGHT,
 ) {
+    val backLabel = stringResource(R.string.reader_back_to_library)
+    val showBackLabel = LocalDensity.current.fontScale <= 1.3f
     Column(Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
@@ -61,19 +78,18 @@ internal fun ReaderControls(
         ) {
             TextButton(
                 onClick = onBack,
-                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+                    .semantics { contentDescription = backLabel },
             ) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = null,
                     tint = Paper50,
                 )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    stringResource(R.string.reader_back_to_library),
-                    color = Paper50,
-                    style = MaterialTheme.typography.labelLarge,
-                )
+                if (showBackLabel) {
+                    Spacer(Modifier.width(4.dp))
+                    Text(backLabel, color = Paper50, style = MaterialTheme.typography.labelLarge)
+                }
             }
 
             Text(
@@ -110,6 +126,12 @@ internal fun ReaderControls(
             }
 
             IconButton(
+                onClick = onSettings,
+                modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
+            ) {
+                Icon(Icons.Filled.Settings, contentDescription = "Configurações de leitura", tint = Paper50)
+            }
+            IconButton(
                 onClick = onToggleBookmark,
                 enabled = bookmarkEnabled,
                 modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
@@ -129,14 +151,13 @@ internal fun ReaderControls(
         if (pageCount > 0) {
             val pagePosition = stringResource(R.string.reader_page_position, pageNumber, pageCount)
             val pageState = stringResource(R.string.reader_page_state, pageNumber, pageCount)
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color(0xF2101318))
                     .navigationBarsPadding()
                     .padding(12.dp),
-                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
                     text = pagePosition,
@@ -144,6 +165,23 @@ internal fun ReaderControls(
                     color = Paper300,
                     modifier = Modifier.semantics { stateDescription = pageState },
                 )
+                Text("${(pageNumber * 100 / pageCount).coerceIn(0, 100)}%", color = Paper300, style = MaterialTheme.typography.labelSmall)
+                var seeking by remember { mutableStateOf(false) }
+                var seekPage by remember { mutableFloatStateOf(pageNumber.toFloat()) }
+                LaunchedEffect(pageNumber) { if (!seeking) seekPage = pageNumber.toFloat() }
+                if (pageCount > 1) {
+                    val sliderInteraction = remember { MutableInteractionSource() }
+                    CompositionLocalProvider(LocalLayoutDirection provides if (direction == ReadingDirection.RIGHT_TO_LEFT) LayoutDirection.Rtl else LayoutDirection.Ltr) {
+                        Slider(value = seekPage.coerceIn(1f, pageCount.toFloat()), onValueChange = { seeking = true; seekPage = it },
+                            interactionSource = sliderInteraction,
+                            thumb = { SliderDefaults.Thumb(sliderInteraction, thumbSize = DpSize(4.dp, 48.dp)) },
+                            valueRange = 1f..pageCount.toFloat(), onValueChangeFinished = {
+                                onSeek(kotlin.math.round(seekPage).toInt() - 1)
+                                seeking = false
+                            }, modifier = Modifier.semantics { contentDescription = "Ir para página" }
+                                .fillMaxWidth().heightIn(min = 48.dp))
+                    }
+                }
             }
         }
     }

@@ -2,7 +2,10 @@
 
 A especificação de 08/09/2026 está em `docs/superpowers/specs/2026-09-08-mobile-android-comic-reader-design.md`.
 
-## Snapshot do código — 29/09/2026
+## Snapshot do código — 30/09/2026
+
+- Reader 2.0 (`0.5.0`): modos Página única/dupla, Vertical e Webtoon; direção LTR/RTL; fit, zoom/pan, tap/swipe, HUD com slider, preferências persistentes, orientação e imersão.
+- Validação do Reader 2.0: 141 testes locais e 44 instrumentados passaram no Moto G34 5G/Android 15, incluindo PDF, 7z, backup RTL, métricas, retomada, acessibilidade e binge. `lintRelease` sem erros (17 avisos existentes); builds debug e release aprovados. Cenários, medições e limites em [`reader-2-validation.md`](reader-2-validation.md).
 
 - O produto atual é o app nativo Kotlin + Jetpack Compose em `native/`, com SQLite no núcleo Kotlin; schema v8 preserva bancos anteriores por migração incremental.
 - A implementação atual indexa CBZ, CBR/RAR4/RAR5, 7z, coleções ZIP, PDFs e pastas de imagens. Páginas 7z e PDF são reconstruídas sob demanda no cache gerenciado; os originais permanecem intactos.

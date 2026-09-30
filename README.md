@@ -11,11 +11,13 @@ antigo neste repositório.
 ## Estado
 
 App nativo Kotlin + Compose. O histórico de validações de host e dispositivo
-fica em [`docs/android-status.md`](docs/android-status.md); as mudanças desta
-revisão foram verificadas no host, e o reteste manual no aparelho permanece
-pendente.
+fica em [`docs/android-status.md`](docs/android-status.md). O Reader 2.0 foi
+validado com 141 testes locais e 44 testes instrumentados no Moto G34 5G
+(Android 15); detalhes e limites em [`docs/reader-2-validation.md`](docs/reader-2-validation.md).
 
-- faixa de leitura com zoom, marcadores, volume físico, binge com Cancelar
+- Reader 2.0 com página única/dupla, Vertical/Webtoon, LTR/RTL, ajustes de
+  imagem, gestos de zoom/pan, HUD com slider e configurações persistentes
+- marcadores, volume físico, orientação, imersão e binge com Cancelar
 - séries + busca/filtros/seleção em lote/favoritos, pastas com revarredura
 - PDF com renderização sob demanda via `PdfRenderer`, backup local JSON, OPDS/Komga/Kavita, ComicInfo
 - CBZ / CBR (RAR4/RAR5 via `junrar`) / 7z (commons-compress) / pastas de
@@ -46,9 +48,12 @@ O teste instrumentado exige aparelho autorizado no `adb`.
 
 O workflow `release-native.yml` publica o rolling `native-latest` com o
 APK assinado + `apksigner verify`. Exige 4 segredos (Settings → Secrets
-→ Actions): `TACTILE_KEY_BASE64`, `TACTILE_STORE_PASSWORD`,
-`TACTILE_KEY_ALIAS`, `TACTILE_KEY_PASSWORD`. Sem eles o workflow falha
-cedo; o CI comum segue publicando só o APK de depuração como artefato.
+→ Actions): `ANDROID_KEY_BASE64`, `ANDROID_STORE_PASSWORD`,
+`ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Sem eles o workflow falha
+cedo; os APKs do CI comum usam assinatura de depuração e não são publicáveis.
+
+A release versionada do Reader 2.0 é `v0.5.0`. O APK oficial, manifesto e
+SBOM são distribuídos nos assets do GitHub Releases.
 
 ## Licença
 

@@ -2,11 +2,16 @@ package com.jrmello4.tactilereader.accessibility
 
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.jrmello4.tactilereader.scaffold.MainActivity
@@ -26,19 +31,20 @@ class AccessibilitySemanticsTest {
     val compose = createAndroidComposeRule<MainActivity>()
 
     @Test
-    fun navigationIconsHaveContentDescriptions() {
+    fun navigationTabsHaveAccessibleLabels() {
         compose.waitForIdle()
-        compose.onNodeWithContentDescription("Estante").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Marcadores").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Minha leitura").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Ajustes").assertIsDisplayed()
+        // Material navigation merges the visible label into the actionable tab.
+        compose.onNodeWithText("Estante").assertIsDisplayed().assertHasClickAction()
+        compose.onNodeWithText("Marcadores").assertIsDisplayed().assertHasClickAction()
+        compose.onNodeWithText("Leitura").assertIsDisplayed().assertHasClickAction()
+        compose.onNodeWithText("Ajustes").assertIsDisplayed().assertHasClickAction()
     }
 
     @Test
     fun floatingActionButtonHasMinimumTouchTarget48dp() {
         compose.waitForIdle()
         // O FAB de adicionar/importar na Estante
-        val fab = compose.onNodeWithContentDescription("Importar HQs")
+        val fab = compose.onNodeWithText("Importar")
         fab.assertIsDisplayed()
         fab.assertWidthIsAtLeast(48.dp)
         fab.assertHeightIsAtLeast(48.dp)
@@ -47,13 +53,13 @@ class AccessibilitySemanticsTest {
     @Test
     fun settingsScreenHeadingsAndActionButtonsMeetAccessibilityTarget() {
         compose.waitForIdle()
-        compose.onNodeWithContentDescription("Ajustes").performClick()
+        compose.onNodeWithText("Ajustes").performClick()
         compose.waitForIdle()
 
-        compose.onNodeWithText("Ajustes e dados").assertIsDisplayed()
+        compose.onNode(hasText("Ajustes") and SemanticsMatcher.expectValue(SemanticsProperties.Heading, Unit)).assertIsDisplayed()
 
         // Botões de ação em Ajustes com toque de 48dp mínimo
-        val checkButton = compose.onNodeWithText("Verificar atualizações")
+        val checkButton = compose.onNodeWithText("Verificar").performScrollTo()
         checkButton.assertIsDisplayed()
         checkButton.assertHeightIsAtLeast(48.dp)
     }
